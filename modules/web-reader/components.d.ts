@@ -8,6 +8,8 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     BookCard: typeof import('./src/components/BookCard.vue')['default']
+    CatalogItem: typeof import('./src/components/CatalogItem.vue')['default']
+    ChapterContent: typeof import('./src/components/ChapterContent.vue')['default']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElConfigProvider: typeof import('element-plus/es')['ElConfigProvider']
     ElDialog: typeof import('element-plus/es')['ElDialog']
@@ -20,11 +22,16 @@ declare module 'vue' {
     ElFormItem: typeof import('element-plus/es')['ElFormItem']
     ElIcon: typeof import('element-plus/es')['ElIcon']
     ElInput: typeof import('element-plus/es')['ElInput']
-    ElOption: typeof import('element-plus/es')['ElOption']
-    ElSelect: typeof import('element-plus/es')['ElSelect']
-    ElSlider: typeof import('element-plus/es')['ElSlider']
+    ElPopover: typeof import('element-plus/es')['ElPopover']
+    ElTooltip: typeof import('element-plus/es')['ElTooltip']
+    PopCatalog: typeof import('./src/components/PopCatalog.vue')['default']
+    ReadSettings: typeof import('./src/components/ReadSettings.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SystemFontDialog: typeof import('./src/components/SystemFontDialog.vue')['default']
     ThemeToggle: typeof import('./src/components/ThemeToggle.vue')['default']
+  }
+  export interface ComponentCustomProperties {
+    vLoading: typeof import('element-plus/es')['ElLoadingDirective']
   }
 }

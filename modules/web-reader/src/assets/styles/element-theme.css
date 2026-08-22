@@ -1,0 +1,193 @@
+/* Global Element Plus Dark / Light theme synchronization */
+
+/* ================= Dark Mode Overrides (html.dark) ================= */
+html.dark {
+  --el-bg-color: #242424;
+  --el-bg-color-overlay: #2b2b2b;
+  --el-bg-color-page: #181818;
+  --el-text-color-primary: #e5eaf3;
+  --el-text-color-regular: #cfd3dc;
+  --el-text-color-secondary: #a3a6ad;
+  --el-text-color-placeholder: #6c6e72;
+  --el-border-color: #414243;
+  --el-border-color-light: #363637;
+  --el-border-color-lighter: #2d2d2d;
+  --el-border-color-extra-light: #262727;
+  --el-fill-color: #303030;
+  --el-fill-color-light: #262727;
+  --el-fill-color-blank: #242424;
+  --el-mask-color: rgba(0, 0, 0, 0.7);
+}
+
+/* ================= Dialog (el-dialog) ================= */
+html.dark .el-dialog {
+  background-color: #242424 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+html.dark .el-dialog__title {
+  color: #e5eaf3 !important;
+  font-weight: 600 !important;
+}
+
+html.dark .el-dialog__headerbtn .el-dialog__close {
+  color: #8c8c8c !important;
+}
+
+html.dark .el-dialog__headerbtn:hover .el-dialog__close {
+  color: #ffffff !important;
+}
+
+html.dark .el-form-item__label {
+  color: #cfd3dc !important;
+  font-weight: 500 !important;
+}
+
+/* ================= Input (el-input) in Dark Mode ================= */
+html.dark .el-input__wrapper {
+  background-color: #303030 !important;
+  box-shadow: 0 0 0 1px #484848 inset !important;
+}
+
+html.dark .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #409eff inset !important;
+}
+
+html.dark .el-input__inner {
+  color: #e5eaf3 !important;
+}
+
+html.dark .el-input__inner::placeholder {
+  color: #6c6e72 !important;
+}
+
+html.dark .el-input .el-input__count-inner {
+  background: transparent !important;
+  color: #8c8c8c !important;
+}
+
+/* ================= Dropdown Menu (el-dropdown-menu) in Dark Mode ================= */
+html.dark .el-dropdown__popper {
+  --el-bg-color-overlay: #2b2b2b !important;
+  --el-border-color-light: #3c3c3c !important;
+}
+
+html.dark .el-dropdown-menu {
+  background-color: #2b2b2b !important;
+  border: 1px solid #3c3c3c !important;
+  border-radius: 6px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+  padding: 6px !important;
+}
+
+html.dark .el-dropdown-menu__item {
+  color: #cfd3dc !important;
+  border-radius: 4px !important;
+  padding: 8px 14px !important;
+  font-size: 13px !important;
+  transition: all 0.15s ease !important;
+}
+
+html.dark .el-dropdown-menu__item:hover,
+html.dark .el-dropdown-menu__item:focus {
+  background-color: #383838 !important;
+  color: #ffffff !important;
+}
+
+html.dark .el-dropdown-menu__item.is-disabled {
+  color: #606266 !important;
+}
+
+html.dark .el-dropdown-menu__item--divided {
+  border-top-color: rgba(255, 255, 255, 0.08) !important;
+  margin-top: 4px !important;
+}
+
+html.dark .delete-action-item {
+  color: #f89898 !important;
+}
+
+html.dark .delete-action-item:hover,
+html.dark .delete-action-item:focus {
+  background-color: rgba(245, 108, 108, 0.18) !important;
+  color: #f56c6c !important;
+}
+
+/* Popper Arrow in Dark Mode */
+html.dark .el-popper__arrow::before {
+  background-color: #2b2b2b !important;
+  border-color: #3c3c3c !important;
+}
+
+/* ================= Buttons (el-button) in Dark Mode ================= */
+html.dark .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--success):not(.el-button--warning) {
+  background-color: #303030 !important;
+  border-color: #484848 !important;
+  color: #cfd3dc !important;
+}
+
+html.dark .el-button:not(.el-button--primary):not(.el-button--danger):hover {
+  background-color: #3a3a3a !important;
+  border-color: #606266 !important;
+  color: #ffffff !important;
+}
+
+html.dark .el-button--primary.is-plain {
+  background-color: rgba(64, 158, 255, 0.15) !important;
+  border-color: rgba(64, 158, 255, 0.35) !important;
+  color: #79bbff !important;
+}
+
+html.dark .el-button--primary.is-plain:hover {
+  background-color: rgba(64, 158, 255, 0.25) !important;
+  border-color: rgba(64, 158, 255, 0.5) !important;
+  color: #9bf1ff !important;
+}
+
+/* ================= Message Box (ElMessageBox) in Dark Mode ================= */
+html.dark .el-message-box {
+  background-color: #242424 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+html.dark .el-message-box__title {
+  color: #e5eaf3 !important;
+}
+
+html.dark .el-message-box__message {
+  color: #cfd3dc !important;
+}
+
+html.dark .el-message-box__headerbtn .el-message-box__close {
+  color: #8c8c8c !important;
+}
+
+html.dark .el-message-box__headerbtn:hover .el-message-box__close {
+  color: #ffffff !important;
+}
+
+/* ================= Light Mode Refinements ================= */
+html:not(.dark) .el-dropdown-menu {
+  border-radius: 6px !important;
+  padding: 6px !important;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1) !important;
+}
+
+html:not(.dark) .el-dropdown-menu__item {
+  border-radius: 4px !important;
+  padding: 8px 14px !important;
+  font-size: 13px !important;
+}
+
+html:not(.dark) .delete-action-item {
+  color: #f56c6c !important;
+}
+
+html:not(.dark) .delete-action-item:hover {
+  background-color: rgba(245, 108, 108, 0.08) !important;
+  color: #f56c6c !important;
+}

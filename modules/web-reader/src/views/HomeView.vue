@@ -281,7 +281,7 @@ const processFiles = async (files: File[]) => {
 .home-wrapper {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 100vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;

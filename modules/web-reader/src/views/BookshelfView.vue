@@ -422,7 +422,7 @@ const saveEditBook = async () => {
 
 <style scoped>
 .bookshelf-index-wrapper {
-  height: 100%;
+  height: 100vh;
   width: 100%;
   display: flex;
   flex-direction: row;
