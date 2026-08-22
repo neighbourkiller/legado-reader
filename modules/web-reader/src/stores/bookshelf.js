@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { parseBook } from '@/parsers';
-import { saveBook, getAllBookMetas, deleteBookFromDB, } from '@/storage/db';
+import { saveBook, getAllBookMetas, deleteBookFromDB, updateBookMeta, } from '@/storage/db';
 export const useBookshelfStore = defineStore('bookshelf', () => {
     const books = ref([]);
     const isLoading = ref(false);
@@ -28,6 +28,13 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         await loadBooks();
         return parsed.meta.id;
     }
+    async function updateBook(id, updates) {
+        await updateBookMeta(id, updates);
+        const idx = books.value.findIndex(b => b.id === id);
+        if (idx !== -1) {
+            books.value[idx] = { ...books.value[idx], ...updates };
+        }
+    }
     async function deleteBook(id) {
         await deleteBookFromDB(id);
         books.value = books.value.filter(b => b.id !== id);
@@ -37,6 +44,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         isLoading,
         loadBooks,
         parseAndImportBook,
+        updateBook,
         deleteBook,
     };
 });

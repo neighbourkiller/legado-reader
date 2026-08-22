@@ -16,6 +16,8 @@ export interface BookMeta {
   currentProgress: number
   lastReadTime: number
   coverUrl?: string
+  durChapterTitle?: string
+  latestChapterTitle?: string
 }
 
 export interface ParsedBook {

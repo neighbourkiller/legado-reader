@@ -6,6 +6,7 @@ import {
   saveBook,
   getAllBookMetas,
   deleteBookFromDB,
+  updateBookMeta,
 } from '@/storage/db'
 
 export const useBookshelfStore = defineStore('bookshelf', () => {
@@ -39,6 +40,14 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     return parsed.meta.id
   }
 
+  async function updateBook(id: string, updates: Partial<BookMeta>) {
+    await updateBookMeta(id, updates)
+    const idx = books.value.findIndex(b => b.id === id)
+    if (idx !== -1) {
+      books.value[idx] = { ...books.value[idx], ...updates }
+    }
+  }
+
   async function deleteBook(id: string) {
     await deleteBookFromDB(id)
     books.value = books.value.filter(b => b.id !== id)
@@ -49,6 +58,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     isLoading,
     loadBooks,
     parseAndImportBook,
+    updateBook,
     deleteBook,
   }
 })

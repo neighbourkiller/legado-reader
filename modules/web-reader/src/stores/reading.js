@@ -66,6 +66,7 @@ export const useReadingStore = defineStore('reading', () => {
             }
             currentBook.value.currentChapter = index;
             currentBook.value.currentProgress = Math.round(((index + 1) / chapters.value.length) * 100);
+            currentBook.value.durChapterTitle = chapter.title;
             currentBook.value.lastReadTime = Date.now();
             await saveProgress();
         }

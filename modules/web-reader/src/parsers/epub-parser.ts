@@ -67,6 +67,8 @@ export async function parseEpub(file: File): Promise<ParsedBook> {
     currentProgress: 0,
     lastReadTime: Date.now(),
     coverUrl,
+    durChapterTitle: chapters[0]?.title || '',
+    latestChapterTitle: chapters[chapters.length - 1]?.title || '',
   }
 
   return { meta, chapters }
