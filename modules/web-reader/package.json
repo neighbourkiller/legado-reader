@@ -1,0 +1,28 @@
+{
+  "name": "legado-web-reader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --build --force && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "element-plus": "^2.14.3",
+    "jszip": "^3.10.1",
+    "pinia": "^4.0.2",
+    "vue": "^3.5.41",
+    "vue-router": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "typescript": "~5.6.3",
+    "unplugin-auto-import": "^21.1.0",
+    "unplugin-vue-components": "^0.27.4",
+    "vite": "^8.2.1",
+    "vue-tsc": "^3.3.9"
+  }
+}
