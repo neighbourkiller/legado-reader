@@ -1,35 +1,22 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## 当前开发重点
 
-Legado contains an Android app and two Vue front ends. Android/Kotlin code is in `app/src/main/java/io/legado/app`; resources are under `app/src/main/res` and `app/src/main/assets`. Tests are in `app/src/test` and `app/src/androidTest`. Shared libraries are `modules/book` and `modules/rhino`; the server-backed UI is in `modules/web`. The offline reader in `modules/web-reader` is the project's current development focus; prioritize it in cross-module work.
+本项目目前重点开发 `modules/web-reader` 下的 **Tauri 2 + Vue 3 客户端**。纯前端 Web 客户端已经开发完毕；除非修复回归问题或调整共用逻辑，否则新增功能、架构设计和兼容性工作应优先面向 Tauri 客户端。
 
-## Build, Test, and Development Commands
+## 重要目录
 
-- `./gradlew :app:assembleAppDebug` builds a debug APK with JDK 17.
-- `./gradlew :app:installAppDebug` installs it on a connected emulator or device.
-- `./gradlew :app:testAppDebugUnitTest` runs local Kotlin/JUnit tests.
-- `./gradlew :app:connectedAppDebugAndroidTest` runs instrumentation tests on a connected device.
-- `cd modules/web && pnpm install --frozen-lockfile && pnpm build` runs Node tests, builds, type-checks, and synchronizes Web assets.
-- `cd modules/web && pnpm dev` starts the Web management UI; use `pnpm lint:fix` and `pnpm format` before submitting UI changes.
-- `cd modules/web-reader && pnpm install --frozen-lockfile && pnpm dev` starts the offline reader; `pnpm build` type-checks and creates its production bundle.
+- `modules/web-reader/src/`：Vue 3 前端主代码，包括界面、状态管理、路由和业务逻辑。
+- `modules/web-reader/src/views/`：页面级组件；`components/` 存放可复用 UI 组件。
+- `modules/web-reader/src/stores/`：Pinia 状态；`router/` 负责页面路由。
+- `modules/web-reader/src/source/`：书源核心功能，其中 `engine/`、`transport/` 和 `types/` 分别负责规则执行、请求传输和类型定义。
+- `modules/web-reader/src/platform/`：Web 与 Tauri 的平台能力适配。跨平台调用应通过此处抽象，避免在页面中直接耦合运行环境。
+- `modules/web-reader/src/parsers/`：TXT、EPUB 等文件解析；`storage/` 负责本地数据持久化。
+- `modules/web-reader/src/assets/`：字体、图片和全局样式等前端资源。
+- `modules/web-reader/src-tauri/src/`：Tauri 2 的 Rust 后端，包含原生命令、书源 HTTP 请求、Cookie 管理和安全策略。
+- `modules/web-reader/src-tauri/capabilities/`：Tauri 权限声明；`tauri.conf.json` 和 `Cargo.toml` 分别管理应用配置与 Rust 依赖。
+- `app/`、`modules/web/`、`modules/book/`、`modules/rhino/`：原 Android、Web 管理端及共享模块，不是当前开发重心；仅在明确需要兼容或复用时修改。
 
-## Coding Style & Naming Conventions
+## 智能体要求
 
-Follow surrounding Kotlin style: four-space indentation, `PascalCase` types, `camelCase` members, and `snake_case` Android resources. Prefer small extension functions and existing coroutine patterns. In `modules/web`, EditorConfig requires two spaces; Prettier uses single quotes and no semicolons, and ESLint checks TypeScript/Vue files. Use Vue 3 Composition API and `<script setup>` where established.
-
-## Testing Guidelines
-
-Name Kotlin tests `*Test.kt` and align their package with production code. Add host-side tests for pure logic and AndroidJUnit4 tests when framework behavior is required. Web tests live in `modules/web/tests` and use Node's test runner. No coverage threshold is stated; cover relevant regressions and boundaries.
-
-## Commit & Pull Request Guidelines
-
-Recent commits use short, imperative Chinese summaries, often ending with an issue reference such as `修复书签回弹闪烁 (#930)`. Scoped Conventional Commit style is also used for module features, for example `feat(web-reader): ...`. PRs should explain the problem, root cause, and solution; link the issue; select change/platform/module/impact categories; and list exact verification commands and results. Include screenshots or recordings for visible Android or Web changes, and avoid unrelated edits.
-
-## Security & Configuration
-
-Never commit signing keys, passwords, tokens, private source data, or local SDK paths. Repository mirror changes in `settings.gradle` are local workarounds and should not be committed.
-
-## Agent-Specific Instructions
-
-Agents must communicate with users in Chinese, including progress updates, explanations, questions, and final responses.
+智能体必须使用中文与用户沟通，包括进度更新、分析说明、提问和最终回复。
