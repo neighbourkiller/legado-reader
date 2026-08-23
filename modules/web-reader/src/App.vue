@@ -7,10 +7,33 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme'
+import { useFullscreen } from '@/composables/useFullscreen'
 
 // Initialize theme globally
 useTheme()
+
+const { toggleFullscreen, exitFullscreen } = useFullscreen()
+
+const handleGlobalKeyDown = async (e: KeyboardEvent) => {
+  if (e.key === 'F11') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.repeat) return
+    await toggleFullscreen()
+  } else if (e.key === 'Escape') {
+    await exitFullscreen()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeyDown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeyDown)
+})
 </script>
 
 <style>

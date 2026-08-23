@@ -50,6 +50,12 @@
           <div class="icon-text">书架</div>
         </div>
 
+        <!-- 全屏 -->
+        <div class="tool-icon" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏 (F11/ESC)' : '全屏阅读 (F11)'">
+          <div class="iconfont">&#58907;</div>
+          <div class="icon-text">{{ isFullscreen ? '退出' : '全屏' }}</div>
+        </div>
+
         <!-- 顶部 -->
         <div class="tool-icon" @click="toTop">
           <div class="iconfont">&#58914;</div>
@@ -122,6 +128,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { useReadingStore, type ChapterPayload } from '@/stores/reading'
 import { useTheme } from '@/composables/useTheme'
+import { useFullscreen } from '@/composables/useFullscreen'
 import PopCatalog from '@/components/PopCatalog.vue'
 import ReadSettings from '@/components/ReadSettings.vue'
 import ChapterContent from '@/components/ChapterContent.vue'
@@ -134,6 +141,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useReadingStore()
 const { isDark } = useTheme()
+const { isFullscreen, toggleFullscreen } = useFullscreen()
 
 const {
   currentBook,
@@ -376,7 +384,6 @@ const toPreChapter = async () => {
     ElMessage.warning('已经是第一章')
     return
   }
-  ElMessage.info('上一章')
   await getContent(currentChapterIndex.value - 1, true)
 }
 
@@ -385,7 +392,6 @@ const toNextChapter = async () => {
     ElMessage.warning('已经是最后一章')
     return
   }
-  ElMessage.info('下一章')
   await getContent(currentChapterIndex.value + 1, true)
 }
 

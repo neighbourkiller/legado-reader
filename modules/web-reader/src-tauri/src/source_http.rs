@@ -592,6 +592,24 @@ pub async fn webview_fetch(
     })
 }
 
+#[tauri::command]
+pub async fn toggle_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
+    let is_fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    window
+        .set_fullscreen(!is_fullscreen)
+        .map_err(|e| e.to_string())?;
+    Ok(!is_fullscreen)
+}
+
+#[tauri::command]
+pub async fn exit_fullscreen(window: tauri::WebviewWindow) -> Result<(), String> {
+    let is_fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    if is_fullscreen {
+        window.set_fullscreen(false).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{decode_webview_callback_value, is_browser_managed_header};

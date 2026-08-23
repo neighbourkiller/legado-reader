@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia';
 import { ElMessage } from 'element-plus';
 import { useReadingStore } from '@/stores/reading';
 import { useTheme } from '@/composables/useTheme';
+import { useFullscreen } from '@/composables/useFullscreen';
 import PopCatalog from '@/components/PopCatalog.vue';
 import ReadSettings from '@/components/ReadSettings.vue';
 import ChapterContent from '@/components/ChapterContent.vue';
@@ -15,6 +16,7 @@ const route = useRoute();
 const router = useRouter();
 const store = useReadingStore();
 const { isDark } = useTheme();
+const { isFullscreen, toggleFullscreen } = useFullscreen();
 const { currentBook, chapters, settings, miniInterface, popCataVisible, readSettingsVisible, } = storeToRefs(store);
 const chapterData = ref([]);
 const chapterLoading = ref(false);
@@ -222,7 +224,6 @@ const toPreChapter = async () => {
         ElMessage.warning('已经是第一章');
         return;
     }
-    ElMessage.info('上一章');
     await getContent(currentChapterIndex.value - 1, true);
 };
 const toNextChapter = async () => {
@@ -230,7 +231,6 @@ const toNextChapter = async () => {
         ElMessage.warning('已经是最后一章');
         return;
     }
-    ElMessage.info('下一章');
     await getContent(currentChapterIndex.value + 1, true);
 };
 // 键盘事件
@@ -593,6 +593,21 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
 });
 /** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ onClick: (__VLS_ctx.toggleFullscreen) },
+    ...{ class: "tool-icon" },
+    title: (__VLS_ctx.isFullscreen ? '退出全屏 (F11/ESC)' : '全屏阅读 (F11)'),
+});
+/** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ class: "iconfont" },
+});
+/** @type {__VLS_StyleScopedClasses['iconfont']} */ ;
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ class: "icon-text" },
+});
+/** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+(__VLS_ctx.isFullscreen ? '退出' : '全屏');
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ onClick: (__VLS_ctx.toTop) },
     ...{ class: "tool-icon" },
 });
@@ -697,7 +712,7 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         chapterIndex: (data.index),
     }, ...__VLS_functionalComponentArgsRest(__VLS_27));
     // @ts-ignore
-    [toShelf, toTop, toBottom, rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
+    [toShelf, toggleFullscreen, isFullscreen, isFullscreen, toTop, toBottom, rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
 }
 if (__VLS_ctx.infiniteLoading) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({

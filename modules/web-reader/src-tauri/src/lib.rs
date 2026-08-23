@@ -2,11 +2,12 @@ mod cookie_store;
 mod source_http;
 mod source_policy;
 
-use tauri::Manager;
 use source_http::{
-    close_source_auth_window, get_source_cookies, open_source_auth_window, set_source_cookies,
-    source_request, sync_webview_cookies, check_cf_clearance, webview_fetch, AppState,
+    check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
+    open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
+    toggle_fullscreen, webview_fetch, AppState,
 };
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,7 +25,9 @@ pub fn run() {
             close_source_auth_window,
             sync_webview_cookies,
             check_cf_clearance,
-            webview_fetch
+            webview_fetch,
+            toggle_fullscreen,
+            exit_fullscreen
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
