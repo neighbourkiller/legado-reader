@@ -30,6 +30,17 @@ if (import.meta.env.VITE_APP_TARGET === 'desktop') {
         path: '/book-detail',
         name: 'book-detail',
         component: () => import('@/views/BookDetailView.vue'),
+    }, {
+        path: '/settings',
+        name: 'settings',
+        component: () => import('@/views/SettingsView.vue'),
+    }, {
+        path: '/settings/preferences',
+        name: 'settings-preferences',
+        redirect: {
+            path: '/settings',
+            query: { section: 'preferences' },
+        },
     });
 }
 const router = createRouter({

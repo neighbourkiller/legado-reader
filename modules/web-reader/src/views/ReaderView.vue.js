@@ -1,8 +1,8 @@
-import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import { ElMessage } from 'element-plus';
-import { Document as DetailIcon, Download as DownloadIcon, Refresh as RefreshIcon, } from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { Document as DetailIcon, Download as DownloadIcon, Refresh as RefreshIcon, CollectionTag as BookmarkIcon, } from '@element-plus/icons-vue';
 import { useReadingStore } from '@/stores/reading';
 import { useTheme } from '@/composables/useTheme';
 import { useFullscreen } from '@/composables/useFullscreen';
@@ -10,9 +10,11 @@ import PopCatalog from '@/components/PopCatalog.vue';
 import ReadSettings from '@/components/ReadSettings.vue';
 import ChapterContent from '@/components/ChapterContent.vue';
 import NovelDownloadDialog from '@/components/NovelDownloadDialog.vue';
+import ReaderBookmarksDrawer from '@/components/ReaderBookmarksDrawer.vue';
 import themeConfig from '@/config/themeConfig';
 import jump from '@/plugins/jump';
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow';
+import { addReadingTime, deleteBookmark, getBookmarksByBookId, getBookmarkAt, saveBookmark, } from '@/storage/db';
 import '@/assets/fonts/iconfont.css';
 const route = useRoute();
 const router = useRouter();
@@ -24,6 +26,13 @@ const chapterData = ref([]);
 const chapterLoading = ref(false);
 const showToolBar = ref(false);
 const downloadDialogVisible = ref(false);
+const bookmarkDrawerVisible = ref(false);
+const bookmarkSaving = ref(false);
+const bookmarksLoading = ref(false);
+const currentBookBookmarks = ref([]);
+const bookmarkDrawerPosition = ref(null);
+const currentPositionKey = ref('');
+const bookmarkedPositionKey = ref('');
 const supportsBookDetail = import.meta.env.VITE_APP_TARGET === 'desktop';
 let contentGeneration = 0;
 let scrollObserver = null;
@@ -31,6 +40,7 @@ const topRef = ref();
 const bottomRef = ref();
 const loadingRef = ref();
 const contentRef = ref();
+let readingSessionStartedAt = 0;
 // 章节状态
 const currentChapterIndex = computed(() => currentBook.value?.currentChapter ?? 0);
 const isFirstChapter = computed(() => currentChapterIndex.value <= 0);
@@ -141,6 +151,164 @@ const fontFamilyStr = computed(() => {
 });
 const fontSizeStr = computed(() => `${settings.value.fontSize || 18}px`);
 const infiniteLoading = computed(() => settings.value.infiniteLoading);
+const isCurrentPositionBookmarked = computed(() => currentPositionKey.value !== '' && currentPositionKey.value === bookmarkedPositionKey.value);
+const findReadingPosition = () => {
+    const elements = document.elementsFromPoint(window.innerWidth / 2, Math.min(180, Math.max(80, window.innerHeight / 4)));
+    const readingElement = elements.find(element => element.closest('[data-chapter-index]'));
+    const chapterElement = readingElement?.closest('[data-chapter-index]');
+    if (!chapterElement)
+        return null;
+    const chapterIndex = Number(chapterElement.dataset.chapterIndex);
+    if (!Number.isInteger(chapterIndex))
+        return null;
+    const positionElement = readingElement?.closest('[data-chapterpos]');
+    const rawPosition = Number(positionElement?.dataset.chapterpos);
+    const chapterPos = Number.isInteger(rawPosition) ? rawPosition : 0;
+    const content = (positionElement?.innerText || readingElement?.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 180);
+    return { chapterIndex, chapterPos, content };
+};
+const syncBookmarkState = async (position = findReadingPosition()) => {
+    if (!position || !currentBook.value)
+        return;
+    const key = `${currentBook.value.id}:${position.chapterIndex}:${position.chapterPos}`;
+    if (key === currentPositionKey.value)
+        return;
+    currentPositionKey.value = key;
+    const bookmark = await getBookmarkAt(currentBook.value.id, position.chapterIndex, position.chapterPos).catch(() => undefined);
+    if (currentPositionKey.value === key) {
+        bookmarkedPositionKey.value = bookmark ? key : '';
+    }
+};
+const loadCurrentBookBookmarks = async () => {
+    if (!currentBook.value)
+        return;
+    bookmarksLoading.value = true;
+    try {
+        currentBookBookmarks.value = await getBookmarksByBookId(currentBook.value.id);
+    }
+    catch (error) {
+        console.error('读取本书书签失败', error);
+        ElMessage.error('读取本书书签失败');
+    }
+    finally {
+        bookmarksLoading.value = false;
+    }
+};
+const openBookmarksDrawer = async () => {
+    const position = findReadingPosition();
+    bookmarkDrawerPosition.value = position;
+    bookmarkDrawerVisible.value = true;
+    if (position)
+        await syncBookmarkState(position);
+    await loadCurrentBookBookmarks();
+};
+const toggleBookmark = async (position) => {
+    if (bookmarkSaving.value || !currentBook.value)
+        return;
+    if (!position) {
+        ElMessage.warning('暂时无法确定当前阅读位置');
+        return;
+    }
+    bookmarkSaving.value = true;
+    try {
+        const existing = await getBookmarkAt(currentBook.value.id, position.chapterIndex, position.chapterPos);
+        const key = `${currentBook.value.id}:${position.chapterIndex}:${position.chapterPos}`;
+        currentPositionKey.value = key;
+        if (existing) {
+            await deleteBookmark(existing.id);
+            bookmarkedPositionKey.value = '';
+            ElMessage.success('书签已删除');
+        }
+        else {
+            const chapterTitle = chapters.value[position.chapterIndex]?.title || `第${position.chapterIndex + 1}章`;
+            await saveBookmark({
+                id: key,
+                bookId: currentBook.value.id,
+                bookName: currentBook.value.name,
+                bookAuthor: currentBook.value.author,
+                chapterIndex: position.chapterIndex,
+                chapterPos: position.chapterPos,
+                chapterTitle,
+                content: position.content || chapterTitle,
+                createdAt: Date.now(),
+            });
+            bookmarkedPositionKey.value = key;
+            ElMessage.success('书签已添加');
+        }
+        await loadCurrentBookBookmarks();
+    }
+    catch (error) {
+        console.error('保存书签失败', error);
+        ElMessage.error('书签操作失败');
+    }
+    finally {
+        bookmarkSaving.value = false;
+    }
+};
+const toggleCurrentBookmark = () => toggleBookmark(bookmarkDrawerPosition.value);
+const removeBookmarkFromDrawer = async (bookmark) => {
+    try {
+        await ElMessageBox.confirm(`确定删除“${bookmark.chapterTitle}”的这条书签吗？`, '删除书签', {
+            confirmButtonText: '删除',
+            cancelButtonText: '取消',
+            type: 'warning',
+        });
+        await deleteBookmark(bookmark.id);
+        currentBookBookmarks.value = currentBookBookmarks.value.filter(item => item.id !== bookmark.id);
+        if (bookmarkedPositionKey.value === bookmark.id)
+            bookmarkedPositionKey.value = '';
+        ElMessage.success('书签已删除');
+    }
+    catch (error) {
+        if (error !== 'cancel' && error !== 'close') {
+            console.error('删除书签失败', error);
+            ElMessage.error('删除书签失败');
+        }
+    }
+};
+const jumpToBookmark = async (bookmark) => {
+    bookmarkDrawerVisible.value = false;
+    if (!chapterData.value.some(chapter => chapter.index === bookmark.chapterIndex)) {
+        const loaded = await getContent(bookmark.chapterIndex, true);
+        if (!loaded)
+            return;
+    }
+    await nextTick();
+    const target = document.querySelector(`[data-chapter-index="${bookmark.chapterIndex}"] [data-chapterpos="${bookmark.chapterPos}"]`);
+    if (!target) {
+        ElMessage.warning('暂时无法定位到该书签');
+        return;
+    }
+    jump(target, { duration: 0 });
+    await store.saveProgress(bookmark.chapterIndex).catch(console.error);
+    currentPositionKey.value = bookmark.id;
+    bookmarkedPositionKey.value = bookmark.id;
+    bookmarkDrawerPosition.value = {
+        chapterIndex: bookmark.chapterIndex,
+        chapterPos: bookmark.chapterPos,
+        content: bookmark.content,
+    };
+    router.replace({
+        path: route.path,
+        query: {
+            ...route.query,
+            chapter: String(bookmark.chapterIndex),
+            pos: String(bookmark.chapterPos),
+        },
+    }).catch(console.error);
+};
+const flushReadingSession = async (continueSession = document.visibilityState === 'visible') => {
+    if (!supportsBookDetail || !currentBook.value || readingSessionStartedAt === 0)
+        return;
+    const duration = Math.max(0, Date.now() - readingSessionStartedAt);
+    readingSessionStartedAt = continueSession ? Date.now() : 0;
+    await addReadingTime(currentBook.value, duration).catch(error => {
+        console.warn('保存阅读记录失败', error);
+    });
+};
 // 点击屏幕切换移动端工具栏
 const handleWrapperClick = () => {
     if (miniInterface.value) {
@@ -318,17 +486,15 @@ const ignoreKeyPress = (event) => {
 let progressFrame = null;
 const updateReadingProgress = () => {
     progressFrame = null;
-    let paragraph = null;
-    for (const element of document.elementsFromPoint(window.innerWidth / 2, 40)) {
-        paragraph = element.closest('[data-chapterpos]');
-        if (paragraph !== null)
-            break;
-    }
-    const chapterElem = paragraph?.closest('[data-chapter-index]');
-    const index = Number(chapterElem?.dataset.chapterIndex);
+    const position = findReadingPosition();
+    if (!position)
+        return;
+    const index = position.chapterIndex;
     if (Number.isInteger(index) && index !== currentChapterIndex.value) {
         store.saveProgress(index).catch(console.error);
     }
+    if (supportsBookDetail)
+        syncBookmarkState(position).catch(console.error);
 };
 const onScroll = () => {
     if (progressFrame === null) {
@@ -366,8 +532,13 @@ watch(() => isDark.value, dark => {
 });
 // 监听页面隐藏自动保存进度
 const onVisibilityChange = () => {
-    if (document.visibilityState === 'hidden' && currentBook.value) {
-        store.saveProgress().catch(console.error);
+    if (document.visibilityState === 'hidden') {
+        if (currentBook.value)
+            store.saveProgress().catch(console.error);
+        flushReadingSession().catch(console.error);
+    }
+    else if (supportsBookDetail && currentBook.value && readingSessionStartedAt === 0) {
+        readingSessionStartedAt = Date.now();
     }
 };
 onMounted(async () => {
@@ -379,6 +550,10 @@ onMounted(async () => {
     }
     try {
         await store.loadBook(bookId);
+        if (supportsBookDetail) {
+            await addReadingTime(currentBook.value, 0).catch(console.error);
+            readingSessionStartedAt = Date.now();
+        }
         // 初始化时同步当前书架浅色/暗黑模式
         if (isDark.value && settings.value.theme !== 6) {
             settings.value.theme = 6;
@@ -414,8 +589,20 @@ onMounted(async () => {
             ElMessage.warning('该书籍未包含任何章节');
             return;
         }
-        const initialChapter = Math.max(0, Math.min(chapters.value.length - 1, currentBook.value?.currentChapter ?? 0));
+        const requestedChapter = Number(route.query.chapter);
+        const initialChapter = Math.max(0, Math.min(chapters.value.length - 1, Number.isInteger(requestedChapter)
+            ? requestedChapter
+            : (currentBook.value?.currentChapter ?? 0)));
         await getContent(initialChapter, true);
+        await nextTick();
+        const requestedPosition = Number(route.query.pos);
+        if (Number.isInteger(requestedPosition) && requestedPosition >= 0) {
+            const target = document.querySelector(`[data-chapter-index="${initialChapter}"] [data-chapterpos="${requestedPosition}"]`);
+            if (target)
+                jump(target, { duration: 0 });
+        }
+        if (supportsBookDetail)
+            await syncBookmarkState();
         window.addEventListener('keyup', handleKeyPress);
         window.addEventListener('keydown', ignoreKeyPress);
         window.addEventListener('scroll', onScroll, { passive: true });
@@ -434,6 +621,7 @@ onMounted(async () => {
     }
 });
 onUnmounted(() => {
+    flushReadingSession(false).catch(console.error);
     window.removeEventListener('keyup', handleKeyPress);
     window.removeEventListener('keydown', ignoreKeyPress);
     window.removeEventListener('resize', onResize);
@@ -451,6 +639,7 @@ onBeforeRouteLeave(() => {
     window.removeEventListener('keyup', handleKeyPress);
     if (currentBook.value) {
         store.saveProgress().catch(console.error);
+        flushReadingSession(false).catch(console.error);
     }
 });
 const __VLS_ctx = {
@@ -460,6 +649,10 @@ const __VLS_ctx = {
 let __VLS_components;
 let __VLS_intrinsics;
 let __VLS_directives;
+/** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
+/** @type {__VLS_StyleScopedClasses['action-icon']} */ ;
+/** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['no-point']} */ ;
 /** @type {__VLS_StyleScopedClasses['tools']} */ ;
 /** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['iconfont']} */ ;
@@ -479,6 +672,8 @@ let __VLS_directives;
 /** @type {__VLS_StyleScopedClasses['tools']} */ ;
 /** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['iconfont']} */ ;
+/** @type {__VLS_StyleScopedClasses['bookmark-bar']} */ ;
+/** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['chapter']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ onClick: (__VLS_ctx.handleWrapperClick) },
@@ -764,6 +959,47 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "icon-text" },
 });
 /** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+if (__VLS_ctx.supportsBookDetail) {
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ onClick: () => { } },
+        ...{ class: "bookmark-bar" },
+        ...{ style: (__VLS_ctx.rightBarTheme) },
+    });
+    /** @type {__VLS_StyleScopedClasses['bookmark-bar']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ onClick: (__VLS_ctx.openBookmarksDrawer) },
+        ...{ class: "tool-icon" },
+        ...{ class: ({ active: __VLS_ctx.isCurrentPositionBookmarked }) },
+        title: "查看本书书签",
+    });
+    /** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
+    /** @type {__VLS_StyleScopedClasses['active']} */ ;
+    let __VLS_59;
+    /** @ts-ignore @type { | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon'] | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon']} */
+    elIcon;
+    // @ts-ignore
+    const __VLS_60 = __VLS_asFunctionalComponent1(__VLS_59, new __VLS_59({
+        ...{ class: "action-icon" },
+    }));
+    const __VLS_61 = __VLS_60({
+        ...{ class: "action-icon" },
+    }, ...__VLS_functionalComponentArgsRest(__VLS_60));
+    /** @type {__VLS_StyleScopedClasses['action-icon']} */ ;
+    const { default: __VLS_64 } = __VLS_62.slots;
+    let __VLS_65;
+    /** @ts-ignore @type { | typeof __VLS_components.BookmarkIcon} */
+    BookmarkIcon;
+    // @ts-ignore
+    const __VLS_66 = __VLS_asFunctionalComponent1(__VLS_65, new __VLS_65({}));
+    const __VLS_67 = __VLS_66({}, ...__VLS_functionalComponentArgsRest(__VLS_66));
+    // @ts-ignore
+    [supportsBookDetail, toggleFullscreen, isFullscreen, isFullscreen, toTop, toBottom, rightBarTheme, openBookmarksDrawer, isCurrentPositionBookmarked,];
+    var __VLS_62;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ class: "icon-text" },
+    });
+    /** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+}
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ onClick: () => { } },
     ...{ class: "read-bar" },
@@ -822,9 +1058,9 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         key: (data.index),
         'data-chapter-index': (data.index),
     });
-    const __VLS_59 = ChapterContent;
+    const __VLS_70 = ChapterContent;
     // @ts-ignore
-    const __VLS_60 = __VLS_asFunctionalComponent1(__VLS_59, new __VLS_59({
+    const __VLS_71 = __VLS_asFunctionalComponent1(__VLS_70, new __VLS_70({
         contents: (data.content),
         title: (data.title),
         format: (data.format),
@@ -833,7 +1069,7 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         fontFamily: (__VLS_ctx.fontFamilyStr),
         chapterIndex: (data.index),
     }));
-    const __VLS_61 = __VLS_60({
+    const __VLS_72 = __VLS_71({
         contents: (data.content),
         title: (data.title),
         format: (data.format),
@@ -841,9 +1077,9 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         fontSize: (__VLS_ctx.fontSizeStr),
         fontFamily: (__VLS_ctx.fontFamilyStr),
         chapterIndex: (data.index),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_60));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_71));
     // @ts-ignore
-    [toggleFullscreen, isFullscreen, isFullscreen, toTop, toBottom, rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
+    [rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
 }
 if (__VLS_ctx.infiniteLoading) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
@@ -857,19 +1093,56 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ref: "bottomRef",
 });
 /** @type {__VLS_StyleScopedClasses['bottom-bar']} */ ;
-const __VLS_64 = NovelDownloadDialog;
+const __VLS_75 = NovelDownloadDialog;
 // @ts-ignore
-const __VLS_65 = __VLS_asFunctionalComponent1(__VLS_64, new __VLS_64({
+const __VLS_76 = __VLS_asFunctionalComponent1(__VLS_75, new __VLS_75({
     modelValue: (__VLS_ctx.downloadDialogVisible),
     book: (__VLS_ctx.currentBook),
     chapters: (__VLS_ctx.chapters),
 }));
-const __VLS_66 = __VLS_65({
+const __VLS_77 = __VLS_76({
     modelValue: (__VLS_ctx.downloadDialogVisible),
     book: (__VLS_ctx.currentBook),
     chapters: (__VLS_ctx.chapters),
-}, ...__VLS_functionalComponentArgsRest(__VLS_65));
+}, ...__VLS_functionalComponentArgsRest(__VLS_76));
+const __VLS_80 = ReaderBookmarksDrawer;
 // @ts-ignore
-[downloadDialogVisible, currentBook, infiniteLoading, chapters,];
+const __VLS_81 = __VLS_asFunctionalComponent1(__VLS_80, new __VLS_80({
+    ...{ 'onToggleCurrent': {} },
+    ...{ 'onJump': {} },
+    ...{ 'onDelete': {} },
+    modelValue: (__VLS_ctx.bookmarkDrawerVisible),
+    bookmarks: (__VLS_ctx.currentBookBookmarks),
+    loading: (__VLS_ctx.bookmarksLoading),
+    saving: (__VLS_ctx.bookmarkSaving),
+    currentPositionBookmarked: (__VLS_ctx.isCurrentPositionBookmarked),
+}));
+const __VLS_82 = __VLS_81({
+    ...{ 'onToggleCurrent': {} },
+    ...{ 'onJump': {} },
+    ...{ 'onDelete': {} },
+    modelValue: (__VLS_ctx.bookmarkDrawerVisible),
+    bookmarks: (__VLS_ctx.currentBookBookmarks),
+    loading: (__VLS_ctx.bookmarksLoading),
+    saving: (__VLS_ctx.bookmarkSaving),
+    currentPositionBookmarked: (__VLS_ctx.isCurrentPositionBookmarked),
+}, ...__VLS_functionalComponentArgsRest(__VLS_81));
+let __VLS_85;
+const __VLS_86 = {
+    /** @type {typeof __VLS_85.toggleCurrent} */
+    onToggleCurrent: (__VLS_ctx.toggleCurrentBookmark),
+};
+const __VLS_87 = {
+    /** @type {typeof __VLS_85.jump} */
+    onJump: (__VLS_ctx.jumpToBookmark),
+};
+const __VLS_88 = {
+    /** @type {typeof __VLS_85.delete} */
+    onDelete: (__VLS_ctx.removeBookmarkFromDrawer),
+};
+var __VLS_83;
+var __VLS_84;
+// @ts-ignore
+[downloadDialogVisible, currentBook, isCurrentPositionBookmarked, infiniteLoading, chapters, bookmarkDrawerVisible, currentBookBookmarks, bookmarksLoading, bookmarkSaving, toggleCurrentBookmark, jumpToBookmark, removeBookmarkFromDrawer,];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

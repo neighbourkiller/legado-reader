@@ -1,7 +1,9 @@
+mod app_files;
 mod cookie_store;
 mod source_http;
 mod source_policy;
 
+use app_files::open_app_data_dir;
 use source_http::{
     check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
     open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
@@ -13,6 +15,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(AppState::new());
 
@@ -44,7 +47,8 @@ pub fn run() {
             check_cf_clearance,
             webview_fetch,
             toggle_fullscreen,
-            exit_fullscreen
+            exit_fullscreen,
+            open_app_data_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

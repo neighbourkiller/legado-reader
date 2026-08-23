@@ -1,17 +1,27 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessageBox, ElMessage } from 'element-plus';
-import { Search, Plus, UploadFilled } from '@element-plus/icons-vue';
+import { ArrowDown, Plus, Search, Sort as SortIcon, UploadFilled } from '@element-plus/icons-vue';
 import '@/assets/fonts/shelffont.css';
 import defaultCover from '@/assets/imgs/default_cover.jpg';
 import BookCard from '@/components/BookCard.vue';
 import ThemeToggle from '@/components/ThemeToggle.vue';
 import { useBookshelfStore } from '@/stores/bookshelf';
+import { useAppSettingsStore } from '@/stores/appSettings';
 import { useTheme } from '@/composables/useTheme';
 const router = useRouter();
+const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop';
 const bookshelfStore = useBookshelfStore();
+const appSettingsStore = useAppSettingsStore();
 const { isDark } = useTheme();
 const searchWord = ref('');
+const bookshelfSort = ref('recent');
+const bookshelfSortLabels = {
+    recent: '最近阅读',
+    name: '书名',
+    author: '作者',
+    progress: '阅读进度',
+};
 const isDragging = ref(false);
 const fileInputRef = ref(null);
 const coverFileInputRef = ref(null);
@@ -28,13 +38,29 @@ onMounted(async () => {
 });
 const filteredBooks = computed(() => {
     const query = searchWord.value.trim().toLowerCase();
-    if (!query)
-        return bookshelfStore.books;
-    return bookshelfStore.books.filter(b => {
+    const books = query ? bookshelfStore.books.filter(b => {
         return (b.name.toLowerCase().includes(query) ||
             (b.author && b.author.toLowerCase().includes(query)));
+    }) : bookshelfStore.books;
+    return [...books].sort((a, b) => {
+        if (bookshelfSort.value === 'name') {
+            return a.name.localeCompare(b.name, 'zh-CN');
+        }
+        if (bookshelfSort.value === 'author') {
+            return (a.author || '佚名').localeCompare(b.author || '佚名', 'zh-CN')
+                || a.name.localeCompare(b.name, 'zh-CN');
+        }
+        if (bookshelfSort.value === 'progress') {
+            return b.currentProgress - a.currentProgress || b.lastReadTime - a.lastReadTime;
+        }
+        return b.lastReadTime - a.lastReadTime;
     });
 });
+const handleBookshelfSortCommand = (command) => {
+    if (command in bookshelfSortLabels) {
+        bookshelfSort.value = command;
+    }
+};
 const mostRecentBook = computed(() => {
     if (bookshelfStore.books.length === 0)
         return null;
@@ -47,6 +73,13 @@ const openRecentBook = () => {
     }
 };
 const openBook = (id) => {
+    if (isDesktop && appSettingsStore.bookshelfClickAction === 'detail') {
+        router.push({
+            path: '/book-detail',
+            query: { id },
+        });
+        return;
+    }
     router.push(`/reader/${id}`);
 };
 const openBookDetail = (id) => {
@@ -303,6 +336,8 @@ let __VLS_directives;
 /** @type {__VLS_StyleScopedClasses['navigation-sub-title']} */ ;
 /** @type {__VLS_StyleScopedClasses['bottom-icons']} */ ;
 /** @type {__VLS_StyleScopedClasses['shelf-wrapper']} */ ;
+/** @type {__VLS_StyleScopedClasses['shelf-header']} */ ;
+/** @type {__VLS_StyleScopedClasses['shelf-header-right']} */ ;
 /** @type {__VLS_StyleScopedClasses['books-grid']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ onDragover: (__VLS_ctx.onDragOver) },
@@ -519,49 +554,208 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
 });
 /** @type {__VLS_StyleScopedClasses['shelf-header-right']} */ ;
 let __VLS_40;
-/** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
-elButton;
+/** @ts-ignore @type { | typeof __VLS_components.elDropdown | typeof __VLS_components.ElDropdown | typeof __VLS_components['el-dropdown'] | typeof __VLS_components.elDropdown | typeof __VLS_components.ElDropdown | typeof __VLS_components['el-dropdown']} */
+elDropdown;
 // @ts-ignore
 const __VLS_41 = __VLS_asFunctionalComponent1(__VLS_40, new __VLS_40({
-    ...{ 'onClick': {} },
-    type: "primary",
-    icon: (__VLS_ctx.Plus),
-    ...{ class: "import-btn" },
+    ...{ 'onCommand': {} },
 }));
 const __VLS_42 = __VLS_41({
-    ...{ 'onClick': {} },
-    type: "primary",
-    icon: (__VLS_ctx.Plus),
-    ...{ class: "import-btn" },
+    ...{ 'onCommand': {} },
 }, ...__VLS_functionalComponentArgsRest(__VLS_41));
 let __VLS_45;
 const __VLS_46 = {
-    /** @type {typeof __VLS_45.click} */
-    onClick: (__VLS_ctx.triggerUpload),
+    /** @type {typeof __VLS_45.command} */
+    onCommand: (__VLS_ctx.handleBookshelfSortCommand),
 };
-/** @type {__VLS_StyleScopedClasses['import-btn']} */ ;
 const { default: __VLS_47 } = __VLS_43.slots;
-// @ts-ignore
-[searchWord, openRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, filteredBooks, Plus, triggerUpload,];
-var __VLS_43;
-var __VLS_44;
 let __VLS_48;
 /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
 elButton;
 // @ts-ignore
 const __VLS_49 = __VLS_asFunctionalComponent1(__VLS_48, new __VLS_48({
+    plain: true,
+    icon: (__VLS_ctx.SortIcon),
+}));
+const __VLS_50 = __VLS_49({
+    plain: true,
+    icon: (__VLS_ctx.SortIcon),
+}, ...__VLS_functionalComponentArgsRest(__VLS_49));
+const { default: __VLS_53 } = __VLS_51.slots;
+(__VLS_ctx.bookshelfSortLabels[__VLS_ctx.bookshelfSort]);
+let __VLS_54;
+/** @ts-ignore @type { | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon'] | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon']} */
+elIcon;
+// @ts-ignore
+const __VLS_55 = __VLS_asFunctionalComponent1(__VLS_54, new __VLS_54({
+    ...{ class: "el-icon--right" },
+}));
+const __VLS_56 = __VLS_55({
+    ...{ class: "el-icon--right" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_55));
+/** @type {__VLS_StyleScopedClasses['el-icon--right']} */ ;
+const { default: __VLS_59 } = __VLS_57.slots;
+let __VLS_60;
+/** @ts-ignore @type { | typeof __VLS_components.ArrowDown} */
+ArrowDown;
+// @ts-ignore
+const __VLS_61 = __VLS_asFunctionalComponent1(__VLS_60, new __VLS_60({}));
+const __VLS_62 = __VLS_61({}, ...__VLS_functionalComponentArgsRest(__VLS_61));
+// @ts-ignore
+[searchWord, openRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, mostRecentBook, filteredBooks, handleBookshelfSortCommand, SortIcon, bookshelfSortLabels, bookshelfSort,];
+var __VLS_57;
+// @ts-ignore
+[];
+var __VLS_51;
+{
+    const { dropdown: __VLS_65 } = __VLS_43.slots;
+    let __VLS_66;
+    /** @ts-ignore @type { | typeof __VLS_components.elDropdownMenu | typeof __VLS_components.ElDropdownMenu | typeof __VLS_components['el-dropdown-menu'] | typeof __VLS_components.elDropdownMenu | typeof __VLS_components.ElDropdownMenu | typeof __VLS_components['el-dropdown-menu']} */
+    elDropdownMenu;
+    // @ts-ignore
+    const __VLS_67 = __VLS_asFunctionalComponent1(__VLS_66, new __VLS_66({}));
+    const __VLS_68 = __VLS_67({}, ...__VLS_functionalComponentArgsRest(__VLS_67));
+    const { default: __VLS_71 } = __VLS_69.slots;
+    let __VLS_72;
+    /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
+    elDropdownItem;
+    // @ts-ignore
+    const __VLS_73 = __VLS_asFunctionalComponent1(__VLS_72, new __VLS_72({
+        command: "recent",
+    }));
+    const __VLS_74 = __VLS_73({
+        command: "recent",
+    }, ...__VLS_functionalComponentArgsRest(__VLS_73));
+    const { default: __VLS_77 } = __VLS_75.slots;
+    // @ts-ignore
+    [];
+    var __VLS_75;
+    let __VLS_78;
+    /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
+    elDropdownItem;
+    // @ts-ignore
+    const __VLS_79 = __VLS_asFunctionalComponent1(__VLS_78, new __VLS_78({
+        command: "name",
+    }));
+    const __VLS_80 = __VLS_79({
+        command: "name",
+    }, ...__VLS_functionalComponentArgsRest(__VLS_79));
+    const { default: __VLS_83 } = __VLS_81.slots;
+    // @ts-ignore
+    [];
+    var __VLS_81;
+    let __VLS_84;
+    /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
+    elDropdownItem;
+    // @ts-ignore
+    const __VLS_85 = __VLS_asFunctionalComponent1(__VLS_84, new __VLS_84({
+        command: "author",
+    }));
+    const __VLS_86 = __VLS_85({
+        command: "author",
+    }, ...__VLS_functionalComponentArgsRest(__VLS_85));
+    const { default: __VLS_89 } = __VLS_87.slots;
+    // @ts-ignore
+    [];
+    var __VLS_87;
+    let __VLS_90;
+    /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
+    elDropdownItem;
+    // @ts-ignore
+    const __VLS_91 = __VLS_asFunctionalComponent1(__VLS_90, new __VLS_90({
+        command: "progress",
+    }));
+    const __VLS_92 = __VLS_91({
+        command: "progress",
+    }, ...__VLS_functionalComponentArgsRest(__VLS_91));
+    const { default: __VLS_95 } = __VLS_93.slots;
+    // @ts-ignore
+    [];
+    var __VLS_93;
+    // @ts-ignore
+    [];
+    var __VLS_69;
+    // @ts-ignore
+    [];
+}
+// @ts-ignore
+[];
+var __VLS_43;
+var __VLS_44;
+if (__VLS_ctx.isDesktop) {
+    let __VLS_96;
+    /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
+    elButton;
+    // @ts-ignore
+    const __VLS_97 = __VLS_asFunctionalComponent1(__VLS_96, new __VLS_96({
+        ...{ 'onClick': {} },
+        plain: true,
+    }));
+    const __VLS_98 = __VLS_97({
+        ...{ 'onClick': {} },
+        plain: true,
+    }, ...__VLS_functionalComponentArgsRest(__VLS_97));
+    let __VLS_101;
+    const __VLS_102 = {
+        /** @type {typeof __VLS_101.click} */
+        onClick: (...[$event]) => {
+            if (!(__VLS_ctx.isDesktop))
+                throw 0;
+            return (__VLS_ctx.router.push('/book-sources'));
+            // @ts-ignore
+            [router, isDesktop,];
+        },
+    };
+    const { default: __VLS_103 } = __VLS_99.slots;
+    // @ts-ignore
+    [];
+    var __VLS_99;
+    var __VLS_100;
+}
+let __VLS_104;
+/** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
+elButton;
+// @ts-ignore
+const __VLS_105 = __VLS_asFunctionalComponent1(__VLS_104, new __VLS_104({
+    ...{ 'onClick': {} },
+    type: "primary",
+    icon: (__VLS_ctx.Plus),
+    ...{ class: "import-btn" },
+}));
+const __VLS_106 = __VLS_105({
+    ...{ 'onClick': {} },
+    type: "primary",
+    icon: (__VLS_ctx.Plus),
+    ...{ class: "import-btn" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_105));
+let __VLS_109;
+const __VLS_110 = {
+    /** @type {typeof __VLS_109.click} */
+    onClick: (__VLS_ctx.triggerUpload),
+};
+/** @type {__VLS_StyleScopedClasses['import-btn']} */ ;
+const { default: __VLS_111 } = __VLS_107.slots;
+// @ts-ignore
+[Plus, triggerUpload,];
+var __VLS_107;
+var __VLS_108;
+let __VLS_112;
+/** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
+elButton;
+// @ts-ignore
+const __VLS_113 = __VLS_asFunctionalComponent1(__VLS_112, new __VLS_112({
     ...{ 'onClick': {} },
     plain: true,
     ...{ class: "back-home-btn" },
 }));
-const __VLS_50 = __VLS_49({
+const __VLS_114 = __VLS_113({
     ...{ 'onClick': {} },
     plain: true,
     ...{ class: "back-home-btn" },
-}, ...__VLS_functionalComponentArgsRest(__VLS_49));
-let __VLS_53;
-const __VLS_54 = {
-    /** @type {typeof __VLS_53.click} */
+}, ...__VLS_functionalComponentArgsRest(__VLS_113));
+let __VLS_117;
+const __VLS_118 = {
+    /** @type {typeof __VLS_117.click} */
     onClick: (...[$event]) => {
         return (__VLS_ctx.router.push('/'));
         // @ts-ignore
@@ -569,20 +763,20 @@ const __VLS_54 = {
     },
 };
 /** @type {__VLS_StyleScopedClasses['back-home-btn']} */ ;
-const { default: __VLS_55 } = __VLS_51.slots;
+const { default: __VLS_119 } = __VLS_115.slots;
 // @ts-ignore
 [];
-var __VLS_51;
-var __VLS_52;
+var __VLS_115;
+var __VLS_116;
 if (__VLS_ctx.filteredBooks.length > 0) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "books-grid" },
     });
     /** @type {__VLS_StyleScopedClasses['books-grid']} */ ;
     for (const [book] of __VLS_vFor((__VLS_ctx.filteredBooks))) {
-        const __VLS_56 = BookCard;
+        const __VLS_120 = BookCard;
         // @ts-ignore
-        const __VLS_57 = __VLS_asFunctionalComponent1(__VLS_56, new __VLS_56({
+        const __VLS_121 = __VLS_asFunctionalComponent1(__VLS_120, new __VLS_120({
             ...{ 'onOpen': {} },
             ...{ 'onDetail': {} },
             ...{ 'onEdit': {} },
@@ -590,65 +784,65 @@ if (__VLS_ctx.filteredBooks.length > 0) {
             key: (book.id),
             book: (book),
         }));
-        const __VLS_58 = __VLS_57({
+        const __VLS_122 = __VLS_121({
             ...{ 'onOpen': {} },
             ...{ 'onDetail': {} },
             ...{ 'onEdit': {} },
             ...{ 'onDelete': {} },
             key: (book.id),
             book: (book),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_57));
-        let __VLS_61;
-        const __VLS_62 = {
-            /** @type {typeof __VLS_61.open} */
+        }, ...__VLS_functionalComponentArgsRest(__VLS_121));
+        let __VLS_125;
+        const __VLS_126 = {
+            /** @type {typeof __VLS_125.open} */
             onOpen: (__VLS_ctx.openBook),
         };
-        const __VLS_63 = {
-            /** @type {typeof __VLS_61.detail} */
+        const __VLS_127 = {
+            /** @type {typeof __VLS_125.detail} */
             onDetail: (__VLS_ctx.openBookDetail),
         };
-        const __VLS_64 = {
-            /** @type {typeof __VLS_61.edit} */
+        const __VLS_128 = {
+            /** @type {typeof __VLS_125.edit} */
             onEdit: (__VLS_ctx.handleEditBook),
         };
-        const __VLS_65 = {
-            /** @type {typeof __VLS_61.delete} */
+        const __VLS_129 = {
+            /** @type {typeof __VLS_125.delete} */
             onDelete: (__VLS_ctx.confirmDeleteBook),
         };
-        var __VLS_59;
-        var __VLS_60;
+        var __VLS_123;
+        var __VLS_124;
         // @ts-ignore
         [filteredBooks, filteredBooks, openBook, openBookDetail, handleEditBook, confirmDeleteBook,];
     }
 }
 else if (__VLS_ctx.searchWord) {
-    let __VLS_66;
+    let __VLS_130;
     /** @ts-ignore @type { | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty'] | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty']} */
     elEmpty;
     // @ts-ignore
-    const __VLS_67 = __VLS_asFunctionalComponent1(__VLS_66, new __VLS_66({
+    const __VLS_131 = __VLS_asFunctionalComponent1(__VLS_130, new __VLS_130({
         description: "未找到匹配的书籍",
         ...{ class: "shelf-empty" },
     }));
-    const __VLS_68 = __VLS_67({
+    const __VLS_132 = __VLS_131({
         description: "未找到匹配的书籍",
         ...{ class: "shelf-empty" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_67));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_131));
     /** @type {__VLS_StyleScopedClasses['shelf-empty']} */ ;
-    const { default: __VLS_71 } = __VLS_69.slots;
-    let __VLS_72;
+    const { default: __VLS_135 } = __VLS_133.slots;
+    let __VLS_136;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_73 = __VLS_asFunctionalComponent1(__VLS_72, new __VLS_72({
+    const __VLS_137 = __VLS_asFunctionalComponent1(__VLS_136, new __VLS_136({
         ...{ 'onClick': {} },
     }));
-    const __VLS_74 = __VLS_73({
+    const __VLS_138 = __VLS_137({
         ...{ 'onClick': {} },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_73));
-    let __VLS_77;
-    const __VLS_78 = {
-        /** @type {typeof __VLS_77.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_137));
+    let __VLS_141;
+    const __VLS_142 = {
+        /** @type {typeof __VLS_141.click} */
         onClick: (...[$event]) => {
             if (!!(__VLS_ctx.filteredBooks.length > 0))
                 throw 0;
@@ -659,57 +853,57 @@ else if (__VLS_ctx.searchWord) {
             [searchWord, searchWord,];
         },
     };
-    const { default: __VLS_79 } = __VLS_75.slots;
+    const { default: __VLS_143 } = __VLS_139.slots;
     // @ts-ignore
     [];
-    var __VLS_75;
-    var __VLS_76;
+    var __VLS_139;
+    var __VLS_140;
     // @ts-ignore
     [];
-    var __VLS_69;
+    var __VLS_133;
 }
 else {
-    let __VLS_80;
+    let __VLS_144;
     /** @ts-ignore @type { | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty'] | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty']} */
     elEmpty;
     // @ts-ignore
-    const __VLS_81 = __VLS_asFunctionalComponent1(__VLS_80, new __VLS_80({
+    const __VLS_145 = __VLS_asFunctionalComponent1(__VLS_144, new __VLS_144({
         description: "书架空空如也，去导入电子书吧",
         ...{ class: "shelf-empty" },
     }));
-    const __VLS_82 = __VLS_81({
+    const __VLS_146 = __VLS_145({
         description: "书架空空如也，去导入电子书吧",
         ...{ class: "shelf-empty" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_81));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_145));
     /** @type {__VLS_StyleScopedClasses['shelf-empty']} */ ;
-    const { default: __VLS_85 } = __VLS_83.slots;
-    let __VLS_86;
+    const { default: __VLS_149 } = __VLS_147.slots;
+    let __VLS_150;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_87 = __VLS_asFunctionalComponent1(__VLS_86, new __VLS_86({
+    const __VLS_151 = __VLS_asFunctionalComponent1(__VLS_150, new __VLS_150({
         ...{ 'onClick': {} },
         type: "primary",
         icon: (__VLS_ctx.Plus),
     }));
-    const __VLS_88 = __VLS_87({
+    const __VLS_152 = __VLS_151({
         ...{ 'onClick': {} },
         type: "primary",
         icon: (__VLS_ctx.Plus),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_87));
-    let __VLS_91;
-    const __VLS_92 = {
-        /** @type {typeof __VLS_91.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_151));
+    let __VLS_155;
+    const __VLS_156 = {
+        /** @type {typeof __VLS_155.click} */
         onClick: (__VLS_ctx.triggerUpload),
     };
-    const { default: __VLS_93 } = __VLS_89.slots;
+    const { default: __VLS_157 } = __VLS_153.slots;
     // @ts-ignore
     [Plus, triggerUpload,];
-    var __VLS_89;
-    var __VLS_90;
+    var __VLS_153;
+    var __VLS_154;
     // @ts-ignore
     [];
-    var __VLS_83;
+    var __VLS_147;
 }
 __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     ...{ onChange: (__VLS_ctx.handleFileSelect) },
@@ -719,111 +913,111 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     multiple: true,
     ...{ style: {} },
 });
-let __VLS_94;
+let __VLS_158;
 /** @ts-ignore @type { | typeof __VLS_components.elDialog | typeof __VLS_components.ElDialog | typeof __VLS_components['el-dialog'] | typeof __VLS_components.elDialog | typeof __VLS_components.ElDialog | typeof __VLS_components['el-dialog']} */
 elDialog;
 // @ts-ignore
-const __VLS_95 = __VLS_asFunctionalComponent1(__VLS_94, new __VLS_94({
+const __VLS_159 = __VLS_asFunctionalComponent1(__VLS_158, new __VLS_158({
     modelValue: (__VLS_ctx.showEditDialog),
     title: "修改书籍信息",
     width: "480px",
     destroyOnClose: true,
     alignCenter: true,
 }));
-const __VLS_96 = __VLS_95({
+const __VLS_160 = __VLS_159({
     modelValue: (__VLS_ctx.showEditDialog),
     title: "修改书籍信息",
     width: "480px",
     destroyOnClose: true,
     alignCenter: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_95));
-const { default: __VLS_99 } = __VLS_97.slots;
-let __VLS_100;
+}, ...__VLS_functionalComponentArgsRest(__VLS_159));
+const { default: __VLS_163 } = __VLS_161.slots;
+let __VLS_164;
 /** @ts-ignore @type { | typeof __VLS_components.elForm | typeof __VLS_components.ElForm | typeof __VLS_components['el-form'] | typeof __VLS_components.elForm | typeof __VLS_components.ElForm | typeof __VLS_components['el-form']} */
 elForm;
 // @ts-ignore
-const __VLS_101 = __VLS_asFunctionalComponent1(__VLS_100, new __VLS_100({
+const __VLS_165 = __VLS_asFunctionalComponent1(__VLS_164, new __VLS_164({
     model: (__VLS_ctx.editForm),
     labelPosition: "top",
 }));
-const __VLS_102 = __VLS_101({
+const __VLS_166 = __VLS_165({
     model: (__VLS_ctx.editForm),
     labelPosition: "top",
-}, ...__VLS_functionalComponentArgsRest(__VLS_101));
-const { default: __VLS_105 } = __VLS_103.slots;
-let __VLS_106;
+}, ...__VLS_functionalComponentArgsRest(__VLS_165));
+const { default: __VLS_169 } = __VLS_167.slots;
+let __VLS_170;
 /** @ts-ignore @type { | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item'] | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item']} */
 elFormItem;
 // @ts-ignore
-const __VLS_107 = __VLS_asFunctionalComponent1(__VLS_106, new __VLS_106({
+const __VLS_171 = __VLS_asFunctionalComponent1(__VLS_170, new __VLS_170({
     label: "书籍名称",
     required: true,
 }));
-const __VLS_108 = __VLS_107({
+const __VLS_172 = __VLS_171({
     label: "书籍名称",
     required: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_107));
-const { default: __VLS_111 } = __VLS_109.slots;
-let __VLS_112;
+}, ...__VLS_functionalComponentArgsRest(__VLS_171));
+const { default: __VLS_175 } = __VLS_173.slots;
+let __VLS_176;
 /** @ts-ignore @type { | typeof __VLS_components.elInput | typeof __VLS_components.ElInput | typeof __VLS_components['el-input']} */
 elInput;
 // @ts-ignore
-const __VLS_113 = __VLS_asFunctionalComponent1(__VLS_112, new __VLS_112({
+const __VLS_177 = __VLS_asFunctionalComponent1(__VLS_176, new __VLS_176({
     modelValue: (__VLS_ctx.editForm.name),
     placeholder: "请输入书名",
     maxlength: "100",
     showWordLimit: true,
 }));
-const __VLS_114 = __VLS_113({
+const __VLS_178 = __VLS_177({
     modelValue: (__VLS_ctx.editForm.name),
     placeholder: "请输入书名",
     maxlength: "100",
     showWordLimit: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_113));
+}, ...__VLS_functionalComponentArgsRest(__VLS_177));
 // @ts-ignore
 [handleFileSelect, showEditDialog, editForm, editForm,];
-var __VLS_109;
-let __VLS_117;
+var __VLS_173;
+let __VLS_181;
 /** @ts-ignore @type { | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item'] | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item']} */
 elFormItem;
 // @ts-ignore
-const __VLS_118 = __VLS_asFunctionalComponent1(__VLS_117, new __VLS_117({
+const __VLS_182 = __VLS_asFunctionalComponent1(__VLS_181, new __VLS_181({
     label: "作者",
 }));
-const __VLS_119 = __VLS_118({
+const __VLS_183 = __VLS_182({
     label: "作者",
-}, ...__VLS_functionalComponentArgsRest(__VLS_118));
-const { default: __VLS_122 } = __VLS_120.slots;
-let __VLS_123;
+}, ...__VLS_functionalComponentArgsRest(__VLS_182));
+const { default: __VLS_186 } = __VLS_184.slots;
+let __VLS_187;
 /** @ts-ignore @type { | typeof __VLS_components.elInput | typeof __VLS_components.ElInput | typeof __VLS_components['el-input']} */
 elInput;
 // @ts-ignore
-const __VLS_124 = __VLS_asFunctionalComponent1(__VLS_123, new __VLS_123({
+const __VLS_188 = __VLS_asFunctionalComponent1(__VLS_187, new __VLS_187({
     modelValue: (__VLS_ctx.editForm.author),
     placeholder: "请输入作者",
     maxlength: "50",
     showWordLimit: true,
 }));
-const __VLS_125 = __VLS_124({
+const __VLS_189 = __VLS_188({
     modelValue: (__VLS_ctx.editForm.author),
     placeholder: "请输入作者",
     maxlength: "50",
     showWordLimit: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_124));
+}, ...__VLS_functionalComponentArgsRest(__VLS_188));
 // @ts-ignore
 [editForm,];
-var __VLS_120;
-let __VLS_128;
+var __VLS_184;
+let __VLS_192;
 /** @ts-ignore @type { | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item'] | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item']} */
 elFormItem;
 // @ts-ignore
-const __VLS_129 = __VLS_asFunctionalComponent1(__VLS_128, new __VLS_128({
+const __VLS_193 = __VLS_asFunctionalComponent1(__VLS_192, new __VLS_192({
     label: "封面设置",
 }));
-const __VLS_130 = __VLS_129({
+const __VLS_194 = __VLS_193({
     label: "封面设置",
-}, ...__VLS_functionalComponentArgsRest(__VLS_129));
-const { default: __VLS_133 } = __VLS_131.slots;
+}, ...__VLS_functionalComponentArgsRest(__VLS_193));
+const { default: __VLS_197 } = __VLS_195.slots;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "cover-edit-section" },
 });
@@ -842,140 +1036,140 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "cover-inputs" },
 });
 /** @type {__VLS_StyleScopedClasses['cover-inputs']} */ ;
-let __VLS_134;
+let __VLS_198;
 /** @ts-ignore @type { | typeof __VLS_components.elInput | typeof __VLS_components.ElInput | typeof __VLS_components['el-input']} */
 elInput;
 // @ts-ignore
-const __VLS_135 = __VLS_asFunctionalComponent1(__VLS_134, new __VLS_134({
+const __VLS_199 = __VLS_asFunctionalComponent1(__VLS_198, new __VLS_198({
     modelValue: (__VLS_ctx.editForm.coverUrl),
     placeholder: "输入封面图片 URL 链接",
     clearable: true,
 }));
-const __VLS_136 = __VLS_135({
+const __VLS_200 = __VLS_199({
     modelValue: (__VLS_ctx.editForm.coverUrl),
     placeholder: "输入封面图片 URL 链接",
     clearable: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_135));
+}, ...__VLS_functionalComponentArgsRest(__VLS_199));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "cover-action-btns" },
 });
 /** @type {__VLS_StyleScopedClasses['cover-action-btns']} */ ;
-let __VLS_139;
+let __VLS_203;
 /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
 elButton;
 // @ts-ignore
-const __VLS_140 = __VLS_asFunctionalComponent1(__VLS_139, new __VLS_139({
+const __VLS_204 = __VLS_asFunctionalComponent1(__VLS_203, new __VLS_203({
     ...{ 'onClick': {} },
     type: "primary",
     plain: true,
     size: "small",
 }));
-const __VLS_141 = __VLS_140({
+const __VLS_205 = __VLS_204({
     ...{ 'onClick': {} },
     type: "primary",
     plain: true,
     size: "small",
-}, ...__VLS_functionalComponentArgsRest(__VLS_140));
-let __VLS_144;
-const __VLS_145 = {
-    /** @type {typeof __VLS_144.click} */
+}, ...__VLS_functionalComponentArgsRest(__VLS_204));
+let __VLS_208;
+const __VLS_209 = {
+    /** @type {typeof __VLS_208.click} */
     onClick: (__VLS_ctx.triggerCoverFilePick),
 };
-const { default: __VLS_146 } = __VLS_142.slots;
+const { default: __VLS_210 } = __VLS_206.slots;
 // @ts-ignore
 [editForm, editForm, defaultCover, triggerCoverFilePick,];
-var __VLS_142;
-var __VLS_143;
-let __VLS_147;
+var __VLS_206;
+var __VLS_207;
+let __VLS_211;
 /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
 elButton;
 // @ts-ignore
-const __VLS_148 = __VLS_asFunctionalComponent1(__VLS_147, new __VLS_147({
+const __VLS_212 = __VLS_asFunctionalComponent1(__VLS_211, new __VLS_211({
     ...{ 'onClick': {} },
     size: "small",
 }));
-const __VLS_149 = __VLS_148({
+const __VLS_213 = __VLS_212({
     ...{ 'onClick': {} },
     size: "small",
-}, ...__VLS_functionalComponentArgsRest(__VLS_148));
-let __VLS_152;
-const __VLS_153 = {
-    /** @type {typeof __VLS_152.click} */
+}, ...__VLS_functionalComponentArgsRest(__VLS_212));
+let __VLS_216;
+const __VLS_217 = {
+    /** @type {typeof __VLS_216.click} */
     onClick: (...[$event]) => {
         return (__VLS_ctx.editForm.coverUrl = '');
         // @ts-ignore
         [editForm,];
     },
 };
-const { default: __VLS_154 } = __VLS_150.slots;
+const { default: __VLS_218 } = __VLS_214.slots;
 // @ts-ignore
 [];
-var __VLS_150;
-var __VLS_151;
+var __VLS_214;
+var __VLS_215;
 // @ts-ignore
 [];
-var __VLS_131;
+var __VLS_195;
 // @ts-ignore
 [];
-var __VLS_103;
+var __VLS_167;
 {
-    const { footer: __VLS_155 } = __VLS_97.slots;
+    const { footer: __VLS_219 } = __VLS_161.slots;
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "dialog-footer" },
     });
     /** @type {__VLS_StyleScopedClasses['dialog-footer']} */ ;
-    let __VLS_156;
+    let __VLS_220;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_157 = __VLS_asFunctionalComponent1(__VLS_156, new __VLS_156({
+    const __VLS_221 = __VLS_asFunctionalComponent1(__VLS_220, new __VLS_220({
         ...{ 'onClick': {} },
     }));
-    const __VLS_158 = __VLS_157({
+    const __VLS_222 = __VLS_221({
         ...{ 'onClick': {} },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_157));
-    let __VLS_161;
-    const __VLS_162 = {
-        /** @type {typeof __VLS_161.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_221));
+    let __VLS_225;
+    const __VLS_226 = {
+        /** @type {typeof __VLS_225.click} */
         onClick: (...[$event]) => {
             return (__VLS_ctx.showEditDialog = false);
             // @ts-ignore
             [showEditDialog,];
         },
     };
-    const { default: __VLS_163 } = __VLS_159.slots;
+    const { default: __VLS_227 } = __VLS_223.slots;
     // @ts-ignore
     [];
-    var __VLS_159;
-    var __VLS_160;
-    let __VLS_164;
+    var __VLS_223;
+    var __VLS_224;
+    let __VLS_228;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_165 = __VLS_asFunctionalComponent1(__VLS_164, new __VLS_164({
+    const __VLS_229 = __VLS_asFunctionalComponent1(__VLS_228, new __VLS_228({
         ...{ 'onClick': {} },
         type: "primary",
     }));
-    const __VLS_166 = __VLS_165({
+    const __VLS_230 = __VLS_229({
         ...{ 'onClick': {} },
         type: "primary",
-    }, ...__VLS_functionalComponentArgsRest(__VLS_165));
-    let __VLS_169;
-    const __VLS_170 = {
-        /** @type {typeof __VLS_169.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_229));
+    let __VLS_233;
+    const __VLS_234 = {
+        /** @type {typeof __VLS_233.click} */
         onClick: (__VLS_ctx.saveEditBook),
     };
-    const { default: __VLS_171 } = __VLS_167.slots;
+    const { default: __VLS_235 } = __VLS_231.slots;
     // @ts-ignore
     [saveEditBook,];
-    var __VLS_167;
-    var __VLS_168;
+    var __VLS_231;
+    var __VLS_232;
     // @ts-ignore
     [];
 }
 // @ts-ignore
 [];
-var __VLS_97;
+var __VLS_161;
 __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     ...{ onChange: (__VLS_ctx.handleCoverFileSelect) },
     ref: "coverFileInputRef",

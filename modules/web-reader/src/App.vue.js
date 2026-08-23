@@ -2,6 +2,9 @@ import { onMounted, onUnmounted } from 'vue';
 import { useTheme } from '@/composables/useTheme';
 import { useFullscreen } from '@/composables/useFullscreen';
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue';
+import GlobalHomeButton from '@/components/GlobalHomeButton.vue';
+import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue';
+const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop';
 // Initialize theme globally
 useTheme();
 const { toggleFullscreen, exitFullscreen } = useFullscreen();
@@ -23,7 +26,10 @@ onMounted(() => {
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeyDown);
 });
-const __VLS_ctx = {};
+const __VLS_ctx = {
+    ...{},
+    ...{},
+};
 let __VLS_components;
 let __VLS_intrinsics;
 let __VLS_directives;
@@ -49,6 +55,22 @@ const __VLS_12 = GlobalDownloadProgress;
 // @ts-ignore
 const __VLS_13 = __VLS_asFunctionalComponent1(__VLS_12, new __VLS_12({}));
 const __VLS_14 = __VLS_13({}, ...__VLS_functionalComponentArgsRest(__VLS_13));
+if (__VLS_ctx.isDesktop) {
+    const __VLS_17 = GlobalHomeButton;
+    // @ts-ignore
+    const __VLS_18 = __VLS_asFunctionalComponent1(__VLS_17, new __VLS_17({}));
+    const __VLS_19 = __VLS_18({}, ...__VLS_functionalComponentArgsRest(__VLS_18));
+}
+if (__VLS_ctx.isDesktop) {
+    const __VLS_22 = GlobalSettingsButton;
+    // @ts-ignore
+    const __VLS_23 = __VLS_asFunctionalComponent1(__VLS_22, new __VLS_22({}));
+    const __VLS_24 = __VLS_23({}, ...__VLS_functionalComponentArgsRest(__VLS_23));
+}
+// @ts-ignore
+[isDesktop, isDesktop,];
 var __VLS_3;
+// @ts-ignore
+[];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

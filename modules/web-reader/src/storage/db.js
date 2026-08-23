@@ -1,11 +1,13 @@
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types';
 const DB_NAME = 'legado-web-reader';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_BOOKS = 'books';
 const STORE_SETTINGS = 'settings';
 const STORE_BOOK_SOURCES = 'bookSources';
 const STORE_REMOTE_BOOKS = 'remoteBooks';
 const STORE_CHAPTER_CONTENTS = 'chapterContents';
+const STORE_BOOKMARKS = 'bookmarks';
+const STORE_READING_RECORDS = 'readingRecords';
 let cachedDb = null;
 function openDB() {
     if (cachedDb) {
@@ -46,6 +48,17 @@ function openDB() {
             if (oldVersion < 3 && !db.objectStoreNames.contains(STORE_CHAPTER_CONTENTS)) {
                 const store = db.createObjectStore(STORE_CHAPTER_CONTENTS, { keyPath: 'key' });
                 store.createIndex('bookId', 'bookId', { unique: false });
+            }
+            // v3 -> v4: 书签与阅读时长记录
+            if (oldVersion < 4) {
+                if (!db.objectStoreNames.contains(STORE_BOOKMARKS)) {
+                    const store = db.createObjectStore(STORE_BOOKMARKS, { keyPath: 'id' });
+                    store.createIndex('bookId', 'bookId', { unique: false });
+                    store.createIndex('location', ['bookId', 'chapterIndex', 'chapterPos'], { unique: true });
+                }
+                if (!db.objectStoreNames.contains(STORE_READING_RECORDS)) {
+                    db.createObjectStore(STORE_READING_RECORDS, { keyPath: 'bookId' });
+                }
             }
         };
         request.onsuccess = () => {
@@ -142,6 +155,206 @@ export async function deleteBookFromDB(id) {
             chapterKeys.onsuccess = () => {
                 chapterKeys.result.forEach(key => chapterStore.delete(key));
             };
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getAllStoredBookFiles() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_BOOKS, 'readonly');
+            const request = tx.objectStore(STORE_BOOKS).getAll();
+            request.onsuccess = () => {
+                const books = (request.result || []);
+                resolve(books
+                    .filter(book => book.meta?.format !== 'online' && book.fileData)
+                    .map(book => ({
+                    id: book.meta.id,
+                    name: book.meta.name,
+                    author: book.meta.author,
+                    format: book.meta.format,
+                    size: book.fileData?.byteLength || 0,
+                    totalChapters: book.meta.totalChapters,
+                    lastReadTime: book.meta.lastReadTime,
+                }))
+                    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')));
+            };
+            request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+// --- Bookmark Storage ---
+export async function saveBookmark(bookmark) {
+    const db = await openDB();
+    const record = JSON.parse(JSON.stringify(bookmark));
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_BOOKMARKS, 'readwrite');
+            tx.objectStore(STORE_BOOKMARKS).put(record);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getBookmarkAt(bookId, chapterIndex, chapterPos) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_BOOKMARKS, 'readonly');
+            const request = tx.objectStore(STORE_BOOKMARKS).index('location').get([
+                bookId,
+                chapterIndex,
+                chapterPos,
+            ]);
+            request.onsuccess = () => resolve(request.result ?? undefined);
+            request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getAllBookmarks() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_BOOKMARKS, 'readonly');
+            const request = tx.objectStore(STORE_BOOKMARKS).getAll();
+            request.onsuccess = () => {
+                const bookmarks = (request.result || []);
+                bookmarks.sort((a, b) => b.createdAt - a.createdAt);
+                resolve(bookmarks);
+            };
+            request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getBookmarksByBookId(bookId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_BOOKMARKS, 'readonly');
+            const request = tx.objectStore(STORE_BOOKMARKS).index('bookId').getAll(bookId);
+            request.onsuccess = () => {
+                const bookmarks = (request.result || []);
+                bookmarks.sort((a, b) => a.chapterIndex - b.chapterIndex || a.chapterPos - b.chapterPos);
+                resolve(bookmarks);
+            };
+            request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function deleteBookmark(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_BOOKMARKS, 'readwrite');
+            tx.objectStore(STORE_BOOKMARKS).delete(id);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+// --- Reading Record Storage ---
+export async function addReadingTime(book, duration) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_READING_RECORDS, 'readwrite');
+            const store = tx.objectStore(STORE_READING_RECORDS);
+            const request = store.get(book.id);
+            request.onsuccess = () => {
+                const current = request.result;
+                store.put({
+                    bookId: book.id,
+                    bookName: book.name,
+                    bookAuthor: book.author,
+                    readTime: Math.max(0, current?.readTime || 0) + Math.max(0, duration),
+                    lastRead: Date.now(),
+                });
+            };
+            request.onerror = () => reject(request.error);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getAllReadingRecords() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_READING_RECORDS, 'readonly');
+            const request = tx.objectStore(STORE_READING_RECORDS).getAll();
+            request.onsuccess = () => {
+                const records = (request.result || []);
+                records.sort((a, b) => b.lastRead - a.lastRead);
+                resolve(records);
+            };
+            request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function deleteReadingRecord(bookId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_READING_RECORDS, 'readwrite');
+            tx.objectStore(STORE_READING_RECORDS).delete(bookId);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function clearReadingRecords() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_READING_RECORDS, 'readwrite');
+            tx.objectStore(STORE_READING_RECORDS).clear();
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);

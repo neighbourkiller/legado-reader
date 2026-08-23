@@ -86,6 +86,23 @@
           </span>
         </div>
         <div class="shelf-header-right">
+          <el-dropdown @command="handleBookshelfSortCommand">
+            <el-button plain :icon="SortIcon">
+              排序：{{ bookshelfSortLabels[bookshelfSort] }}
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="recent">最近阅读</el-dropdown-item>
+                <el-dropdown-item command="name">书名</el-dropdown-item>
+                <el-dropdown-item command="author">作者</el-dropdown-item>
+                <el-dropdown-item command="progress">阅读进度</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-button v-if="isDesktop" plain @click="router.push('/book-sources')">
+            书源管理
+          </el-button>
           <el-button type="primary" :icon="Plus" class="import-btn" @click="triggerUpload">
             传书 / 导入书籍
           </el-button>
@@ -214,20 +231,31 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Search, Plus, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Search, Sort as SortIcon, UploadFilled } from '@element-plus/icons-vue'
 import '@/assets/fonts/shelffont.css'
 import defaultCover from '@/assets/imgs/default_cover.jpg'
 import type { BookMeta } from '@/parsers/types'
 import BookCard from '@/components/BookCard.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { useBookshelfStore } from '@/stores/bookshelf'
+import { useAppSettingsStore } from '@/stores/appSettings'
 import { useTheme } from '@/composables/useTheme'
 
 const router = useRouter()
+const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 const bookshelfStore = useBookshelfStore()
+const appSettingsStore = useAppSettingsStore()
 const { isDark } = useTheme()
 
 const searchWord = ref('')
+type BookshelfSort = 'recent' | 'name' | 'author' | 'progress'
+const bookshelfSort = ref<BookshelfSort>('recent')
+const bookshelfSortLabels: Record<BookshelfSort, string> = {
+  recent: '最近阅读',
+  name: '书名',
+  author: '作者',
+  progress: '阅读进度',
+}
 const isDragging = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const coverFileInputRef = ref<HTMLInputElement | null>(null)
@@ -248,15 +276,33 @@ onMounted(async () => {
 
 const filteredBooks = computed(() => {
   const query = searchWord.value.trim().toLowerCase()
-  if (!query) return bookshelfStore.books
-
-  return bookshelfStore.books.filter(b => {
+  const books = query ? bookshelfStore.books.filter(b => {
     return (
       b.name.toLowerCase().includes(query) ||
       (b.author && b.author.toLowerCase().includes(query))
     )
+  }) : bookshelfStore.books
+
+  return [...books].sort((a, b) => {
+    if (bookshelfSort.value === 'name') {
+      return a.name.localeCompare(b.name, 'zh-CN')
+    }
+    if (bookshelfSort.value === 'author') {
+      return (a.author || '佚名').localeCompare(b.author || '佚名', 'zh-CN')
+        || a.name.localeCompare(b.name, 'zh-CN')
+    }
+    if (bookshelfSort.value === 'progress') {
+      return b.currentProgress - a.currentProgress || b.lastReadTime - a.lastReadTime
+    }
+    return b.lastReadTime - a.lastReadTime
   })
 })
+
+const handleBookshelfSortCommand = (command: string) => {
+  if (command in bookshelfSortLabels) {
+    bookshelfSort.value = command as BookshelfSort
+  }
+}
 
 const mostRecentBook = computed(() => {
   if (bookshelfStore.books.length === 0) return null
@@ -271,6 +317,13 @@ const openRecentBook = () => {
 }
 
 const openBook = (id: string) => {
+  if (isDesktop && appSettingsStore.bookshelfClickAction === 'detail') {
+    router.push({
+      path: '/book-detail',
+      query: { id },
+    })
+    return
+  }
   router.push(`/reader/${id}`)
 }
 
@@ -763,6 +816,8 @@ const saveEditBook = async () => {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .books-grid {
@@ -860,6 +915,16 @@ const saveEditBook = async () => {
     padding: 20px;
     height: auto;
     overflow-y: visible;
+  }
+
+  .shelf-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .shelf-header-right {
+    justify-content: flex-start;
   }
 
   .books-grid {

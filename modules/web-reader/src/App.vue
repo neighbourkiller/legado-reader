@@ -3,6 +3,8 @@
     <div class="app-container">
       <router-view />
       <GlobalDownloadProgress />
+      <GlobalHomeButton v-if="isDesktop" />
+      <GlobalSettingsButton v-if="isDesktop" />
     </div>
   </el-config-provider>
 </template>
@@ -12,6 +14,10 @@ import { onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
+import GlobalHomeButton from '@/components/GlobalHomeButton.vue'
+import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue'
+
+const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 // Initialize theme globally
 useTheme()

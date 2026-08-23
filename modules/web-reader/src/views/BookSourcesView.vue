@@ -11,6 +11,24 @@
         </span>
       </div>
       <div class="header-actions">
+        <el-dropdown @command="handleSourceSortCommand">
+          <el-button :icon="SortIcon">
+            排序：{{ sourceSortLabels[sourceSort] }}
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="default">默认顺序</el-dropdown-item>
+              <el-dropdown-item command="name">名称</el-dropdown-item>
+              <el-dropdown-item command="group">分组</el-dropdown-item>
+              <el-dropdown-item command="enabled">启用优先</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button @click="router.push('/bookshelf')">
+          <el-icon><Reading /></el-icon>
+          返回书架
+        </el-button>
         <el-button type="primary" @click="openImportDialog">
           <el-icon><Upload /></el-icon>
           导入书源
@@ -257,6 +275,9 @@ import {
   CopyDocument,
   Delete,
   Key,
+  Reading,
+  Sort as SortIcon,
+  ArrowDown,
 } from '@element-plus/icons-vue'
 import { useBookSourceStore } from '@/stores/bookSource'
 import type { BookSource } from '@/source/types/BookSource'
@@ -273,6 +294,14 @@ const importUrl = ref('')
 const importJson = ref('')
 const isImporting = ref(false)
 const searchKeyword = ref('')
+type SourceSort = 'default' | 'name' | 'group' | 'enabled'
+const sourceSort = ref<SourceSort>('default')
+const sourceSortLabels: Record<SourceSort, string> = {
+  default: '默认顺序',
+  name: '名称',
+  group: '分组',
+  enabled: '启用优先',
+}
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // 编辑与调试弹窗状态
@@ -306,14 +335,33 @@ const enabledCount = computed(() => bookSourceStore.getEnabledSources().length)
 
 const filteredSources = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
-  if (!kw) return bookSourceStore.sources
-  return bookSourceStore.sources.filter(s => {
+  const sources = kw ? bookSourceStore.sources.filter(s => {
     const name = s.bookSourceName?.toLowerCase() || ''
     const url = s.bookSourceUrl?.toLowerCase() || ''
     const group = s.bookSourceGroup?.toLowerCase() || ''
     return name.includes(kw) || url.includes(kw) || group.includes(kw)
+  }) : bookSourceStore.sources
+
+  if (sourceSort.value === 'default') return sources
+
+  return [...sources].sort((a, b) => {
+    if (Boolean(a.isTop) !== Boolean(b.isTop)) return a.isTop ? -1 : 1
+    if (sourceSort.value === 'enabled' && a.enabled !== b.enabled) return a.enabled ? -1 : 1
+    if (sourceSort.value === 'group') {
+      const groupA = a.bookSourceGroup || '未分组'
+      const groupB = b.bookSourceGroup || '未分组'
+      return groupA.localeCompare(groupB, 'zh-CN')
+        || a.bookSourceName.localeCompare(b.bookSourceName, 'zh-CN')
+    }
+    return a.bookSourceName.localeCompare(b.bookSourceName, 'zh-CN')
   })
 })
+
+const handleSourceSortCommand = (command: string) => {
+  if (command in sourceSortLabels) {
+    sourceSort.value = command as SourceSort
+  }
+}
 
 const isImportDisabled = computed(() => {
   if (activeImportTab.value === 'url') {
@@ -490,7 +538,7 @@ const handleClearAll = async () => {
 .book-sources-view {
   min-height: 100vh;
   background-color: var(--el-bg-color);
-  padding: 20px 40px;
+  padding: 40px 48px 60px;
   box-sizing: border-box;
 }
 
@@ -498,8 +546,8 @@ const handleClearAll = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
@@ -526,7 +574,10 @@ const handleClearAll = async () => {
 
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .toolbar-section {
@@ -546,6 +597,7 @@ const handleClearAll = async () => {
 .toolbar-right {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .source-grid {
@@ -727,6 +779,10 @@ const handleClearAll = async () => {
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
   }
 
   .toolbar-section {
