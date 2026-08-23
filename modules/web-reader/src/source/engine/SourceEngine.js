@@ -3,7 +3,7 @@ import { parseSearchResults } from './SearchParser';
 import { parseBookInfo } from './BookInfoParser';
 import { parseToc } from './TocParser';
 import { parseContent } from './ContentParser';
-import { parseString, resolveAbsoluteUrl } from './RuleParser';
+import { applyTextReplaceRule, parseString, resolveAbsoluteUrl } from './RuleParser';
 export function decodeResponse(body, charset = 'utf-8') {
     try {
         const decoder = new TextDecoder(charset);
@@ -246,18 +246,33 @@ export class SourceEngine {
             throw new Error('书源未配置 ruleContent');
         }
         let url = resolveAbsoluteUrl(contentUrl, source.bookSourceUrl);
-        let fullContent = '';
+        const contentPages = [];
+        const visitedUrls = new Set();
         while (url) {
-            const response = await this.executeRequest(source, url, 'GET', getSourceHeaders(source, url));
+            const requestUrl = new URL(url);
+            requestUrl.hash = '';
+            const requestKey = requestUrl.href;
+            if (visitedUrls.has(requestKey))
+                break;
+            visitedUrls.add(requestKey);
+            const response = await this.executeRequest(source, requestKey, 'GET', getSourceHeaders(source, requestKey));
             if (response.status >= 400) {
                 throw createHttpError(response, `请求正文页失败 (HTTP ${response.status})`);
             }
             const html = decodeResponse(response.body, response.charset || 'utf-8');
-            const effectiveBaseUrl = response.finalUrl || url;
+            const effectiveBaseUrl = response.finalUrl || requestKey;
             const result = parseContent(html, source.ruleContent, effectiveBaseUrl);
-            fullContent += result.content + '\n';
+            if (result.content) {
+                contentPages.push(result.content);
+            }
             url = result.nextUrl ? resolveAbsoluteUrl(result.nextUrl, effectiveBaseUrl) : '';
         }
-        return fullContent.trim();
+        const fullContent = contentPages
+            .join('\n')
+            .split(/\r?\n+/)
+            .map(line => line.trim())
+            .filter(Boolean)
+            .join('\n');
+        return applyTextReplaceRule(fullContent, source.ruleContent.replaceRegex).trim();
     }
 }

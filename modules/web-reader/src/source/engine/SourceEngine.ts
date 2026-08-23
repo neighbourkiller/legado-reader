@@ -5,7 +5,7 @@ import { parseSearchResults } from './SearchParser'
 import { parseBookInfo, type BookInfo } from './BookInfoParser'
 import { parseToc, type TocItem } from './TocParser'
 import { parseContent, type ContentResult } from './ContentParser'
-import { parseString, resolveAbsoluteUrl } from './RuleParser'
+import { applyTextReplaceRule, parseString, resolveAbsoluteUrl } from './RuleParser'
 
 export function decodeResponse(body: Uint8Array, charset: string = 'utf-8'): string {
   try {
@@ -351,14 +351,21 @@ export class SourceEngine {
     }
 
     let url = resolveAbsoluteUrl(contentUrl, source.bookSourceUrl)
-    let fullContent = ''
+    const contentPages: string[] = []
+    const visitedUrls = new Set<string>()
 
     while (url) {
+      const requestUrl = new URL(url)
+      requestUrl.hash = ''
+      const requestKey = requestUrl.href
+      if (visitedUrls.has(requestKey)) break
+      visitedUrls.add(requestKey)
+
       const response = await this.executeRequest(
         source,
-        url,
+        requestKey,
         'GET',
-        getSourceHeaders(source, url),
+        getSourceHeaders(source, requestKey),
       )
 
       if (response.status >= 400) {
@@ -366,14 +373,22 @@ export class SourceEngine {
       }
 
       const html = decodeResponse(response.body, response.charset || 'utf-8')
-      const effectiveBaseUrl = response.finalUrl || url
+      const effectiveBaseUrl = response.finalUrl || requestKey
       const result: ContentResult = parseContent(html, source.ruleContent, effectiveBaseUrl)
 
-      fullContent += result.content + '\n'
+      if (result.content) {
+        contentPages.push(result.content)
+      }
       url = result.nextUrl ? resolveAbsoluteUrl(result.nextUrl, effectiveBaseUrl) : ''
     }
 
-    return fullContent.trim()
+    const fullContent = contentPages
+      .join('\n')
+      .split(/\r?\n+/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .join('\n')
+
+    return applyTextReplaceRule(fullContent, source.ruleContent.replaceRegex).trim()
   }
 }
-

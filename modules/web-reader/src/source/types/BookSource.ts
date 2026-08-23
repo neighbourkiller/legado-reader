@@ -25,7 +25,16 @@ export interface TocRule {
 
 export interface ContentRule {
   content?: string
+  subContent?: string
+  title?: string
   nextContentUrl?: string
+  webJs?: string
+  sourceRegex?: string
+  replaceRegex?: string
+  imageStyle?: string
+  imageDecode?: string
+  payAction?: string
+  callBackJs?: string
 }
 
 export interface BookSource {

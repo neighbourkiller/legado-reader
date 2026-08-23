@@ -2,6 +2,51 @@
  * Legado 书源规则解析器
  */
 /**
+ * 移植 Android AnalyzeRule.replaceRegex 的纯正则部分。
+ *
+ * 支持：
+ * - ##match##replacement：全局替换
+ * - ##match##replacement###：只取首个匹配结果并替换
+ *
+ * replaceRegex 还可以包含 Rhino JavaScript 等 Android 专属规则。Web 端没有
+ * 等价运行时，对这些规则保持原文，避免静默清空正文。
+ */
+export function applyTextReplaceRule(content, rule) {
+    if (!rule || !rule.includes('##'))
+        return content;
+    const ruleParts = rule.split('##');
+    const leadingRule = ruleParts[0]?.trim() || '';
+    if (leadingRule && leadingRule !== 'text' && leadingRule !== '@text') {
+        return content;
+    }
+    const patternText = ruleParts[1] || '';
+    const replacement = (ruleParts[2] || '').replace(/\$0/g, () => '$&');
+    const replaceFirst = ruleParts.length > 3;
+    let pattern;
+    try {
+        let expression = patternText;
+        let flags = replaceFirst ? '' : 'g';
+        const inlineFlags = expression.match(/^\(\?([ims]+)\)/);
+        if (inlineFlags) {
+            expression = expression.substring(inlineFlags[0].length);
+            flags += inlineFlags[1];
+        }
+        pattern = new RegExp(expression, [...new Set(flags)].join(''));
+    }
+    catch {
+        if (replaceFirst)
+            return replacement;
+        return patternText ? content.split(patternText).join(replacement) : content;
+    }
+    if (!replaceFirst) {
+        return content.replace(pattern, replacement);
+    }
+    const match = pattern.exec(content);
+    if (!match)
+        return '';
+    return match[0].replace(pattern, replacement);
+}
+/**
  * 将相对 URL 或不完整的 URL 转换为完整的 HTTP/HTTPS 绝对 URL
  */
 export function resolveAbsoluteUrl(rawUrl, baseUrl) {

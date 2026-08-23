@@ -103,6 +103,12 @@
                     <el-input v-model="formData.ruleContent.nextContentUrl" placeholder="如 a.next-page@href" />
                   </el-form-item>
                 </div>
+                <el-form-item label="正文替换 (replaceRegex)">
+                  <el-input
+                    v-model="formData.ruleContent.replaceRegex"
+                    placeholder="如 ##广告内容## 或 ##匹配式##替换内容"
+                  />
+                </el-form-item>
               </el-collapse-item>
             </el-collapse>
           </el-form>
