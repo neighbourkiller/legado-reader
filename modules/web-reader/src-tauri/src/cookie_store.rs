@@ -1,4 +1,4 @@
-use reqwest::{cookie::Jar, Client, redirect::Policy};
+use reqwest::{cookie::Jar, redirect::Policy, Client};
 use std::collections::HashMap;
 use std::sync::Arc;
 use url::Url;
@@ -26,7 +26,8 @@ impl CookieManager {
                 None => true,
             };
             if changed {
-                self.user_agents.insert(source_id.to_string(), ua.to_string());
+                self.user_agents
+                    .insert(source_id.to_string(), ua.to_string());
                 self.clients.remove(source_id);
             }
         }
@@ -41,7 +42,11 @@ impl CookieManager {
         jar
     }
 
-    pub fn get_or_create_client(&mut self, source_id: &str, custom_ua: Option<&str>) -> Result<Client, String> {
+    pub fn get_or_create_client(
+        &mut self,
+        source_id: &str,
+        custom_ua: Option<&str>,
+    ) -> Result<Client, String> {
         if let Some(ua) = custom_ua {
             self.set_user_agent(source_id, ua);
         }
@@ -71,7 +76,12 @@ impl CookieManager {
         Ok(client)
     }
 
-    pub fn set_cookies(&mut self, source_id: &str, target_url: &str, cookie_str: &str) -> Result<(), String> {
+    pub fn set_cookies(
+        &mut self,
+        source_id: &str,
+        target_url: &str,
+        cookie_str: &str,
+    ) -> Result<(), String> {
         let parsed_url = Url::parse(target_url).map_err(|e| format!("Invalid URL: {}", e))?;
         let jar = self.get_or_create_jar(source_id);
 

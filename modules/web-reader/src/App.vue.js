@@ -1,6 +1,7 @@
 import { onMounted, onUnmounted } from 'vue';
 import { useTheme } from '@/composables/useTheme';
 import { useFullscreen } from '@/composables/useFullscreen';
+import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue';
 // Initialize theme globally
 useTheme();
 const { toggleFullscreen, exitFullscreen } = useFullscreen();
@@ -44,6 +45,10 @@ routerView;
 // @ts-ignore
 const __VLS_8 = __VLS_asFunctionalComponent1(__VLS_7, new __VLS_7({}));
 const __VLS_9 = __VLS_8({}, ...__VLS_functionalComponentArgsRest(__VLS_8));
+const __VLS_12 = GlobalDownloadProgress;
+// @ts-ignore
+const __VLS_13 = __VLS_asFunctionalComponent1(__VLS_12, new __VLS_12({}));
+const __VLS_14 = __VLS_13({}, ...__VLS_functionalComponentArgsRest(__VLS_13));
 var __VLS_3;
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

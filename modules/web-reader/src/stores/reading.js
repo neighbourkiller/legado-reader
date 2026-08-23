@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types';
 import { getTxtChapterContent, getEpubChapterContent } from '@/parsers';
-import { getBook, updateBookMeta, saveSettings, loadSettings, } from '@/storage/db';
+import { getBook, getChapterContent, saveChapterContent, updateBookMeta, saveSettings, loadSettings, } from '@/storage/db';
 import { useBookSourceStore } from '@/stores/bookSource';
 import { SourceEngine } from '@/source/engine/SourceEngine';
 const SETTINGS_KEY = 'legado_web_reader_settings';
@@ -31,6 +31,18 @@ function loadLocalSettings() {
         console.warn('Failed to read settings from localStorage', e);
     }
     return null;
+}
+function normalizeOnlineContent(rawContent, chapterTitle) {
+    let paragraphs = rawContent
+        .split(/\n+/)
+        .map(p => p.trim())
+        .filter(p => p.length > 0);
+    if (paragraphs.length > 0 &&
+        (paragraphs[0] === chapterTitle.trim() ||
+            paragraphs[0].replace(/\s+/g, '') === chapterTitle.replace(/\s+/g, ''))) {
+        paragraphs = paragraphs.slice(1);
+    }
+    return paragraphs.length > 0 ? paragraphs : ['[本章内容为空]'];
 }
 export const useReadingStore = defineStore('reading', () => {
     const currentBook = ref(null);
@@ -92,7 +104,7 @@ export const useReadingStore = defineStore('reading', () => {
             isLoading.value = false;
         }
     }
-    async function fetchChapter(index) {
+    async function fetchChapter(index, options = {}) {
         if (!currentBook.value)
             return null;
         if (currentBook.value.format !== 'online' && !fileData.value)
@@ -113,6 +125,17 @@ export const useReadingStore = defineStore('reading', () => {
                     format: 'txt',
                 };
             }
+            if (!options.forceRefresh) {
+                const cached = await getChapterContent(currentBook.value.id, index, sourceUrl, chapterHref);
+                if (cached) {
+                    return {
+                        index,
+                        title: chapter.title,
+                        content: normalizeOnlineContent(cached.content, chapter.title),
+                        format: 'txt',
+                    };
+                }
+            }
             const bookSourceStore = useBookSourceStore();
             if (bookSourceStore.sources.length === 0) {
                 await bookSourceStore.loadSources();
@@ -129,24 +152,26 @@ export const useReadingStore = defineStore('reading', () => {
             try {
                 const engine = new SourceEngine();
                 const rawContent = await engine.getContent(source, chapterHref);
-                let paragraphs = rawContent
-                    .split(/\n+/)
-                    .map(p => p.trim())
-                    .filter(p => p.length > 0);
-                // 去除第一行重复的章节标题
-                if (paragraphs.length > 0 &&
-                    (paragraphs[0] === chapter.title.trim() ||
-                        paragraphs[0].replace(/\s+/g, '') === chapter.title.replace(/\s+/g, ''))) {
-                    paragraphs = paragraphs.slice(1);
+                if (rawContent.trim()) {
+                    await saveChapterContent({
+                        bookId: currentBook.value.id,
+                        chapterIndex: index,
+                        title: chapter.title,
+                        content: rawContent,
+                        sourceUrl,
+                        chapterUrl: chapterHref,
+                    });
                 }
                 return {
                     index,
                     title: chapter.title,
-                    content: paragraphs.length > 0 ? paragraphs : ['[本章内容为空]'],
+                    content: normalizeOnlineContent(rawContent, chapter.title),
                     format: 'txt',
                 };
             }
             catch (err) {
+                if (options.forceRefresh)
+                    throw err;
                 return {
                     index,
                     title: chapter.title,

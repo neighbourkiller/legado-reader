@@ -40,7 +40,7 @@
             <el-icon><Monitor /></el-icon>
             <span>打开内置浏览器窗口</span>
           </el-button>
-          <span class="step-tip">点击后将弹出独立网页窗口，请在窗口中等待 5 秒盾通过或完成滑块验证。</span>
+          <span class="step-tip">点击后将弹出独立网页窗口，请在窗口中等待 5 秒盾通过或完成滑块验证。验证完成后可直接关闭，窗口会转为后台隐藏并保留会话。</span>
         </div>
       </div>
 
@@ -230,6 +230,9 @@ const handleAutoExtract = async () => {
           if (cookieStr) {
             cookieInput.value = cookieStr
           }
+        }
+        if (result.hasCfClearance && transport.closeAuthWindow) {
+          await transport.closeAuthWindow(props.source.bookSourceUrl)
         }
         ElMessage.success(`成功提取 ${result.cookieCount} 个 Cookie${result.hasCfClearance ? '（含 cf_clearance）' : ''}`)
       } else {

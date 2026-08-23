@@ -1,10 +1,11 @@
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types';
 const DB_NAME = 'legado-web-reader';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_BOOKS = 'books';
 const STORE_SETTINGS = 'settings';
 const STORE_BOOK_SOURCES = 'bookSources';
 const STORE_REMOTE_BOOKS = 'remoteBooks';
+const STORE_CHAPTER_CONTENTS = 'chapterContents';
 let cachedDb = null;
 function openDB() {
     if (cachedDb) {
@@ -40,6 +41,11 @@ function openDB() {
                 if (!db.objectStoreNames.contains(STORE_REMOTE_BOOKS)) {
                     db.createObjectStore(STORE_REMOTE_BOOKS, { keyPath: 'id' });
                 }
+            }
+            // v2 -> v3: 网络书籍章节正文离线缓存
+            if (oldVersion < 3 && !db.objectStoreNames.contains(STORE_CHAPTER_CONTENTS)) {
+                const store = db.createObjectStore(STORE_CHAPTER_CONTENTS, { keyPath: 'key' });
+                store.createIndex('bookId', 'bookId', { unique: false });
             }
         };
         request.onsuccess = () => {
@@ -129,11 +135,82 @@ export async function deleteBookFromDB(id) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         try {
-            const tx = db.transaction(STORE_BOOKS, 'readwrite');
+            const tx = db.transaction([STORE_BOOKS, STORE_CHAPTER_CONTENTS], 'readwrite');
             tx.objectStore(STORE_BOOKS).delete(id);
+            const chapterStore = tx.objectStore(STORE_CHAPTER_CONTENTS);
+            const chapterKeys = chapterStore.index('bookId').getAllKeys(id);
+            chapterKeys.onsuccess = () => {
+                chapterKeys.result.forEach(key => chapterStore.delete(key));
+            };
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+// --- Online Chapter Content Storage ---
+function chapterContentKey(bookId, chapterIndex) {
+    return `${bookId}:${chapterIndex}`;
+}
+export async function saveChapterContent(content) {
+    const db = await openDB();
+    const record = {
+        ...JSON.parse(JSON.stringify(content)),
+        key: chapterContentKey(content.bookId, content.chapterIndex),
+        downloadedAt: Date.now(),
+    };
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readwrite');
+            tx.objectStore(STORE_CHAPTER_CONTENTS).put(record);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getChapterContent(bookId, chapterIndex, sourceUrl, chapterUrl) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readonly');
+            const request = tx.objectStore(STORE_CHAPTER_CONTENTS).get(chapterContentKey(bookId, chapterIndex));
+            request.onsuccess = () => {
+                const record = request.result;
+                if (!record)
+                    return resolve(undefined);
+                if (sourceUrl && record.sourceUrl && record.sourceUrl !== sourceUrl) {
+                    return resolve(undefined);
+                }
+                if (chapterUrl && record.chapterUrl && record.chapterUrl !== chapterUrl) {
+                    return resolve(undefined);
+                }
+                resolve(record);
+            };
+            request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function getBookChapterContents(bookId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readonly');
+            const request = tx.objectStore(STORE_CHAPTER_CONTENTS).index('bookId').getAll(bookId);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
         }
         catch (err) {
             cachedDb = null;

@@ -2,6 +2,7 @@
   <el-config-provider>
     <div class="app-container">
       <router-view />
+      <GlobalDownloadProgress />
     </div>
   </el-config-provider>
 </template>
@@ -10,6 +11,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
+import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
 
 // Initialize theme globally
 useTheme()

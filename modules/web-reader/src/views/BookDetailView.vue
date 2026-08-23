@@ -9,7 +9,7 @@
         </el-button>
         <h2 class="page-title">书籍详情</h2>
       </div>
-      <div class="header-right">
+      <div class="header-right" v-if="isOnlineBook">
         <el-button text @click="openSourceDrawer">
           <el-icon><Switch /></el-icon>
           <span>换源 ({{ sourceName }})</span>
@@ -76,9 +76,14 @@
               <span>{{ inShelf ? '移出书架' : '加入书架' }}</span>
             </el-button>
 
-            <el-button size="large" @click="refreshBookDetail(true)" :loading="isLoadingToc">
+            <el-button v-if="isOnlineBook" size="large" @click="refreshBookDetail(true)" :loading="isLoadingToc">
               <el-icon><Refresh /></el-icon>
               <span>刷新目录</span>
+            </el-button>
+
+            <el-button v-if="isOnlineBook" size="large" @click="openDownloadDialog" :disabled="chapters.length === 0">
+              <el-icon><DownloadIcon /></el-icon>
+              <span>{{ downloadButtonText }}</span>
             </el-button>
           </div>
         </div>
@@ -123,7 +128,7 @@
         </div>
 
         <div v-else-if="filteredChapters.length === 0" class="toc-empty">
-          <el-empty description="暂无章节列表或目录拉取失败" />
+          <el-empty :description="tocEmptyDescription" />
         </div>
 
         <div v-else class="chapter-grid">
@@ -150,6 +155,7 @@
 
     <!-- 换源抽屉 -->
     <el-drawer
+      v-if="isOnlineBook"
       v-model="sourceDrawerVisible"
       title="换源检索"
       size="450px"
@@ -189,6 +195,15 @@
         </div>
       </div>
     </el-drawer>
+
+    <NovelDownloadDialog
+      v-if="isOnlineBook"
+      v-model="downloadDialogVisible"
+      :book="book"
+      :chapters="chapters"
+      :before-start="saveCurrentBookToDB"
+      @downloaded-count="downloadedCount = $event"
+    />
   </div>
 </template>
 
@@ -203,11 +218,14 @@ import {
   Refresh,
   Switch,
   Sort,
+  Download as DownloadIcon,
 } from '@element-plus/icons-vue'
 import type { BookMeta, BookChapter, StoredBook } from '@/parsers/types'
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import { useBookSourceStore } from '@/stores/bookSource'
+import { useDownloadStore } from '@/stores/download'
+import NovelDownloadDialog from '@/components/NovelDownloadDialog.vue'
 import { SourceEngine } from '@/source/engine/SourceEngine'
 import { cleanBookTitle, generateBookId } from '@/source/engine/RuleParser'
 import { saveBook, getBook, deleteBookFromDB } from '@/storage/db'
@@ -216,6 +234,7 @@ const route = useRoute()
 const router = useRouter()
 const bookshelfStore = useBookshelfStore()
 const bookSourceStore = useBookSourceStore()
+const downloadStore = useDownloadStore()
 
 const isLoadingDetail = ref(false)
 const isLoadingToc = ref(false)
@@ -225,6 +244,8 @@ const isIntroCollapsed = ref(true)
 const isReverseOrder = ref(false)
 const showAllChapters = ref(false)
 const tocKeyword = ref('')
+const downloadDialogVisible = ref(false)
+const downloadedCount = ref(0)
 
 const sourceDrawerVisible = ref(false)
 const isSearchingSources = ref(false)
@@ -235,8 +256,14 @@ const book = ref<BookMeta | null>(null)
 const chapters = ref<BookChapter[]>([])
 const tocUrl = ref<string>('')
 const latestChapter = ref<string>('')
+const isOnlineBook = computed(() => book.value?.format === 'online')
+const tocEmptyDescription = computed(() =>
+  isOnlineBook.value ? '暂无章节列表或目录拉取失败' : '未能从本地文件解析出章节',
+)
 
 const sourceName = computed(() => {
+  if (book.value?.format === 'txt') return '本地 TXT'
+  if (book.value?.format === 'epub') return '本地 EPUB'
   if (book.value?.sourceName) return book.value.sourceName
   const matched = bookSourceStore.sources.find(s => s.bookSourceUrl === book.value?.sourceUrl)
   return matched?.bookSourceName || '网络书源'
@@ -249,6 +276,17 @@ const shelfBook = computed(() => {
 })
 
 const inShelf = computed(() => Boolean(shelfBook.value))
+const downloadTask = computed(() => book.value ? downloadStore.getTask(book.value.id) : undefined)
+const downloadPercent = computed(() => {
+  const task = downloadTask.value
+  return task?.total ? Math.round((task.completed / task.total) * 100) : 0
+})
+const downloadButtonText = computed(() => {
+  const task = downloadTask.value
+  if (task?.status === 'running') return `下载中 ${downloadPercent.value}%`
+  if (downloadedCount.value > 0) return `离线下载 (${downloadedCount.value})`
+  return '离线下载'
+})
 
 onMounted(async () => {
   await Promise.all([
@@ -256,8 +294,30 @@ onMounted(async () => {
     bookSourceStore.loadSources(),
   ])
 
-  initBookFromRoute()
+  await initBookFromRoute()
+  await refreshDownloadedCount()
 })
+
+const refreshDownloadedCount = async () => {
+  if (!book.value || !isOnlineBook.value) {
+    downloadedCount.value = 0
+    return
+  }
+  downloadedCount.value = await downloadStore.getDownloadedCount(
+    book.value.id,
+    book.value.sourceUrl,
+    chapters.value,
+  )
+}
+
+const openDownloadDialog = async () => {
+  if (!book.value || chapters.value.length === 0) {
+    ElMessage.warning('当前没有可下载的章节')
+    return
+  }
+  await refreshDownloadedCount()
+  downloadDialogVisible.value = true
+}
 
 const initBookFromRoute = async () => {
   const query = route.query
@@ -283,12 +343,17 @@ const initBookFromRoute = async () => {
 
   // 1. 优先从本地 IndexedDB 缓存加载（Cache-First）
   const existing = await getBook(id)
-  if (existing && existing.chapters && existing.chapters.length > 0) {
+  if (existing) {
     book.value = existing.meta
-    chapters.value = existing.chapters
+    chapters.value = existing.chapters || []
     tocUrl.value = existing.meta.tocUrl || existing.meta.bookUrl || bookUrl
-    latestChapter.value = existing.meta.latestChapterTitle || lastChapter
+    latestChapter.value = existing.meta.latestChapterTitle
+      || chapters.value[chapters.value.length - 1]?.title
+      || lastChapter
     // 命中本地缓存，秒开渲染，不发起任何自动网络请求
+    if (existing.meta.format === 'online' && chapters.value.length === 0) {
+      fetchBookDetailAndToc()
+    }
     return
   }
 
@@ -486,6 +551,7 @@ const displayChapters = computed(() => {
 // 保存当前网络书籍到本地 IndexedDB
 const saveCurrentBookToDB = async () => {
   if (!book.value) return
+  const existing = await getBook(book.value.id)
   const record: StoredBook = {
     meta: {
       ...book.value,
@@ -494,7 +560,8 @@ const saveCurrentBookToDB = async () => {
       latestChapterTitle: latestChapter.value,
     },
     chapters: chapters.value,
-    fileData: null,
+    // 本地 TXT/EPUB 的原始二进制必须保留，否则从详情页进入阅读会破坏书籍。
+    fileData: existing?.fileData ?? null,
   }
   await saveBook(record)
   await bookshelfStore.loadBooks()
@@ -536,8 +603,13 @@ const handleToggleShelf = async () => {
   try {
     if (inShelf.value) {
       await deleteBookFromDB(book.value.id)
+      downloadedCount.value = 0
       await bookshelfStore.loadBooks()
       ElMessage.success('已从书架移出')
+      if (!isOnlineBook.value) {
+        router.push('/bookshelf')
+        return
+      }
     } else {
       await saveCurrentBookToDB()
       ElMessage.success('已加入书架')
@@ -605,13 +677,14 @@ const switchSource = async (alt: SearchResult) => {
   sourceDrawerVisible.value = false
   ElMessage.success(`已切换至书源：${alt.sourceName}`)
   await fetchToc(true)
+  await refreshDownloadedCount()
 }
 
 const handleGoBack = () => {
   if (window.history.length > 1) {
     router.back()
   } else {
-    router.push('/search')
+    router.push(isOnlineBook.value ? '/search' : '/bookshelf')
   }
 }
 

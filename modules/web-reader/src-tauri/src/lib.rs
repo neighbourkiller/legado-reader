@@ -15,6 +15,23 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             app.manage(AppState::new());
+
+            // 认证 WebView 被隐藏后仍然是一个存活窗口。关闭主窗口时显式退出应用，
+            // 避免进程因隐藏的认证窗口继续驻留后台。
+            if let Some(main_window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                main_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { .. } = event {
+                        for (label, window) in app_handle.webview_windows() {
+                            if label.starts_with("auth_") {
+                                let _ = window.destroy();
+                            }
+                        }
+                        app_handle.exit(0);
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

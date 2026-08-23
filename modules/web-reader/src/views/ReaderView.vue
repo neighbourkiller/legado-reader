@@ -50,6 +50,34 @@
           <div class="icon-text">书架</div>
         </div>
 
+        <!-- 书籍详情 -->
+        <div v-if="supportsBookDetail" class="tool-icon" @click="toBookDetail">
+          <el-icon class="action-icon"><DetailIcon /></el-icon>
+          <div class="icon-text">详情</div>
+        </div>
+
+        <!-- 刷新当前章节正文 -->
+        <div
+          class="tool-icon"
+          :class="{ 'no-point': chapterLoading }"
+          title="重新请求并覆盖本章缓存"
+          @click="refreshCurrentChapter"
+        >
+          <el-icon class="action-icon"><RefreshIcon /></el-icon>
+          <div class="icon-text">刷新</div>
+        </div>
+
+        <!-- 离线下载 -->
+        <div
+          class="tool-icon"
+          :class="{ 'no-point': currentBook?.format !== 'online' }"
+          title="下载章节供离线阅读"
+          @click="downloadDialogVisible = true"
+        >
+          <el-icon class="action-icon"><DownloadIcon /></el-icon>
+          <div class="icon-text">下载</div>
+        </div>
+
         <!-- 全屏 -->
         <div class="tool-icon" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏 (F11/ESC)' : '全屏阅读 (F11)'">
           <div class="iconfont">&#58907;</div>
@@ -118,6 +146,12 @@
         <div class="bottom-bar" ref="bottomRef"></div>
       </div>
     </div>
+
+    <NovelDownloadDialog
+      v-model="downloadDialogVisible"
+      :book="currentBook"
+      :chapters="chapters"
+    />
   </div>
 </template>
 
@@ -126,12 +160,18 @@ import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
+import {
+  Document as DetailIcon,
+  Download as DownloadIcon,
+  Refresh as RefreshIcon,
+} from '@element-plus/icons-vue'
 import { useReadingStore, type ChapterPayload } from '@/stores/reading'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
 import PopCatalog from '@/components/PopCatalog.vue'
 import ReadSettings from '@/components/ReadSettings.vue'
 import ChapterContent from '@/components/ChapterContent.vue'
+import NovelDownloadDialog from '@/components/NovelDownloadDialog.vue'
 import themeConfig from '@/config/themeConfig'
 import jump from '@/plugins/jump'
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
@@ -155,6 +195,8 @@ const {
 const chapterData = ref<ChapterPayload[]>([])
 const chapterLoading = ref(false)
 const showToolBar = ref(false)
+const downloadDialogVisible = ref(false)
+const supportsBookDetail = import.meta.env.VITE_APP_TARGET === 'desktop'
 let contentGeneration = 0
 let scrollObserver: IntersectionObserver | null = null
 
@@ -303,38 +345,56 @@ const handleWrapperClick = () => {
 }
 
 // 获取章节内容
-const getContent = async (index: number, reloadChapter = true) => {
-  if (index < 0 || index >= chapters.value.length) return
+const getContent = async (
+  index: number,
+  reloadChapter = true,
+  forceRefresh = false,
+): Promise<boolean> => {
+  if (index < 0 || index >= chapters.value.length) return false
 
   const generation = reloadChapter ? ++contentGeneration : contentGeneration
   chapterLoading.value = true
 
-  if (reloadChapter) {
+  if (reloadChapter && !forceRefresh) {
     window.scrollTo(0, 0)
     chapterData.value = []
     await store.saveProgress(index).catch(console.error)
-  } else {
+  } else if (!reloadChapter) {
     chapterData.value = trimChapterWindowBeforeAppend(chapterData.value)
   }
 
   try {
-    const payload = await store.fetchChapter(index)
-    if (generation !== contentGeneration) return
+    const payload = await store.fetchChapter(index, { forceRefresh })
+    if (generation !== contentGeneration) return false
 
     if (payload) {
-      chapterData.value.push(payload)
+      if (forceRefresh) {
+        chapterData.value = [payload]
+      } else {
+        chapterData.value.push(payload)
+      }
       if (reloadChapter && store.currentBook) {
         store.currentBook.currentChapter = index
       }
+      return true
     }
+    return false
   } catch (err) {
     console.error('获取章节内容失败', err)
-    ElMessage.error('获取章节内容失败')
+    const action = forceRefresh ? '刷新正文' : '获取章节内容'
+    ElMessage.error(err instanceof Error ? `${action}失败: ${err.message}` : `${action}失败`)
+    return false
   } finally {
     if (generation === contentGeneration) {
       chapterLoading.value = false
     }
   }
+}
+
+const refreshCurrentChapter = async () => {
+  if (chapterLoading.value) return
+  const refreshed = await getContent(currentChapterIndex.value, true, true)
+  if (refreshed) ElMessage.success('本章正文已刷新')
 }
 
 // 底部触底无限加载
@@ -376,6 +436,14 @@ const toBottom = () => {
 
 const toShelf = () => {
   router.push('/bookshelf')
+}
+
+const toBookDetail = () => {
+  if (!currentBook.value) return
+  router.push({
+    path: '/book-detail',
+    query: { id: currentBook.value.id },
+  })
 }
 
 // 章节前后切换
@@ -659,9 +727,22 @@ onBeforeRouteLeave(() => {
           margin: 0 auto 6px;
         }
 
+        .action-icon {
+          display: block;
+          width: 16px;
+          height: 16px;
+          margin: 0 auto 6px;
+          font-size: 16px;
+        }
+
         .icon-text {
           font-size: 12px;
           line-height: 1;
+        }
+
+        &.no-point {
+          opacity: 0.35;
+          pointer-events: none;
         }
       }
     }
@@ -797,6 +878,9 @@ onBeforeRouteLeave(() => {
 
         .tool-icon {
           border: none;
+          flex: 1;
+          width: auto;
+          min-width: 0;
           height: 48px;
           padding-top: 6px;
         }

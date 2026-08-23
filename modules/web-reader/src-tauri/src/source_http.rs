@@ -254,6 +254,16 @@ fn make_window_label(source_id: &str) -> String {
     format!("auth_{}", safe_id)
 }
 
+fn preserve_auth_webview_on_close(window: &tauri::WebviewWindow) {
+    let window_to_hide = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = window_to_hide.hide();
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn open_source_auth_window(
     app: tauri::AppHandle,
@@ -281,12 +291,16 @@ pub async fn open_source_auth_window(
         )
     });
 
-    let _window = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::External(parsed_url))
+    let window = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::External(parsed_url))
         .title(&win_title)
         .inner_size(960.0, 720.0)
         .center()
         .build()
         .map_err(|e| format!("Failed to create auth window: {}", e))?;
+
+    // WebView 是受保护书源的请求执行上下文。用户点击标题栏关闭按钮时仅隐藏窗口，
+    // 保留 Cookie、页面上下文和浏览器指纹；再次打开认证窗口时会恢复显示。
+    preserve_auth_webview_on_close(&window);
 
     Ok(())
 }
@@ -299,7 +313,7 @@ pub async fn close_source_auth_window(
     use tauri::Manager;
     let window_label = make_window_label(&source_id);
     if let Some(win) = app.get_webview_window(&window_label) {
-        let _ = win.close();
+        let _ = win.hide();
     }
     Ok(())
 }
@@ -351,6 +365,76 @@ fn decode_webview_callback_value(raw: String) -> Option<String> {
     serde_json::from_str::<String>(&raw).ok().or(Some(raw))
 }
 
+async fn wait_for_webview_document(
+    webview: &tauri::WebviewWindow,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if Instant::now() >= deadline {
+            return Err("Timed out while initializing background WebView".to_string());
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
+        webview
+            .eval_with_callback("document.readyState", move |result| {
+                if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
+                    let _ = tx.send(result);
+                }
+            })
+            .map_err(|e| format!("Failed to inspect background WebView state: {e}"))?;
+
+        if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), rx).await {
+            if matches!(
+                decode_webview_callback_value(raw).as_deref(),
+                Some("interactive" | "complete")
+            ) {
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn ensure_source_webview(
+    app: &tauri::AppHandle,
+    source_id: &str,
+    request_url: &url::Url,
+    timeout: Duration,
+) -> Result<tauri::WebviewWindow, String> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    let window_label = make_window_label(source_id);
+    let webview = if let Some(existing) = app.get_webview_window(&window_label) {
+        existing
+    } else {
+        let mut base_url = request_url.clone();
+        base_url.set_path("/");
+        base_url.set_query(None);
+        base_url.set_fragment(None);
+
+        match WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(base_url))
+            .title("书源后台认证")
+            .visible(false)
+            .build()
+        {
+            Ok(window) => {
+                preserve_auth_webview_on_close(&window);
+                window
+            }
+            Err(error) => app.get_webview_window(&window_label).ok_or_else(|| {
+                format!("Failed to create background verification WebView: {error}")
+            })?,
+        }
+    };
+
+    wait_for_webview_document(&webview, timeout).await?;
+    Ok(webview)
+}
+
 #[tauri::command]
 pub async fn sync_webview_cookies(
     app: tauri::AppHandle,
@@ -358,13 +442,10 @@ pub async fn sync_webview_cookies(
     url: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncCookieResult, String> {
-    use tauri::Manager;
     validate_url(&url)?;
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
-    let window_label = make_window_label(&source_id);
-    let webview = app
-        .get_webview_window(&window_label)
-        .ok_or_else(|| "WebView window not found".to_string())?;
+    let webview =
+        ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
 
     let cookies = webview
         .cookies_for_url(parsed_url.clone())
@@ -403,13 +484,10 @@ pub async fn check_cf_clearance(
     source_id: String,
     url: String,
 ) -> Result<bool, String> {
-    use tauri::Manager;
     validate_url(&url)?;
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
-    let window_label = make_window_label(&source_id);
-    let webview = app
-        .get_webview_window(&window_label)
-        .ok_or_else(|| "WebView window not found".to_string())?;
+    let webview =
+        ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
 
     let cookies = webview
         .cookies_for_url(parsed_url)
@@ -425,6 +503,7 @@ pub async fn check_cf_clearance(
 #[tauri::command]
 pub async fn webview_fetch(
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     source_id: String,
     url: String,
     method: String,
@@ -432,16 +511,27 @@ pub async fn webview_fetch(
     body: Option<String>,
     timeout_ms: Option<u64>,
 ) -> Result<SourceResponse, String> {
-    use tauri::Manager;
     validate_url(&url)?;
-    let _parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
-    let window_label = make_window_label(&source_id);
-
-    let webview = app.get_webview_window(&window_label).ok_or_else(|| {
-        "WebView verification window not found; open it and complete verification first".to_string()
-    })?;
-
+    let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
     let timeout = timeout_ms.unwrap_or(30000);
+    let initialization_timeout = Duration::from_millis(timeout.clamp(1_000, 15_000));
+    let webview =
+        ensure_source_webview(&app, &source_id, &parsed_url, initialization_timeout).await?;
+
+    // WebKit 的网站数据目录会跨应用重启保存 Cookie。隐藏 WebView 加载完成后，
+    // 将当前可用 Cookie 同步到 reqwest CookieJar，供非 WebView回退路径复用。
+    let persisted_cookies = webview
+        .cookies_for_url(parsed_url.clone())
+        .map_err(|e| format!("Failed to read cookies from background WebView: {e}"))?;
+    if !persisted_cookies.is_empty() {
+        let cookie_header = persisted_cookies
+            .iter()
+            .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut manager = state.cookie_manager.lock().await;
+        manager.set_cookies(&source_id, &url, &cookie_header)?;
+    }
 
     let request_id = format!(
         "{}-{}",

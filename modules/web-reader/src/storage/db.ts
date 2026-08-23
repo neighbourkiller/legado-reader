@@ -2,12 +2,24 @@ import type { BookMeta, ReadSettings, StoredBook } from '@/parsers/types'
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types'
 
 const DB_NAME = 'legado-web-reader'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 const STORE_BOOKS = 'books'
 const STORE_SETTINGS = 'settings'
 const STORE_BOOK_SOURCES = 'bookSources'
 const STORE_REMOTE_BOOKS = 'remoteBooks'
+const STORE_CHAPTER_CONTENTS = 'chapterContents'
+
+export interface StoredChapterContent {
+  key: string
+  bookId: string
+  chapterIndex: number
+  title: string
+  content: string
+  sourceUrl?: string
+  chapterUrl?: string
+  downloadedAt: number
+}
 
 let cachedDb: IDBDatabase | null = null
 
@@ -48,6 +60,12 @@ function openDB(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains(STORE_REMOTE_BOOKS)) {
           db.createObjectStore(STORE_REMOTE_BOOKS, { keyPath: 'id' })
         }
+      }
+
+      // v2 -> v3: 网络书籍章节正文离线缓存
+      if (oldVersion < 3 && !db.objectStoreNames.contains(STORE_CHAPTER_CONTENTS)) {
+        const store = db.createObjectStore(STORE_CHAPTER_CONTENTS, { keyPath: 'key' })
+        store.createIndex('bookId', 'bookId', { unique: false })
       }
     }
 
@@ -143,11 +161,93 @@ export async function deleteBookFromDB(id: string): Promise<void> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     try {
-      const tx = db.transaction(STORE_BOOKS, 'readwrite')
+      const tx = db.transaction([STORE_BOOKS, STORE_CHAPTER_CONTENTS], 'readwrite')
       tx.objectStore(STORE_BOOKS).delete(id)
+      const chapterStore = tx.objectStore(STORE_CHAPTER_CONTENTS)
+      const chapterKeys = chapterStore.index('bookId').getAllKeys(id)
+      chapterKeys.onsuccess = () => {
+        chapterKeys.result.forEach(key => chapterStore.delete(key))
+      }
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
       tx.onabort = () => reject(tx.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+// --- Online Chapter Content Storage ---
+
+function chapterContentKey(bookId: string, chapterIndex: number): string {
+  return `${bookId}:${chapterIndex}`
+}
+
+export async function saveChapterContent(
+  content: Omit<StoredChapterContent, 'key' | 'downloadedAt'>,
+): Promise<void> {
+  const db = await openDB()
+  const record: StoredChapterContent = {
+    ...JSON.parse(JSON.stringify(content)),
+    key: chapterContentKey(content.bookId, content.chapterIndex),
+    downloadedAt: Date.now(),
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readwrite')
+      tx.objectStore(STORE_CHAPTER_CONTENTS).put(record)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function getChapterContent(
+  bookId: string,
+  chapterIndex: number,
+  sourceUrl?: string,
+  chapterUrl?: string,
+): Promise<StoredChapterContent | undefined> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readonly')
+      const request = tx.objectStore(STORE_CHAPTER_CONTENTS).get(
+        chapterContentKey(bookId, chapterIndex),
+      )
+      request.onsuccess = () => {
+        const record = request.result as StoredChapterContent | undefined
+        if (!record) return resolve(undefined)
+        if (sourceUrl && record.sourceUrl && record.sourceUrl !== sourceUrl) {
+          return resolve(undefined)
+        }
+        if (chapterUrl && record.chapterUrl && record.chapterUrl !== chapterUrl) {
+          return resolve(undefined)
+        }
+        resolve(record)
+      }
+      request.onerror = () => reject(request.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function getBookChapterContents(bookId: string): Promise<StoredChapterContent[]> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readonly')
+      const request = tx.objectStore(STORE_CHAPTER_CONTENTS).index('bookId').getAll(bookId)
+      request.onsuccess = () => resolve(request.result || [])
+      request.onerror = () => reject(request.error)
     } catch (err) {
       cachedDb = null
       reject(err)

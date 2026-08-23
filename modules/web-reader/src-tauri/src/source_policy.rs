@@ -1,5 +1,5 @@
-use url::Url;
 use std::net::IpAddr;
+use url::Url;
 
 pub fn validate_url(raw_url: &str) -> Result<(), String> {
     let parsed_url = Url::parse(raw_url).map_err(|e| format!("Invalid URL: {}", e))?;
@@ -18,19 +18,24 @@ pub fn validate_url(raw_url: &str) -> Result<(), String> {
         if let Ok(ip) = host.parse::<IpAddr>() {
             match ip {
                 IpAddr::V4(ipv4) => {
-                    if ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local() || ipv4.is_unspecified() || ipv4.is_broadcast() {
-                         return Err("Disallowed IP address".to_string());
+                    if ipv4.is_loopback()
+                        || ipv4.is_private()
+                        || ipv4.is_link_local()
+                        || ipv4.is_unspecified()
+                        || ipv4.is_broadcast()
+                    {
+                        return Err("Disallowed IP address".to_string());
                     }
                 }
                 IpAddr::V6(ipv6) => {
                     if ipv6.is_loopback() || ipv6.is_unspecified() {
-                         return Err("Disallowed IPv6 address".to_string());
+                        return Err("Disallowed IPv6 address".to_string());
                     }
                 }
             }
         }
     } else {
-         return Err("No host in URL".to_string());
+        return Err("No host in URL".to_string());
     }
 
     Ok(())

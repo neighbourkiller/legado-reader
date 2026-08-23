@@ -5,6 +5,8 @@ import { DEFAULT_READ_SETTINGS } from '@/parsers/types'
 import { getTxtChapterContent, getEpubChapterContent } from '@/parsers'
 import {
   getBook,
+  getChapterContent,
+  saveChapterContent,
   updateBookMeta,
   saveSettings,
   loadSettings,
@@ -51,6 +53,23 @@ function loadLocalSettings(): Partial<ReadSettings> | null {
     console.warn('Failed to read settings from localStorage', e)
   }
   return null
+}
+
+function normalizeOnlineContent(rawContent: string, chapterTitle: string): string[] {
+  let paragraphs = rawContent
+    .split(/\n+/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0)
+
+  if (
+    paragraphs.length > 0 &&
+    (paragraphs[0] === chapterTitle.trim() ||
+      paragraphs[0].replace(/\s+/g, '') === chapterTitle.replace(/\s+/g, ''))
+  ) {
+    paragraphs = paragraphs.slice(1)
+  }
+
+  return paragraphs.length > 0 ? paragraphs : ['[本章内容为空]']
 }
 
 export const useReadingStore = defineStore('reading', () => {
@@ -118,7 +137,10 @@ export const useReadingStore = defineStore('reading', () => {
     }
   }
 
-  async function fetchChapter(index: number): Promise<ChapterPayload | null> {
+  async function fetchChapter(
+    index: number,
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<ChapterPayload | null> {
     if (!currentBook.value) return null
     if (currentBook.value.format !== 'online' && !fileData.value) return null
     if (index < 0 || index >= chapters.value.length) return null
@@ -135,6 +157,23 @@ export const useReadingStore = defineStore('reading', () => {
           title: chapter.title,
           content: ['[该章节暂无有效链接或书源信息缺失]'],
           format: 'txt',
+        }
+      }
+
+      if (!options.forceRefresh) {
+        const cached = await getChapterContent(
+          currentBook.value.id,
+          index,
+          sourceUrl,
+          chapterHref,
+        )
+        if (cached) {
+          return {
+            index,
+            title: chapter.title,
+            content: normalizeOnlineContent(cached.content, chapter.title),
+            format: 'txt',
+          }
         }
       }
 
@@ -155,27 +194,25 @@ export const useReadingStore = defineStore('reading', () => {
       try {
         const engine = new SourceEngine()
         const rawContent = await engine.getContent(source, chapterHref)
-        let paragraphs = rawContent
-          .split(/\n+/)
-          .map(p => p.trim())
-          .filter(p => p.length > 0)
-
-        // 去除第一行重复的章节标题
-        if (
-          paragraphs.length > 0 &&
-          (paragraphs[0] === chapter.title.trim() ||
-            paragraphs[0].replace(/\s+/g, '') === chapter.title.replace(/\s+/g, ''))
-        ) {
-          paragraphs = paragraphs.slice(1)
+        if (rawContent.trim()) {
+          await saveChapterContent({
+            bookId: currentBook.value.id,
+            chapterIndex: index,
+            title: chapter.title,
+            content: rawContent,
+            sourceUrl,
+            chapterUrl: chapterHref,
+          })
         }
 
         return {
           index,
           title: chapter.title,
-          content: paragraphs.length > 0 ? paragraphs : ['[本章内容为空]'],
+          content: normalizeOnlineContent(rawContent, chapter.title),
           format: 'txt',
         }
       } catch (err: any) {
+        if (options.forceRefresh) throw err
         return {
           index,
           title: chapter.title,

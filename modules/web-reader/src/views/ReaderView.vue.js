@@ -2,12 +2,14 @@ import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { ElMessage } from 'element-plus';
+import { Document as DetailIcon, Download as DownloadIcon, Refresh as RefreshIcon, } from '@element-plus/icons-vue';
 import { useReadingStore } from '@/stores/reading';
 import { useTheme } from '@/composables/useTheme';
 import { useFullscreen } from '@/composables/useFullscreen';
 import PopCatalog from '@/components/PopCatalog.vue';
 import ReadSettings from '@/components/ReadSettings.vue';
 import ChapterContent from '@/components/ChapterContent.vue';
+import NovelDownloadDialog from '@/components/NovelDownloadDialog.vue';
 import themeConfig from '@/config/themeConfig';
 import jump from '@/plugins/jump';
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow';
@@ -21,6 +23,8 @@ const { currentBook, chapters, settings, miniInterface, popCataVisible, readSett
 const chapterData = ref([]);
 const chapterLoading = ref(false);
 const showToolBar = ref(false);
+const downloadDialogVisible = ref(false);
+const supportsBookDetail = import.meta.env.VITE_APP_TARGET === 'desktop';
 let contentGeneration = 0;
 let scrollObserver = null;
 const topRef = ref();
@@ -144,39 +148,55 @@ const handleWrapperClick = () => {
     }
 };
 // 获取章节内容
-const getContent = async (index, reloadChapter = true) => {
+const getContent = async (index, reloadChapter = true, forceRefresh = false) => {
     if (index < 0 || index >= chapters.value.length)
-        return;
+        return false;
     const generation = reloadChapter ? ++contentGeneration : contentGeneration;
     chapterLoading.value = true;
-    if (reloadChapter) {
+    if (reloadChapter && !forceRefresh) {
         window.scrollTo(0, 0);
         chapterData.value = [];
         await store.saveProgress(index).catch(console.error);
     }
-    else {
+    else if (!reloadChapter) {
         chapterData.value = trimChapterWindowBeforeAppend(chapterData.value);
     }
     try {
-        const payload = await store.fetchChapter(index);
+        const payload = await store.fetchChapter(index, { forceRefresh });
         if (generation !== contentGeneration)
-            return;
+            return false;
         if (payload) {
-            chapterData.value.push(payload);
+            if (forceRefresh) {
+                chapterData.value = [payload];
+            }
+            else {
+                chapterData.value.push(payload);
+            }
             if (reloadChapter && store.currentBook) {
                 store.currentBook.currentChapter = index;
             }
+            return true;
         }
+        return false;
     }
     catch (err) {
         console.error('获取章节内容失败', err);
-        ElMessage.error('获取章节内容失败');
+        const action = forceRefresh ? '刷新正文' : '获取章节内容';
+        ElMessage.error(err instanceof Error ? `${action}失败: ${err.message}` : `${action}失败`);
+        return false;
     }
     finally {
         if (generation === contentGeneration) {
             chapterLoading.value = false;
         }
     }
+};
+const refreshCurrentChapter = async () => {
+    if (chapterLoading.value)
+        return;
+    const refreshed = await getContent(currentChapterIndex.value, true, true);
+    if (refreshed)
+        ElMessage.success('本章正文已刷新');
 };
 // 底部触底无限加载
 const loadMore = () => {
@@ -217,6 +237,14 @@ const toBottom = () => {
 };
 const toShelf = () => {
     router.push('/bookshelf');
+};
+const toBookDetail = () => {
+    if (!currentBook.value)
+        return;
+    router.push({
+        path: '/book-detail',
+        query: { id: currentBook.value.id },
+    });
 };
 // 章节前后切换
 const toPreChapter = async () => {
@@ -435,6 +463,7 @@ let __VLS_directives;
 /** @type {__VLS_StyleScopedClasses['tools']} */ ;
 /** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['iconfont']} */ ;
+/** @type {__VLS_StyleScopedClasses['no-point']} */ ;
 /** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
 /** @type {__VLS_StyleScopedClasses['chapter']} */ ;
@@ -592,6 +621,108 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "icon-text" },
 });
 /** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+if (__VLS_ctx.supportsBookDetail) {
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ onClick: (__VLS_ctx.toBookDetail) },
+        ...{ class: "tool-icon" },
+    });
+    /** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
+    let __VLS_26;
+    /** @ts-ignore @type { | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon'] | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon']} */
+    elIcon;
+    // @ts-ignore
+    const __VLS_27 = __VLS_asFunctionalComponent1(__VLS_26, new __VLS_26({
+        ...{ class: "action-icon" },
+    }));
+    const __VLS_28 = __VLS_27({
+        ...{ class: "action-icon" },
+    }, ...__VLS_functionalComponentArgsRest(__VLS_27));
+    /** @type {__VLS_StyleScopedClasses['action-icon']} */ ;
+    const { default: __VLS_31 } = __VLS_29.slots;
+    let __VLS_32;
+    /** @ts-ignore @type { | typeof __VLS_components.DetailIcon} */
+    DetailIcon;
+    // @ts-ignore
+    const __VLS_33 = __VLS_asFunctionalComponent1(__VLS_32, new __VLS_32({}));
+    const __VLS_34 = __VLS_33({}, ...__VLS_functionalComponentArgsRest(__VLS_33));
+    // @ts-ignore
+    [toShelf, supportsBookDetail, toBookDetail,];
+    var __VLS_29;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ class: "icon-text" },
+    });
+    /** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+}
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ onClick: (__VLS_ctx.refreshCurrentChapter) },
+    ...{ class: "tool-icon" },
+    ...{ class: ({ 'no-point': __VLS_ctx.chapterLoading }) },
+    title: "重新请求并覆盖本章缓存",
+});
+/** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
+/** @type {__VLS_StyleScopedClasses['no-point']} */ ;
+let __VLS_37;
+/** @ts-ignore @type { | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon'] | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon']} */
+elIcon;
+// @ts-ignore
+const __VLS_38 = __VLS_asFunctionalComponent1(__VLS_37, new __VLS_37({
+    ...{ class: "action-icon" },
+}));
+const __VLS_39 = __VLS_38({
+    ...{ class: "action-icon" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_38));
+/** @type {__VLS_StyleScopedClasses['action-icon']} */ ;
+const { default: __VLS_42 } = __VLS_40.slots;
+let __VLS_43;
+/** @ts-ignore @type { | typeof __VLS_components.RefreshIcon} */
+RefreshIcon;
+// @ts-ignore
+const __VLS_44 = __VLS_asFunctionalComponent1(__VLS_43, new __VLS_43({}));
+const __VLS_45 = __VLS_44({}, ...__VLS_functionalComponentArgsRest(__VLS_44));
+// @ts-ignore
+[refreshCurrentChapter, chapterLoading,];
+var __VLS_40;
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ class: "icon-text" },
+});
+/** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ onClick: (...[$event]) => {
+            return (__VLS_ctx.downloadDialogVisible = true);
+            // @ts-ignore
+            [downloadDialogVisible,];
+        } },
+    ...{ class: "tool-icon" },
+    ...{ class: ({ 'no-point': __VLS_ctx.currentBook?.format !== 'online' }) },
+    title: "下载章节供离线阅读",
+});
+/** @type {__VLS_StyleScopedClasses['tool-icon']} */ ;
+/** @type {__VLS_StyleScopedClasses['no-point']} */ ;
+let __VLS_48;
+/** @ts-ignore @type { | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon'] | typeof __VLS_components.elIcon | typeof __VLS_components.ElIcon | typeof __VLS_components['el-icon']} */
+elIcon;
+// @ts-ignore
+const __VLS_49 = __VLS_asFunctionalComponent1(__VLS_48, new __VLS_48({
+    ...{ class: "action-icon" },
+}));
+const __VLS_50 = __VLS_49({
+    ...{ class: "action-icon" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_49));
+/** @type {__VLS_StyleScopedClasses['action-icon']} */ ;
+const { default: __VLS_53 } = __VLS_51.slots;
+let __VLS_54;
+/** @ts-ignore @type { | typeof __VLS_components.DownloadIcon} */
+DownloadIcon;
+// @ts-ignore
+const __VLS_55 = __VLS_asFunctionalComponent1(__VLS_54, new __VLS_54({}));
+const __VLS_56 = __VLS_55({}, ...__VLS_functionalComponentArgsRest(__VLS_55));
+// @ts-ignore
+[currentBook,];
+var __VLS_51;
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ class: "icon-text" },
+});
+/** @type {__VLS_StyleScopedClasses['icon-text']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ onClick: (__VLS_ctx.toggleFullscreen) },
     ...{ class: "tool-icon" },
@@ -691,9 +822,9 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         key: (data.index),
         'data-chapter-index': (data.index),
     });
-    const __VLS_26 = ChapterContent;
+    const __VLS_59 = ChapterContent;
     // @ts-ignore
-    const __VLS_27 = __VLS_asFunctionalComponent1(__VLS_26, new __VLS_26({
+    const __VLS_60 = __VLS_asFunctionalComponent1(__VLS_59, new __VLS_59({
         contents: (data.content),
         title: (data.title),
         format: (data.format),
@@ -702,7 +833,7 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         fontFamily: (__VLS_ctx.fontFamilyStr),
         chapterIndex: (data.index),
     }));
-    const __VLS_28 = __VLS_27({
+    const __VLS_61 = __VLS_60({
         contents: (data.content),
         title: (data.title),
         format: (data.format),
@@ -710,9 +841,9 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         fontSize: (__VLS_ctx.fontSizeStr),
         fontFamily: (__VLS_ctx.fontFamilyStr),
         chapterIndex: (data.index),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_27));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_60));
     // @ts-ignore
-    [toShelf, toggleFullscreen, isFullscreen, isFullscreen, toTop, toBottom, rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
+    [toggleFullscreen, isFullscreen, isFullscreen, toTop, toBottom, rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
 }
 if (__VLS_ctx.infiniteLoading) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
@@ -726,7 +857,19 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ref: "bottomRef",
 });
 /** @type {__VLS_StyleScopedClasses['bottom-bar']} */ ;
+const __VLS_64 = NovelDownloadDialog;
 // @ts-ignore
-[infiniteLoading,];
+const __VLS_65 = __VLS_asFunctionalComponent1(__VLS_64, new __VLS_64({
+    modelValue: (__VLS_ctx.downloadDialogVisible),
+    book: (__VLS_ctx.currentBook),
+    chapters: (__VLS_ctx.chapters),
+}));
+const __VLS_66 = __VLS_65({
+    modelValue: (__VLS_ctx.downloadDialogVisible),
+    book: (__VLS_ctx.currentBook),
+    chapters: (__VLS_ctx.chapters),
+}, ...__VLS_functionalComponentArgsRest(__VLS_65));
+// @ts-ignore
+[downloadDialogVisible, currentBook, infiniteLoading, chapters,];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

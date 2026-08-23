@@ -46,7 +46,7 @@
 
           <template #dropdown>
             <el-dropdown-menu class="book-action-menu">
-              <el-dropdown-item command="detail" :icon="Document" v-if="book.format === 'online'">
+              <el-dropdown-item command="detail" :icon="Document" v-if="supportsDetail">
                 书籍详情
               </el-dropdown-item>
               <el-dropdown-item command="edit" :icon="Edit">
@@ -99,6 +99,7 @@ const emit = defineEmits<{
 
 const dropdownRef = ref<DropdownInstance | null>(null)
 const imageLoadFailed = ref(false)
+const supportsDetail = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 const hasCoverImage = computed(() => {
   return Boolean(props.book.coverUrl) && !imageLoadFailed.value

@@ -5,6 +5,7 @@ const props = defineProps();
 const emit = defineEmits();
 const dropdownRef = ref(null);
 const imageLoadFailed = ref(false);
+const supportsDetail = import.meta.env.VITE_APP_TARGET === 'desktop';
 const hasCoverImage = computed(() => {
     return Boolean(props.book.coverUrl) && !imageLoadFailed.value;
 });
@@ -212,7 +213,7 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.circle, __VLS_intrinsics.circle)({
     }, ...__VLS_functionalComponentArgsRest(__VLS_13));
     /** @type {__VLS_StyleScopedClasses['book-action-menu']} */ ;
     const { default: __VLS_17 } = __VLS_15.slots;
-    if (__VLS_ctx.book.format === 'online') {
+    if (__VLS_ctx.supportsDetail) {
         let __VLS_18;
         /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
         elDropdownItem;
@@ -227,7 +228,7 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.circle, __VLS_intrinsics.circle)({
         }, ...__VLS_functionalComponentArgsRest(__VLS_19));
         const { default: __VLS_23 } = __VLS_21.slots;
         // @ts-ignore
-        [handleOpen, handleContextMenu, onImageError, coverSrc, book, book, book, book, book, book, hasCoverImage, handleCommand, Document,];
+        [handleOpen, handleContextMenu, onImageError, coverSrc, book, book, book, book, book, hasCoverImage, handleCommand, supportsDetail, Document,];
         var __VLS_21;
     }
     let __VLS_24;
