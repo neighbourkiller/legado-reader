@@ -23,7 +23,7 @@ Legado 是一款免费、开源、功能强大的小说阅读平台，包含 And
 
 ---
 
-## 📖 Web Reader 纯前端阅读器 (`modules/web-reader`)
+## 📖 Web Reader 前端阅读器 (`modules/web-reader`)
 
 `modules/web-reader` 是基于现代前端技术栈构建的**纯客户端小说阅读器**，无需搭建任何后端服务，直接在浏览器中解析并阅读本地电子书。
 
@@ -41,40 +41,4 @@ Legado 是一款免费、开源、功能强大的小说阅读平台，包含 And
 - **本地存储与离线持久化**：
   - 基于浏览器 **IndexedDB**（`legado-web-reader`）持久化存储书架数据、书籍元信息与阅读进度。
   - 下次打开自动恢复上次阅读位置与排版偏好。
-- **优质的阅读体验**：
-  - 沉浸式阅读界面，支持字号、行高、背景主题（护眼绿、羊皮纸、深色暗黑等）、字体个性化配置。
-  - 支持目录抽屉侧边栏快速跳转。
-  - 支持键盘快捷键翻页（`←` / `→` 键）。
-
-### 🛠️ 技术栈
-
-- **框架**：[Vue 3](https://vuejs.org/) (Composition API, `<script setup>`)
-- **语言**：[TypeScript 5](https://www.typescriptlang.org/)
-- **构建工具**：[Vite 8](https://vitejs.dev/)
-- **状态管理**：[Pinia](https://pinia.vuejs.org/)
-- **UI 组件库**：[Element Plus](https://element-plus.org/) + [@element-plus/icons-vue](https://github.com/element-plus/element-plus-icons)
-- **文档与压缩包解析**：[JSZip](https://stuk.github.io/jszip/)
-
-### 🚀 快速开始
-
-进入 `modules/web-reader` 目录进行开发或构建：
-
-```bash
-# 1. 进入 Web Reader 目录
-cd modules/web-reader
-
-# 2. 安装依赖
-pnpm install
-
-# 3. 启动本地开发服务
-pnpm dev
-
-# 4. 类型检查与生产构建
-pnpm build
-
-# 5. 预览生产构建
-pnpm preview
-```
-
----
 
