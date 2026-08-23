@@ -13,8 +13,13 @@ dist-ssr
 coverage
 *.local
 
-# TypeScript cache
+# TypeScript & Vue Cache / Outputs
 *.tsbuildinfo
+src/**/*.vue.js
+
+# Tauri / Rust Build Outputs
+src-tauri/target/
+src-tauri/gen/schemas/
 
 # Editor directories and files
 .vscode/*

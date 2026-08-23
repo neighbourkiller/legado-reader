@@ -3,6 +3,7 @@ import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { UploadFilled } from '@element-plus/icons-vue';
 import { useBookshelfStore } from '@/stores/bookshelf';
+import { platform } from '@/platform/capabilities';
 const router = useRouter();
 const bookshelfStore = useBookshelfStore();
 const showMenu = ref(false);
@@ -15,7 +16,12 @@ const goToBookshelf = () => {
     router.push('/bookshelf');
 };
 const openBookSourceDialog = () => {
-    showBookSourceModal.value = true;
+    if (platform.supportsOnlineBookSources) {
+        router.push('/book-sources');
+    }
+    else {
+        showBookSourceModal.value = true;
+    }
 };
 const openRssSourceDialog = () => {
     showRssSourceModal.value = true;

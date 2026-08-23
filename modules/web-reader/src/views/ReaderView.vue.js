@@ -74,15 +74,64 @@ const rightBarTheme = computed(() => ({
         : -((settings.value.readWidth || 800) / 2 + 44) + 'px',
     display: miniInterface.value && !showToolBar.value ? 'none' : 'block',
 }));
+// 常用字体多变体与别名映射表（兼顾英文名、中文名、GB版、屏幕版等系统安装差异）
+const FONT_ALIAS_MAP = {
+    'lxgw wenkai screen': [
+        'LXGW WenKai Screen',
+        'LXGW WenKai GB Screen',
+        '霞鹜文楷 屏幕阅读版',
+        '霞鹜文楷 GB 屏幕阅读版',
+        'LXGW WenKai',
+        'LXGW WenKai GB',
+        '霞鹜文楷',
+    ],
+    'lxgw wenkai': [
+        'LXGW WenKai',
+        'LXGW WenKai GB',
+        '霞鹜文楷',
+        '霞鹜文楷 GB',
+        'LXGW WenKai Screen',
+        'LXGW WenKai GB Screen',
+        '霞鹜文楷 屏幕阅读版',
+        '霞鹜文楷 GB 屏幕阅读版',
+    ],
+    '霞鹜文楷': [
+        '霞鹜文楷 GB 屏幕阅读版',
+        '霞鹜文楷 屏幕阅读版',
+        '霞鹜文楷',
+        'LXGW WenKai GB Screen',
+        'LXGW WenKai Screen',
+        'LXGW WenKai',
+    ],
+    'pingfang sc': ['PingFang SC', 'PingFangSC-Regular', '苹方-简', '苹方'],
+    'microsoft yahei': ['Microsoft YaHei', '微软雅黑', 'Microsoft YaHei UI'],
+    'source han sans': ['Source Han Sans SC', 'Source Han Sans CN', 'Noto Sans CJK SC', 'Noto Sans SC', '思源黑体'],
+    'source han serif': ['Source Han Serif SC', 'Source Han Serif CN', 'Noto Serif CJK SC', 'Noto Serif SC', '思源宋体'],
+    'kaiti': ['KaiTi', '楷体', 'STKaiti', '华文楷体', 'Kaiti SC', 'AR PL UKai CN'],
+    'simsun': ['SimSun', '宋体', 'STSong', '华文宋体', 'Songti SC', 'NSimSun'],
+};
 // 字体与字号
 const fontFamilyStr = computed(() => {
     if (settings.value.font >= 0) {
         return themeConfig.fonts[settings.value.font] || 'Microsoft YaHei, sans-serif';
     }
     const custom = settings.value.customFontName?.trim();
-    return custom
-        ? `"${custom}", PingFangSC-Regular, sans-serif`
-        : 'Microsoft YaHei, sans-serif';
+    if (!custom) {
+        return 'Microsoft YaHei, sans-serif';
+    }
+    const lower = custom.toLowerCase();
+    let matchedAliases = [];
+    for (const [key, aliases] of Object.entries(FONT_ALIAS_MAP)) {
+        if (lower === key || lower.includes(key) || aliases.some(a => a.toLowerCase() === lower)) {
+            matchedAliases = aliases;
+            break;
+        }
+    }
+    if (matchedAliases.length > 0) {
+        const list = Array.from(new Set([custom, ...matchedAliases]));
+        return list.map(f => `"${f}"`).join(', ') + ', PingFangSC-Regular, "Microsoft YaHei", sans-serif';
+    }
+    return `"${custom}", PingFangSC-Regular, "Microsoft YaHei", sans-serif`;
 });
 const fontSizeStr = computed(() => `${settings.value.fontSize || 18}px`);
 const infiniteLoading = computed(() => settings.value.infiniteLoading);

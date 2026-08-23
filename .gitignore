@@ -18,4 +18,9 @@ package-lock.json
 .kotlin/
 .cxx
 .vscode
-modules/web-reader/dist/
+dist/
+dist-ssr/
+target/
+*.tsbuildinfo
+*.apk
+*.aab

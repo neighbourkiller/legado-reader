@@ -34,6 +34,12 @@ const COMMON_CANDIDATE_FONTS = [
   'Noto Serif CJK SC',
   'LXGW WenKai',
   'LXGW WenKai Screen',
+  'LXGW WenKai GB',
+  'LXGW WenKai GB Screen',
+  '霞鹜文楷',
+  '霞鹜文楷 GB 屏幕阅读版',
+  'LXGW Neo XiHei',
+  '霞鹜新晰黑',
   'WenQuanYi Micro Hei',
   'WenQuanYi Zen Hei',
   // 优质英文字体
@@ -55,16 +61,7 @@ const COMMON_CANDIDATE_FONTS = [
 function isFontInstalled(fontName: string): boolean {
   if (typeof document === 'undefined') return false
 
-  // 优先使用 document.fonts.check
-  try {
-    if (document.fonts && typeof document.fonts.check === 'function') {
-      if (document.fonts.check(`16px "${fontName}"`)) {
-        return true
-      }
-    }
-  } catch {
-    // 忽略异常，降级到 canvas 宽度对比
-  }
+  // Canvas 宽度对比法（不能使用 document.fonts.check，其对未安装的本地字体会返回 true）
 
   // Canvas 宽度对比法
   try {

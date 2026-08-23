@@ -2,7 +2,14 @@
 
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
-  const component: DefineComponent<object, object, unknown>
+  const component: DefineComponent<{}, {}, any>
   export default component
 }
 
+interface ImportMetaEnv {
+  readonly VITE_APP_TARGET: 'web' | 'desktop'
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
