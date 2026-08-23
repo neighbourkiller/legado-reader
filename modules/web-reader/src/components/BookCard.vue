@@ -46,6 +46,9 @@
 
           <template #dropdown>
             <el-dropdown-menu class="book-action-menu">
+              <el-dropdown-item command="detail" :icon="Document" v-if="book.format === 'online'">
+                书籍详情
+              </el-dropdown-item>
               <el-dropdown-item command="edit" :icon="Edit">
                 修改信息
               </el-dropdown-item>
@@ -78,7 +81,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Edit, Delete } from '@element-plus/icons-vue'
+import { Edit, Delete, Document } from '@element-plus/icons-vue'
 import type { DropdownInstance } from 'element-plus'
 import type { BookMeta } from '@/parsers/types'
 import defaultCover from '@/assets/imgs/default_cover.jpg'
@@ -91,6 +94,7 @@ const emit = defineEmits<{
   (e: 'open', id: string): void
   (e: 'delete', id: string): void
   (e: 'edit', book: BookMeta): void
+  (e: 'detail', id: string): void
 }>()
 
 const dropdownRef = ref<DropdownInstance | null>(null)
@@ -151,7 +155,9 @@ const handleContextMenu = () => {
 }
 
 const handleCommand = (command: string) => {
-  if (command === 'edit') {
+  if (command === 'detail') {
+    emit('detail', props.book.id)
+  } else if (command === 'edit') {
     emit('edit', props.book)
   } else if (command === 'delete') {
     emit('delete', props.book.id)

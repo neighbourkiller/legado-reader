@@ -116,6 +116,10 @@
                     <el-icon><VideoPlay /></el-icon>
                     调试书源
                   </el-dropdown-item>
+                  <el-dropdown-item command="auth">
+                    <el-icon><Key /></el-icon>
+                    网页登录/验证 (CF盾)
+                  </el-dropdown-item>
                   <el-dropdown-item command="copy">
                     <el-icon><CopyDocument /></el-icon>
                     复制规则
@@ -147,6 +151,12 @@
     <SourceDebugDialog
       v-model:visible="showDebugDialog"
       :source="currentDebuggingSource"
+    />
+
+    <!-- 网页验证 / Cookie 注入 Dialog -->
+    <SourceAuthDialog
+      v-model="showAuthDialog"
+      :source="currentAuthSource"
     />
 
     <!-- 导入书源 Dialog -->
@@ -246,11 +256,13 @@ import {
   VideoPlay,
   CopyDocument,
   Delete,
+  Key,
 } from '@element-plus/icons-vue'
 import { useBookSourceStore } from '@/stores/bookSource'
 import type { BookSource } from '@/source/types/BookSource'
 import SourceEditDialog from '@/components/SourceEditDialog.vue'
 import SourceDebugDialog from '@/components/SourceDebugDialog.vue'
+import SourceAuthDialog from '@/components/SourceAuthDialog.vue'
 
 const router = useRouter()
 const bookSourceStore = useBookSourceStore()
@@ -268,6 +280,8 @@ const showEditDialog = ref(false)
 const currentEditingSource = ref<BookSource | null>(null)
 const showDebugDialog = ref(false)
 const currentDebuggingSource = ref<BookSource | null>(null)
+const showAuthDialog = ref(false)
+const currentAuthSource = ref<BookSource | null>(null)
 
 // 下拉菜单 Refs 管理
 const dropdownRefs = new Map<string, any>()
@@ -353,6 +367,11 @@ const handleCommand = async (command: string, source: BookSource) => {
     case 'debug':
       currentDebuggingSource.value = source
       showDebugDialog.value = true
+      break
+
+    case 'auth':
+      currentAuthSource.value = source
+      showAuthDialog.value = true
       break
 
     case 'copy':

@@ -3,6 +3,8 @@ import { ref, computed } from 'vue';
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types';
 import { getTxtChapterContent, getEpubChapterContent } from '@/parsers';
 import { getBook, updateBookMeta, saveSettings, loadSettings, } from '@/storage/db';
+import { useBookSourceStore } from '@/stores/bookSource';
+import { SourceEngine } from '@/source/engine/SourceEngine';
 const SETTINGS_KEY = 'legado_web_reader_settings';
 function normalizeSettings(...sources) {
     const availableSources = sources.filter((source) => Boolean(source));
@@ -66,7 +68,7 @@ export const useReadingStore = defineStore('reading', () => {
                 throw new Error('书籍未找到');
             currentBook.value = stored.meta;
             chapters.value = stored.chapters;
-            fileData.value = stored.fileData;
+            fileData.value = stored.fileData || null;
             // Load settings
             const dbSettings = await loadSettings();
             const localSettings = loadLocalSettings();
@@ -91,14 +93,69 @@ export const useReadingStore = defineStore('reading', () => {
         }
     }
     async function fetchChapter(index) {
-        if (!currentBook.value || !fileData.value)
+        if (!currentBook.value)
+            return null;
+        if (currentBook.value.format !== 'online' && !fileData.value)
             return null;
         if (index < 0 || index >= chapters.value.length)
             return null;
         const chapter = chapters.value[index];
         if (!chapter)
             return null;
-        if (currentBook.value.format === 'txt') {
+        if (currentBook.value.format === 'online') {
+            const sourceUrl = currentBook.value.sourceUrl;
+            const chapterHref = chapter.href;
+            if (!sourceUrl || !chapterHref) {
+                return {
+                    index,
+                    title: chapter.title,
+                    content: ['[该章节暂无有效链接或书源信息缺失]'],
+                    format: 'txt',
+                };
+            }
+            const bookSourceStore = useBookSourceStore();
+            if (bookSourceStore.sources.length === 0) {
+                await bookSourceStore.loadSources();
+            }
+            const source = bookSourceStore.sources.find(s => s.bookSourceUrl === sourceUrl);
+            if (!source) {
+                return {
+                    index,
+                    title: chapter.title,
+                    content: [`[未找到对应书源: ${currentBook.value.sourceName || sourceUrl}，请检查书源是否已启用]`],
+                    format: 'txt',
+                };
+            }
+            try {
+                const engine = new SourceEngine();
+                const rawContent = await engine.getContent(source, chapterHref);
+                let paragraphs = rawContent
+                    .split(/\n+/)
+                    .map(p => p.trim())
+                    .filter(p => p.length > 0);
+                // 去除第一行重复的章节标题
+                if (paragraphs.length > 0 &&
+                    (paragraphs[0] === chapter.title.trim() ||
+                        paragraphs[0].replace(/\s+/g, '') === chapter.title.replace(/\s+/g, ''))) {
+                    paragraphs = paragraphs.slice(1);
+                }
+                return {
+                    index,
+                    title: chapter.title,
+                    content: paragraphs.length > 0 ? paragraphs : ['[本章内容为空]'],
+                    format: 'txt',
+                };
+            }
+            catch (err) {
+                return {
+                    index,
+                    title: chapter.title,
+                    content: [`[章节正文加载失败: ${err.message || err}]`],
+                    format: 'txt',
+                };
+            }
+        }
+        if (currentBook.value.format === 'txt' && fileData.value) {
             const raw = getTxtChapterContent(fileData.value, chapter);
             let paragraphs = raw
                 .split(/\n+/)
@@ -117,7 +174,7 @@ export const useReadingStore = defineStore('reading', () => {
                 format: 'txt',
             };
         }
-        else {
+        else if (currentBook.value.format === 'epub' && fileData.value) {
             const result = await getEpubChapterContent(fileData.value, chapter);
             activeBlobUrls.push(...result.blobUrls);
             return {
@@ -127,6 +184,7 @@ export const useReadingStore = defineStore('reading', () => {
                 format: 'epub',
             };
         }
+        return null;
     }
     async function loadChapter(index) {
         if (!currentBook.value || !fileData.value)

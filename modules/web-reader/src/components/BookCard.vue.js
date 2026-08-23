@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue';
-import { Edit, Delete } from '@element-plus/icons-vue';
+import { Edit, Delete, Document } from '@element-plus/icons-vue';
 import defaultCover from '@/assets/imgs/default_cover.jpg';
 const props = defineProps();
 const emit = defineEmits();
@@ -55,7 +55,10 @@ const handleContextMenu = () => {
     dropdownRef.value?.handleOpen();
 };
 const handleCommand = (command) => {
-    if (command === 'edit') {
+    if (command === 'detail') {
+        emit('detail', props.book.id);
+    }
+    else if (command === 'edit') {
         emit('edit', props.book);
     }
     else if (command === 'delete') {
@@ -209,43 +212,61 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.circle, __VLS_intrinsics.circle)({
     }, ...__VLS_functionalComponentArgsRest(__VLS_13));
     /** @type {__VLS_StyleScopedClasses['book-action-menu']} */ ;
     const { default: __VLS_17 } = __VLS_15.slots;
-    let __VLS_18;
-    /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
-    elDropdownItem;
-    // @ts-ignore
-    const __VLS_19 = __VLS_asFunctionalComponent1(__VLS_18, new __VLS_18({
-        command: "edit",
-        icon: (__VLS_ctx.Edit),
-    }));
-    const __VLS_20 = __VLS_19({
-        command: "edit",
-        icon: (__VLS_ctx.Edit),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_19));
-    const { default: __VLS_23 } = __VLS_21.slots;
-    // @ts-ignore
-    [handleOpen, handleContextMenu, onImageError, coverSrc, book, book, book, book, book, hasCoverImage, handleCommand, Edit,];
-    var __VLS_21;
+    if (__VLS_ctx.book.format === 'online') {
+        let __VLS_18;
+        /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
+        elDropdownItem;
+        // @ts-ignore
+        const __VLS_19 = __VLS_asFunctionalComponent1(__VLS_18, new __VLS_18({
+            command: "detail",
+            icon: (__VLS_ctx.Document),
+        }));
+        const __VLS_20 = __VLS_19({
+            command: "detail",
+            icon: (__VLS_ctx.Document),
+        }, ...__VLS_functionalComponentArgsRest(__VLS_19));
+        const { default: __VLS_23 } = __VLS_21.slots;
+        // @ts-ignore
+        [handleOpen, handleContextMenu, onImageError, coverSrc, book, book, book, book, book, book, hasCoverImage, handleCommand, Document,];
+        var __VLS_21;
+    }
     let __VLS_24;
     /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
     elDropdownItem;
     // @ts-ignore
     const __VLS_25 = __VLS_asFunctionalComponent1(__VLS_24, new __VLS_24({
+        command: "edit",
+        icon: (__VLS_ctx.Edit),
+    }));
+    const __VLS_26 = __VLS_25({
+        command: "edit",
+        icon: (__VLS_ctx.Edit),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_25));
+    const { default: __VLS_29 } = __VLS_27.slots;
+    // @ts-ignore
+    [Edit,];
+    var __VLS_27;
+    let __VLS_30;
+    /** @ts-ignore @type { | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item'] | typeof __VLS_components.elDropdownItem | typeof __VLS_components.ElDropdownItem | typeof __VLS_components['el-dropdown-item']} */
+    elDropdownItem;
+    // @ts-ignore
+    const __VLS_31 = __VLS_asFunctionalComponent1(__VLS_30, new __VLS_30({
         command: "delete",
         icon: (__VLS_ctx.Delete),
         divided: true,
         ...{ class: "delete-action-item" },
     }));
-    const __VLS_26 = __VLS_25({
+    const __VLS_32 = __VLS_31({
         command: "delete",
         icon: (__VLS_ctx.Delete),
         divided: true,
         ...{ class: "delete-action-item" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_25));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_31));
     /** @type {__VLS_StyleScopedClasses['delete-action-item']} */ ;
-    const { default: __VLS_29 } = __VLS_27.slots;
+    const { default: __VLS_35 } = __VLS_33.slots;
     // @ts-ignore
     [Delete,];
-    var __VLS_27;
+    var __VLS_33;
     // @ts-ignore
     [];
     var __VLS_15;

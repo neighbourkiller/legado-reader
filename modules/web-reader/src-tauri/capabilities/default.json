@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capabilities for Legado Reader",
-  "windows": ["main"],
+  "windows": ["*"],
   "permissions": [
     "core:default",
     "shell:allow-open"

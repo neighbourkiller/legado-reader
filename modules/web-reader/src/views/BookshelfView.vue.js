@@ -49,6 +49,12 @@ const openRecentBook = () => {
 const openBook = (id) => {
     router.push(`/reader/${id}`);
 };
+const openBookDetail = (id) => {
+    router.push({
+        path: '/book-detail',
+        query: { id },
+    });
+};
 const confirmDeleteBook = (id) => {
     ElMessageBox.confirm('确定要删除这本书吗？阅读进度也将一并删除。', '删除确认', {
         confirmButtonText: '确定',
@@ -578,6 +584,7 @@ if (__VLS_ctx.filteredBooks.length > 0) {
         // @ts-ignore
         const __VLS_57 = __VLS_asFunctionalComponent1(__VLS_56, new __VLS_56({
             ...{ 'onOpen': {} },
+            ...{ 'onDetail': {} },
             ...{ 'onEdit': {} },
             ...{ 'onDelete': {} },
             key: (book.id),
@@ -585,6 +592,7 @@ if (__VLS_ctx.filteredBooks.length > 0) {
         }));
         const __VLS_58 = __VLS_57({
             ...{ 'onOpen': {} },
+            ...{ 'onDetail': {} },
             ...{ 'onEdit': {} },
             ...{ 'onDelete': {} },
             key: (book.id),
@@ -596,47 +604,51 @@ if (__VLS_ctx.filteredBooks.length > 0) {
             onOpen: (__VLS_ctx.openBook),
         };
         const __VLS_63 = {
+            /** @type {typeof __VLS_61.detail} */
+            onDetail: (__VLS_ctx.openBookDetail),
+        };
+        const __VLS_64 = {
             /** @type {typeof __VLS_61.edit} */
             onEdit: (__VLS_ctx.handleEditBook),
         };
-        const __VLS_64 = {
+        const __VLS_65 = {
             /** @type {typeof __VLS_61.delete} */
             onDelete: (__VLS_ctx.confirmDeleteBook),
         };
         var __VLS_59;
         var __VLS_60;
         // @ts-ignore
-        [filteredBooks, filteredBooks, openBook, handleEditBook, confirmDeleteBook,];
+        [filteredBooks, filteredBooks, openBook, openBookDetail, handleEditBook, confirmDeleteBook,];
     }
 }
 else if (__VLS_ctx.searchWord) {
-    let __VLS_65;
+    let __VLS_66;
     /** @ts-ignore @type { | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty'] | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty']} */
     elEmpty;
     // @ts-ignore
-    const __VLS_66 = __VLS_asFunctionalComponent1(__VLS_65, new __VLS_65({
+    const __VLS_67 = __VLS_asFunctionalComponent1(__VLS_66, new __VLS_66({
         description: "未找到匹配的书籍",
         ...{ class: "shelf-empty" },
     }));
-    const __VLS_67 = __VLS_66({
+    const __VLS_68 = __VLS_67({
         description: "未找到匹配的书籍",
         ...{ class: "shelf-empty" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_66));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_67));
     /** @type {__VLS_StyleScopedClasses['shelf-empty']} */ ;
-    const { default: __VLS_70 } = __VLS_68.slots;
-    let __VLS_71;
+    const { default: __VLS_71 } = __VLS_69.slots;
+    let __VLS_72;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_72 = __VLS_asFunctionalComponent1(__VLS_71, new __VLS_71({
+    const __VLS_73 = __VLS_asFunctionalComponent1(__VLS_72, new __VLS_72({
         ...{ 'onClick': {} },
     }));
-    const __VLS_73 = __VLS_72({
+    const __VLS_74 = __VLS_73({
         ...{ 'onClick': {} },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_72));
-    let __VLS_76;
-    const __VLS_77 = {
-        /** @type {typeof __VLS_76.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_73));
+    let __VLS_77;
+    const __VLS_78 = {
+        /** @type {typeof __VLS_77.click} */
         onClick: (...[$event]) => {
             if (!!(__VLS_ctx.filteredBooks.length > 0))
                 throw 0;
@@ -647,57 +659,57 @@ else if (__VLS_ctx.searchWord) {
             [searchWord, searchWord,];
         },
     };
-    const { default: __VLS_78 } = __VLS_74.slots;
+    const { default: __VLS_79 } = __VLS_75.slots;
     // @ts-ignore
     [];
-    var __VLS_74;
     var __VLS_75;
+    var __VLS_76;
     // @ts-ignore
     [];
-    var __VLS_68;
+    var __VLS_69;
 }
 else {
-    let __VLS_79;
+    let __VLS_80;
     /** @ts-ignore @type { | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty'] | typeof __VLS_components.elEmpty | typeof __VLS_components.ElEmpty | typeof __VLS_components['el-empty']} */
     elEmpty;
     // @ts-ignore
-    const __VLS_80 = __VLS_asFunctionalComponent1(__VLS_79, new __VLS_79({
+    const __VLS_81 = __VLS_asFunctionalComponent1(__VLS_80, new __VLS_80({
         description: "书架空空如也，去导入电子书吧",
         ...{ class: "shelf-empty" },
     }));
-    const __VLS_81 = __VLS_80({
+    const __VLS_82 = __VLS_81({
         description: "书架空空如也，去导入电子书吧",
         ...{ class: "shelf-empty" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_80));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_81));
     /** @type {__VLS_StyleScopedClasses['shelf-empty']} */ ;
-    const { default: __VLS_84 } = __VLS_82.slots;
-    let __VLS_85;
+    const { default: __VLS_85 } = __VLS_83.slots;
+    let __VLS_86;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_86 = __VLS_asFunctionalComponent1(__VLS_85, new __VLS_85({
+    const __VLS_87 = __VLS_asFunctionalComponent1(__VLS_86, new __VLS_86({
         ...{ 'onClick': {} },
         type: "primary",
         icon: (__VLS_ctx.Plus),
     }));
-    const __VLS_87 = __VLS_86({
+    const __VLS_88 = __VLS_87({
         ...{ 'onClick': {} },
         type: "primary",
         icon: (__VLS_ctx.Plus),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_86));
-    let __VLS_90;
-    const __VLS_91 = {
-        /** @type {typeof __VLS_90.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_87));
+    let __VLS_91;
+    const __VLS_92 = {
+        /** @type {typeof __VLS_91.click} */
         onClick: (__VLS_ctx.triggerUpload),
     };
-    const { default: __VLS_92 } = __VLS_88.slots;
+    const { default: __VLS_93 } = __VLS_89.slots;
     // @ts-ignore
     [Plus, triggerUpload,];
-    var __VLS_88;
     var __VLS_89;
+    var __VLS_90;
     // @ts-ignore
     [];
-    var __VLS_82;
+    var __VLS_83;
 }
 __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     ...{ onChange: (__VLS_ctx.handleFileSelect) },
@@ -707,111 +719,111 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     multiple: true,
     ...{ style: {} },
 });
-let __VLS_93;
+let __VLS_94;
 /** @ts-ignore @type { | typeof __VLS_components.elDialog | typeof __VLS_components.ElDialog | typeof __VLS_components['el-dialog'] | typeof __VLS_components.elDialog | typeof __VLS_components.ElDialog | typeof __VLS_components['el-dialog']} */
 elDialog;
 // @ts-ignore
-const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
+const __VLS_95 = __VLS_asFunctionalComponent1(__VLS_94, new __VLS_94({
     modelValue: (__VLS_ctx.showEditDialog),
     title: "修改书籍信息",
     width: "480px",
     destroyOnClose: true,
     alignCenter: true,
 }));
-const __VLS_95 = __VLS_94({
+const __VLS_96 = __VLS_95({
     modelValue: (__VLS_ctx.showEditDialog),
     title: "修改书籍信息",
     width: "480px",
     destroyOnClose: true,
     alignCenter: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_94));
-const { default: __VLS_98 } = __VLS_96.slots;
-let __VLS_99;
+}, ...__VLS_functionalComponentArgsRest(__VLS_95));
+const { default: __VLS_99 } = __VLS_97.slots;
+let __VLS_100;
 /** @ts-ignore @type { | typeof __VLS_components.elForm | typeof __VLS_components.ElForm | typeof __VLS_components['el-form'] | typeof __VLS_components.elForm | typeof __VLS_components.ElForm | typeof __VLS_components['el-form']} */
 elForm;
 // @ts-ignore
-const __VLS_100 = __VLS_asFunctionalComponent1(__VLS_99, new __VLS_99({
+const __VLS_101 = __VLS_asFunctionalComponent1(__VLS_100, new __VLS_100({
     model: (__VLS_ctx.editForm),
     labelPosition: "top",
 }));
-const __VLS_101 = __VLS_100({
+const __VLS_102 = __VLS_101({
     model: (__VLS_ctx.editForm),
     labelPosition: "top",
-}, ...__VLS_functionalComponentArgsRest(__VLS_100));
-const { default: __VLS_104 } = __VLS_102.slots;
-let __VLS_105;
+}, ...__VLS_functionalComponentArgsRest(__VLS_101));
+const { default: __VLS_105 } = __VLS_103.slots;
+let __VLS_106;
 /** @ts-ignore @type { | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item'] | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item']} */
 elFormItem;
 // @ts-ignore
-const __VLS_106 = __VLS_asFunctionalComponent1(__VLS_105, new __VLS_105({
+const __VLS_107 = __VLS_asFunctionalComponent1(__VLS_106, new __VLS_106({
     label: "书籍名称",
     required: true,
 }));
-const __VLS_107 = __VLS_106({
+const __VLS_108 = __VLS_107({
     label: "书籍名称",
     required: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_106));
-const { default: __VLS_110 } = __VLS_108.slots;
-let __VLS_111;
+}, ...__VLS_functionalComponentArgsRest(__VLS_107));
+const { default: __VLS_111 } = __VLS_109.slots;
+let __VLS_112;
 /** @ts-ignore @type { | typeof __VLS_components.elInput | typeof __VLS_components.ElInput | typeof __VLS_components['el-input']} */
 elInput;
 // @ts-ignore
-const __VLS_112 = __VLS_asFunctionalComponent1(__VLS_111, new __VLS_111({
+const __VLS_113 = __VLS_asFunctionalComponent1(__VLS_112, new __VLS_112({
     modelValue: (__VLS_ctx.editForm.name),
     placeholder: "请输入书名",
     maxlength: "100",
     showWordLimit: true,
 }));
-const __VLS_113 = __VLS_112({
+const __VLS_114 = __VLS_113({
     modelValue: (__VLS_ctx.editForm.name),
     placeholder: "请输入书名",
     maxlength: "100",
     showWordLimit: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_112));
+}, ...__VLS_functionalComponentArgsRest(__VLS_113));
 // @ts-ignore
 [handleFileSelect, showEditDialog, editForm, editForm,];
-var __VLS_108;
-let __VLS_116;
+var __VLS_109;
+let __VLS_117;
 /** @ts-ignore @type { | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item'] | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item']} */
 elFormItem;
 // @ts-ignore
-const __VLS_117 = __VLS_asFunctionalComponent1(__VLS_116, new __VLS_116({
+const __VLS_118 = __VLS_asFunctionalComponent1(__VLS_117, new __VLS_117({
     label: "作者",
 }));
-const __VLS_118 = __VLS_117({
+const __VLS_119 = __VLS_118({
     label: "作者",
-}, ...__VLS_functionalComponentArgsRest(__VLS_117));
-const { default: __VLS_121 } = __VLS_119.slots;
-let __VLS_122;
+}, ...__VLS_functionalComponentArgsRest(__VLS_118));
+const { default: __VLS_122 } = __VLS_120.slots;
+let __VLS_123;
 /** @ts-ignore @type { | typeof __VLS_components.elInput | typeof __VLS_components.ElInput | typeof __VLS_components['el-input']} */
 elInput;
 // @ts-ignore
-const __VLS_123 = __VLS_asFunctionalComponent1(__VLS_122, new __VLS_122({
+const __VLS_124 = __VLS_asFunctionalComponent1(__VLS_123, new __VLS_123({
     modelValue: (__VLS_ctx.editForm.author),
     placeholder: "请输入作者",
     maxlength: "50",
     showWordLimit: true,
 }));
-const __VLS_124 = __VLS_123({
+const __VLS_125 = __VLS_124({
     modelValue: (__VLS_ctx.editForm.author),
     placeholder: "请输入作者",
     maxlength: "50",
     showWordLimit: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_123));
+}, ...__VLS_functionalComponentArgsRest(__VLS_124));
 // @ts-ignore
 [editForm,];
-var __VLS_119;
-let __VLS_127;
+var __VLS_120;
+let __VLS_128;
 /** @ts-ignore @type { | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item'] | typeof __VLS_components.elFormItem | typeof __VLS_components.ElFormItem | typeof __VLS_components['el-form-item']} */
 elFormItem;
 // @ts-ignore
-const __VLS_128 = __VLS_asFunctionalComponent1(__VLS_127, new __VLS_127({
+const __VLS_129 = __VLS_asFunctionalComponent1(__VLS_128, new __VLS_128({
     label: "封面设置",
 }));
-const __VLS_129 = __VLS_128({
+const __VLS_130 = __VLS_129({
     label: "封面设置",
-}, ...__VLS_functionalComponentArgsRest(__VLS_128));
-const { default: __VLS_132 } = __VLS_130.slots;
+}, ...__VLS_functionalComponentArgsRest(__VLS_129));
+const { default: __VLS_133 } = __VLS_131.slots;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "cover-edit-section" },
 });
@@ -830,140 +842,140 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "cover-inputs" },
 });
 /** @type {__VLS_StyleScopedClasses['cover-inputs']} */ ;
-let __VLS_133;
+let __VLS_134;
 /** @ts-ignore @type { | typeof __VLS_components.elInput | typeof __VLS_components.ElInput | typeof __VLS_components['el-input']} */
 elInput;
 // @ts-ignore
-const __VLS_134 = __VLS_asFunctionalComponent1(__VLS_133, new __VLS_133({
+const __VLS_135 = __VLS_asFunctionalComponent1(__VLS_134, new __VLS_134({
     modelValue: (__VLS_ctx.editForm.coverUrl),
     placeholder: "输入封面图片 URL 链接",
     clearable: true,
 }));
-const __VLS_135 = __VLS_134({
+const __VLS_136 = __VLS_135({
     modelValue: (__VLS_ctx.editForm.coverUrl),
     placeholder: "输入封面图片 URL 链接",
     clearable: true,
-}, ...__VLS_functionalComponentArgsRest(__VLS_134));
+}, ...__VLS_functionalComponentArgsRest(__VLS_135));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "cover-action-btns" },
 });
 /** @type {__VLS_StyleScopedClasses['cover-action-btns']} */ ;
-let __VLS_138;
+let __VLS_139;
 /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
 elButton;
 // @ts-ignore
-const __VLS_139 = __VLS_asFunctionalComponent1(__VLS_138, new __VLS_138({
+const __VLS_140 = __VLS_asFunctionalComponent1(__VLS_139, new __VLS_139({
     ...{ 'onClick': {} },
     type: "primary",
     plain: true,
     size: "small",
 }));
-const __VLS_140 = __VLS_139({
+const __VLS_141 = __VLS_140({
     ...{ 'onClick': {} },
     type: "primary",
     plain: true,
     size: "small",
-}, ...__VLS_functionalComponentArgsRest(__VLS_139));
-let __VLS_143;
-const __VLS_144 = {
-    /** @type {typeof __VLS_143.click} */
+}, ...__VLS_functionalComponentArgsRest(__VLS_140));
+let __VLS_144;
+const __VLS_145 = {
+    /** @type {typeof __VLS_144.click} */
     onClick: (__VLS_ctx.triggerCoverFilePick),
 };
-const { default: __VLS_145 } = __VLS_141.slots;
+const { default: __VLS_146 } = __VLS_142.slots;
 // @ts-ignore
 [editForm, editForm, defaultCover, triggerCoverFilePick,];
-var __VLS_141;
 var __VLS_142;
-let __VLS_146;
+var __VLS_143;
+let __VLS_147;
 /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
 elButton;
 // @ts-ignore
-const __VLS_147 = __VLS_asFunctionalComponent1(__VLS_146, new __VLS_146({
+const __VLS_148 = __VLS_asFunctionalComponent1(__VLS_147, new __VLS_147({
     ...{ 'onClick': {} },
     size: "small",
 }));
-const __VLS_148 = __VLS_147({
+const __VLS_149 = __VLS_148({
     ...{ 'onClick': {} },
     size: "small",
-}, ...__VLS_functionalComponentArgsRest(__VLS_147));
-let __VLS_151;
-const __VLS_152 = {
-    /** @type {typeof __VLS_151.click} */
+}, ...__VLS_functionalComponentArgsRest(__VLS_148));
+let __VLS_152;
+const __VLS_153 = {
+    /** @type {typeof __VLS_152.click} */
     onClick: (...[$event]) => {
         return (__VLS_ctx.editForm.coverUrl = '');
         // @ts-ignore
         [editForm,];
     },
 };
-const { default: __VLS_153 } = __VLS_149.slots;
+const { default: __VLS_154 } = __VLS_150.slots;
 // @ts-ignore
 [];
-var __VLS_149;
 var __VLS_150;
+var __VLS_151;
 // @ts-ignore
 [];
-var __VLS_130;
+var __VLS_131;
 // @ts-ignore
 [];
-var __VLS_102;
+var __VLS_103;
 {
-    const { footer: __VLS_154 } = __VLS_96.slots;
+    const { footer: __VLS_155 } = __VLS_97.slots;
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "dialog-footer" },
     });
     /** @type {__VLS_StyleScopedClasses['dialog-footer']} */ ;
-    let __VLS_155;
+    let __VLS_156;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_156 = __VLS_asFunctionalComponent1(__VLS_155, new __VLS_155({
+    const __VLS_157 = __VLS_asFunctionalComponent1(__VLS_156, new __VLS_156({
         ...{ 'onClick': {} },
     }));
-    const __VLS_157 = __VLS_156({
+    const __VLS_158 = __VLS_157({
         ...{ 'onClick': {} },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_156));
-    let __VLS_160;
-    const __VLS_161 = {
-        /** @type {typeof __VLS_160.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_157));
+    let __VLS_161;
+    const __VLS_162 = {
+        /** @type {typeof __VLS_161.click} */
         onClick: (...[$event]) => {
             return (__VLS_ctx.showEditDialog = false);
             // @ts-ignore
             [showEditDialog,];
         },
     };
-    const { default: __VLS_162 } = __VLS_158.slots;
+    const { default: __VLS_163 } = __VLS_159.slots;
     // @ts-ignore
     [];
-    var __VLS_158;
     var __VLS_159;
-    let __VLS_163;
+    var __VLS_160;
+    let __VLS_164;
     /** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
     elButton;
     // @ts-ignore
-    const __VLS_164 = __VLS_asFunctionalComponent1(__VLS_163, new __VLS_163({
+    const __VLS_165 = __VLS_asFunctionalComponent1(__VLS_164, new __VLS_164({
         ...{ 'onClick': {} },
         type: "primary",
     }));
-    const __VLS_165 = __VLS_164({
+    const __VLS_166 = __VLS_165({
         ...{ 'onClick': {} },
         type: "primary",
-    }, ...__VLS_functionalComponentArgsRest(__VLS_164));
-    let __VLS_168;
-    const __VLS_169 = {
-        /** @type {typeof __VLS_168.click} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_165));
+    let __VLS_169;
+    const __VLS_170 = {
+        /** @type {typeof __VLS_169.click} */
         onClick: (__VLS_ctx.saveEditBook),
     };
-    const { default: __VLS_170 } = __VLS_166.slots;
+    const { default: __VLS_171 } = __VLS_167.slots;
     // @ts-ignore
     [saveEditBook,];
-    var __VLS_166;
     var __VLS_167;
+    var __VLS_168;
     // @ts-ignore
     [];
 }
 // @ts-ignore
 [];
-var __VLS_96;
+var __VLS_97;
 __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     ...{ onChange: (__VLS_ctx.handleCoverFileSelect) },
     ref: "coverFileInputRef",

@@ -50,6 +50,31 @@ export function resolveAbsoluteUrl(rawUrl: string, baseUrl?: string): string {
 }
 
 /**
+ * 清理书名（去除开头的序号等干扰字符）
+ */
+export function cleanBookTitle(raw: string): string {
+  if (!raw) return ''
+  let title = raw.trim()
+  // 去除开头的序号，如 "1. "、"1、"、"01 - "、"1 "、"[1] "
+  title = title.replace(/^\[?\d+\]?[\.、\s\-]+/, '').trim()
+  return title
+}
+
+/**
+ * 生成稳定的网络书籍唯一 ID
+ */
+export function generateBookId(name: string, author = '', sourceUrl = ''): string {
+  const cleanName = cleanBookTitle(name)
+  const raw = `${cleanName}_${author.trim()}_${sourceUrl.trim()}`
+  let hash = 0
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) - hash) + raw.charCodeAt(i)
+    hash |= 0
+  }
+  return `online_${Math.abs(hash).toString(36)}`
+}
+
+/**
  * 清理 Legado 简易语法为标准 CSS 选择器
  */
 export function normalizeSelector(raw: string): string {
@@ -60,13 +85,18 @@ export function normalizeSelector(raw: string): string {
     s = s.substring(2).trim()
   }
 
+  // Legado 使用 @ 连接逐级 DOM 选择器，例如 class.hot_4@tag.li。
+  // 属性提取规则会在调用本函数前移除末尾的 @text/@href/@src，
+  // 因此这里剩余的 @ 都表示后代层级。
+  s = s.replace(/@/g, ' ')
+
   // 转换 Legado 简写语法: class.xxx -> .xxx, id.xxx -> #xxx, tag.xxx -> xxx
   s = s.replace(/\bclass\.([\w-]+)/g, '.$1')
   s = s.replace(/\bid\.([\w-]+)/g, '#$1')
   s = s.replace(/\btag\.([\w-]+)/g, '$1')
   s = s.replace(/\bchildren\b/g, '> *')
 
-  return s
+  return s.replace(/\s+/g, ' ').trim()
 }
 
 export function parseRuleType(rule: string): ParsedRule {
@@ -85,7 +115,8 @@ export function parseRuleType(rule: string): ParsedRule {
     trimmed.startsWith('./') ||
     trimmed.startsWith('/') ||
     trimmed.startsWith('@xpath:') ||
-    trimmed.startsWith('@XPath:')
+    trimmed.startsWith('@XPath:') ||
+    trimmed.includes('/@')
   ) {
     const expr = trimmed.replace(/^@xpath:/i, '').trim()
     return { type: 'xpath', expression: expr }
@@ -250,66 +281,7 @@ function extractDomString(context: Element, rule: string): string {
 
   const trimmed = rule.trim()
 
-  // 1. 优先判断 XPath 规则（以 //, ./, /, @xpath: 开头）
-  const isXPath =
-    trimmed.startsWith('//') ||
-    trimmed.startsWith('./') ||
-    trimmed.startsWith('/') ||
-    trimmed.startsWith('@xpath:') ||
-    trimmed.startsWith('@XPath:')
-
-  if (isXPath) {
-    try {
-      let expr = trimmed.replace(/^@xpath:/i, '').trim()
-
-      // 如果是在子 Element 节点中执行，且以 / 或 // 开头，转为当前节点下查找 .// 或 ./
-      if (context instanceof Element && context.ownerDocument) {
-        if (expr.startsWith('//')) {
-          expr = '.' + expr
-        } else if (expr.startsWith('/') && !expr.startsWith('/html') && !expr.startsWith('/body')) {
-          expr = '.' + expr
-        }
-      }
-
-      const doc = context.ownerDocument || (context as unknown as Document)
-
-      // 1.1 如果是取属性 @attr 或 string() 或 text()，优先尝试求字符串值
-      if (expr.includes('/@') || expr.endsWith('/text()') || expr.startsWith('string(')) {
-        try {
-          const strResult = doc.evaluate(expr, context, null, XPathResult.STRING_TYPE, null)
-          if (strResult.stringValue && strResult.stringValue.trim()) {
-            return strResult.stringValue.trim()
-          }
-        } catch {}
-      }
-
-      // 1.2 尝试获取首个匹配节点（使用 FIRST_ORDERED_NODE_TYPE，避免 UNORDERED_NODE_ITERATOR_TYPE 抛异常）
-      try {
-        const nodeResult = doc.evaluate(expr, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)
-        const node = nodeResult.singleNodeValue
-        if (node) {
-          if (node.nodeType === Node.ATTRIBUTE_NODE) {
-            return (node as Attr).value?.trim() || ''
-          }
-          return node.textContent?.trim() || ''
-        }
-      } catch {}
-
-      // 1.3 尝试 ORDERED_NODE_ITERATOR_TYPE
-      try {
-        const iterResult = doc.evaluate(expr, context, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null)
-        const iterNode = iterResult.iterateNext()
-        if (iterNode) {
-          if (iterNode.nodeType === Node.ATTRIBUTE_NODE) {
-            return (iterNode as Attr).value?.trim() || ''
-          }
-          return iterNode.textContent?.trim() || ''
-        }
-      } catch {}
-    } catch {}
-  }
-
-  // 2. 纯属性提取快捷方式（未带选择器）
+  // 1. 快捷属性指令（未带选择器）
   const lower = trimmed.toLowerCase()
   if (lower === 'text' || lower === '@text' || lower === 'textnodes' || lower === 'text()') {
     return context.textContent?.trim() || ''
@@ -318,7 +290,7 @@ function extractDomString(context: Element, rule: string): string {
     return context.innerHTML?.trim() || ''
   }
   if (lower === 'href' || lower === '@href') {
-    return context.getAttribute('href') || ''
+    return context.getAttribute('href') || context.querySelector('a')?.getAttribute('href') || ''
   }
   if (lower === 'src' || lower === '@src') {
     return (
@@ -326,15 +298,30 @@ function extractDomString(context: Element, rule: string): string {
       context.getAttribute('data-src') ||
       context.getAttribute('data-original') ||
       context.getAttribute('data-cover') ||
+      context.querySelector('img')?.getAttribute('src') ||
       ''
     )
   }
 
-  // 3. CSS 带 @ 属性提取：如 "h5 a@href" 或 "class.name@text"
-  if (trimmed.includes('@') && !isXPath) {
-    const lastAtIdx = trimmed.lastIndexOf('@')
-    const sel = normalizeSelector(trimmed.substring(0, lastAtIdx).trim())
-    const attr = trimmed.substring(lastAtIdx + 1).toLowerCase().trim()
+  // 2. 伪 XPath / CSS 混合属性提取: 如 "a/@href", "h5 a@href", ".title@text"
+  if (
+    trimmed.includes('@') &&
+    !trimmed.startsWith('//') &&
+    !trimmed.startsWith('./') &&
+    !trimmed.startsWith('@xpath:')
+  ) {
+    let sel = ''
+    let attr = ''
+
+    if (trimmed.includes('/@')) {
+      const idx = trimmed.lastIndexOf('/@')
+      sel = normalizeSelector(trimmed.substring(0, idx).trim())
+      attr = trimmed.substring(idx + 2).toLowerCase().trim()
+    } else {
+      const idx = trimmed.lastIndexOf('@')
+      sel = normalizeSelector(trimmed.substring(0, idx).trim())
+      attr = trimmed.substring(idx + 1).toLowerCase().trim()
+    }
 
     try {
       const targetEl = sel ? context.querySelector(sel) : context
@@ -345,19 +332,109 @@ function extractDomString(context: Element, rule: string): string {
         if (attr === 'html' || attr === 'innerhtml') {
           return targetEl.innerHTML?.trim() || ''
         }
+        if (attr === 'href') {
+          return targetEl.getAttribute('href') || targetEl.querySelector('a')?.getAttribute('href') || ''
+        }
         if (attr === 'src') {
           return (
             targetEl.getAttribute('src') ||
             targetEl.getAttribute('data-src') ||
             targetEl.getAttribute('data-original') ||
             targetEl.getAttribute('data-cover') ||
+            targetEl.querySelector('img')?.getAttribute('src') ||
             ''
           )
         }
-        if (attr === 'href') {
-          return targetEl.getAttribute('href') || ''
-        }
         return targetEl.getAttribute(attr) || ''
+      }
+    } catch {}
+  }
+
+  // 3. XPath 规则（以 //, ./, /, @xpath: 开头，或包含 /@）
+  const isXPath =
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('@xpath:') ||
+    trimmed.startsWith('@XPath:') ||
+    trimmed.includes('/@')
+
+  if (isXPath) {
+    try {
+      let expr = trimmed.replace(/^@xpath:/i, '').trim()
+
+      if (context instanceof Element && context.ownerDocument) {
+        if (expr.startsWith('//')) {
+          expr = '.' + expr
+        } else if (expr.startsWith('/') && !expr.startsWith('/html') && !expr.startsWith('/body')) {
+          expr = '.' + expr
+        }
+      }
+
+      const doc = context.ownerDocument || (context as unknown as Document)
+
+      // 3.1 如果是提取纯属性 (如 .//a/@href 或 .//@href)
+      if (expr.includes('/@') || expr.startsWith('@')) {
+        const nodeResult = doc.evaluate(expr, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)
+        const node = nodeResult.singleNodeValue
+        if (node) {
+          if (node.nodeType === Node.ATTRIBUTE_NODE) {
+            return (node as Attr).value?.trim() || ''
+          }
+          return node.textContent?.trim() || ''
+        }
+      }
+
+      // 3.2 如果规则以 /text() 结尾，先尝试获取目标父元素的 textContent（避免 em, span 等子节点导致文本截断！）
+      if (expr.endsWith('/text()')) {
+        const parentExpr = expr.replace(/\/text\(\)$/, '')
+        try {
+          const parentResult = doc.evaluate(parentExpr, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)
+          const parentNode = parentResult.singleNodeValue
+          if (parentNode && parentNode.textContent && parentNode.textContent.trim()) {
+            return parentNode.textContent.trim()
+          }
+        } catch {}
+
+        // 如果没有父节点，迭代所有匹配的 text() 节点并拼接
+        try {
+          const iterResult = doc.evaluate(expr, context, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null)
+          let tNode = iterResult.iterateNext()
+          const texts: string[] = []
+          while (tNode) {
+            if (tNode.textContent) texts.push(tNode.textContent)
+            tNode = iterResult.iterateNext()
+          }
+          if (texts.length > 0) {
+            return texts.join('').trim()
+          }
+        } catch {}
+      }
+
+      // 3.3 尝试获取首个匹配节点（返回 textContent）
+      const nodeResult = doc.evaluate(expr, context, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)
+      const node = nodeResult.singleNodeValue
+      if (node) {
+        if (node.nodeType === Node.ATTRIBUTE_NODE) {
+          return (node as Attr).value?.trim() || ''
+        }
+        return node.textContent?.trim() || ''
+      }
+
+      // 3.4 迭代所有节点并拼接（针对多段落/多文本节点）
+      const iterResult = doc.evaluate(expr, context, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null)
+      let iterNode = iterResult.iterateNext()
+      const collected: string[] = []
+      while (iterNode) {
+        if (iterNode.nodeType === Node.ATTRIBUTE_NODE) {
+          collected.push((iterNode as Attr).value || '')
+        } else if (iterNode.textContent) {
+          collected.push(iterNode.textContent.trim())
+        }
+        iterNode = iterResult.iterateNext()
+      }
+      if (collected.length > 0) {
+        return collected.filter(Boolean).join('\n')
       }
     } catch {}
   }

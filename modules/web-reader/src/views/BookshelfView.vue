@@ -101,6 +101,7 @@
           :key="book.id"
           :book="book"
           @open="openBook"
+          @detail="openBookDetail"
           @edit="handleEditBook"
           @delete="confirmDeleteBook"
         />
@@ -271,6 +272,13 @@ const openRecentBook = () => {
 
 const openBook = (id: string) => {
   router.push(`/reader/${id}`)
+}
+
+const openBookDetail = (id: string) => {
+  router.push({
+    path: '/book-detail',
+    query: { id },
+  })
 }
 
 const confirmDeleteBook = (id: string) => {

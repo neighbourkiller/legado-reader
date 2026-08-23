@@ -25,6 +25,10 @@
             style="width: 260px"
             @keyup.enter="startDebug"
           />
+          <el-button type="warning" plain @click="showAuthDialog = true">
+            <el-icon><Key /></el-icon>
+            <span>网页验证 (CF盾)</span>
+          </el-button>
           <el-button type="primary" :loading="isDebugging" @click="startDebug">
             <el-icon><VideoPlay /></el-icon>
             {{ isDebugging ? '调试中...' : '开始调试' }}
@@ -165,16 +169,24 @@
         <el-button @click="emit('update:visible', false)">关闭</el-button>
       </div>
     </template>
+
+    <!-- 网页验证与 Cookie 注入 Dialog -->
+    <SourceAuthDialog
+      v-model="showAuthDialog"
+      :source="source"
+      @saved="handleAuthSaved"
+    />
   </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { VideoPlay } from '@element-plus/icons-vue'
+import { VideoPlay, Key } from '@element-plus/icons-vue'
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import type { TocItem } from '@/source/engine/TocParser'
-import { SourceEngine, parseSearchUrl } from '@/source/engine/SourceEngine'
+import { SourceEngine, parseSearchUrl, CloudflareChallengeError } from '@/source/engine/SourceEngine'
+import SourceAuthDialog from './SourceAuthDialog.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -184,6 +196,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:visible', val: boolean): void
 }>()
+
+const showAuthDialog = ref(false)
+
+function handleAuthSaved() {
+  appendLog('AUTH', '已成功保存并注入 Cookie 与 User-Agent，可重新点击“开始调试”测试！', 'success')
+}
 
 function onDialogVisibleChange(val: boolean) {
   emit('update:visible', val)
@@ -270,26 +288,39 @@ const startDebug = async () => {
 
   appendLog('INIT', `开始调试书源: ${props.source.bookSourceName} (${props.source.bookSourceUrl})`)
   appendLog('INIT', `调试关键词: "${kw}"`)
+  appendLog('INIT', `WebView 通道: ${props.source.useWebView ? '已启用' : '未启用'}`)
 
   const engine = new SourceEngine()
 
   try {
     // 1. 搜索测试
     stepStatus.search = 'running'
-    const parsedReq = parseSearchUrl(props.source.searchUrl || '', kw)
+    const parsedReq = parseSearchUrl(props.source.searchUrl || '', kw, props.source)
     appendLog('SEARCH', `发起 ${parsedReq.method} 搜索请求 => ${parsedReq.url}`)
 
     const searchStart = Date.now()
-    let httpInfo: { status: number; finalUrl: string; bodyLength: number } | null = null
+    let httpInfo: { status: number; finalUrl: string; bodyLength: number; channel?: string } | null = null
 
     const searchResults = await engine.search(props.source, kw, (info) => {
       httpInfo = info
-      appendLog('HTTP', `HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
+      const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
+      appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
     }).catch(err => {
       stepStatus.search = 'failed'
       appendLog('ERROR', `网络请求或解析异常: ${err.message || err}`, 'error')
-      if (err.message?.includes('404') || err.message?.includes('403') || err.message?.includes('500')) {
-        appendLog('DIAGNOSE', `【诊断结果】源站服务返回异常状态码，此书源的搜索接口可能已失效或被目标站拦截（属于书源本身失效问题）。`, 'warn')
+      if (err instanceof CloudflareChallengeError) {
+        appendLog('CF_CHALLENGE', '【诊断结果】源站要求浏览器完成 Cloudflare 访问验证。', 'warn')
+        if (err.diagnostics.cfRay) {
+          appendLog('CF_CHALLENGE', `cf-ray: ${err.diagnostics.cfRay}`, 'warn')
+        }
+        if (err.diagnostics.cfMitigated) {
+          appendLog('CF_CHALLENGE', `cf-mitigated: ${err.diagnostics.cfMitigated}`, 'warn')
+        }
+        if (!props.source?.useWebView) {
+          appendLog('CF_CHALLENGE', '建议：请在「网页验证」中启用 WebView 通道，让请求通过真实浏览器会话执行。', 'warn')
+        }
+      } else if (err.message?.includes('404') || err.message?.includes('403') || err.message?.includes('500')) {
+        appendLog('DIAGNOSE', `【诊断结果】源站服务返回异常状态码，此书源的搜索接口可能已失效或被目标站拦截。`, 'warn')
       }
       throw err
     })

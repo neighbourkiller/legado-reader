@@ -69,7 +69,7 @@ export async function saveBook(book) {
     const plainRecord = {
         meta: JSON.parse(JSON.stringify(book.meta)),
         chapters: JSON.parse(JSON.stringify(book.chapters)),
-        fileData: book.fileData,
+        fileData: book.fileData ?? null,
     };
     return new Promise((resolve, reject) => {
         try {
@@ -195,10 +195,11 @@ export async function loadSettings() {
 // --- Book Source Storage (Desktop) ---
 export async function saveBookSource(source) {
     const db = await openDB();
+    const plainSource = JSON.parse(JSON.stringify(source));
     return new Promise((resolve, reject) => {
         try {
             const tx = db.transaction(STORE_BOOK_SOURCES, 'readwrite');
-            tx.objectStore(STORE_BOOK_SOURCES).put(source);
+            tx.objectStore(STORE_BOOK_SOURCES).put(plainSource);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);
@@ -242,12 +243,13 @@ export async function deleteBookSource(bookSourceUrl) {
 }
 export async function importBookSources(sources) {
     const db = await openDB();
+    const plainSources = JSON.parse(JSON.stringify(sources));
     return new Promise((resolve, reject) => {
         try {
             const tx = db.transaction(STORE_BOOK_SOURCES, 'readwrite');
             const store = tx.objectStore(STORE_BOOK_SOURCES);
             const uniqueUrls = new Set();
-            for (const source of sources) {
+            for (const source of plainSources) {
                 store.put(source);
                 if (source.bookSourceUrl) {
                     uniqueUrls.add(String(source.bookSourceUrl));

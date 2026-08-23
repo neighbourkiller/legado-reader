@@ -45,6 +45,7 @@
           v-for="(result, index) in results"
           :key="index"
           class="result-card"
+          @click="openBookDetail(result)"
         >
           <div class="result-cover" v-if="result.coverUrl">
             <img :src="result.coverUrl" :alt="result.name" @error="onImageError" />
@@ -78,17 +79,23 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Search } from '@element-plus/icons-vue'
 import { useBookSourceStore } from '@/stores/bookSource'
+import { useSearchStore } from '@/stores/search'
 import { SourceEngine } from '@/source/engine/SourceEngine'
+import { generateBookId } from '@/source/engine/RuleParser'
 import type { SearchResult, BookSource } from '@/source/types/BookSource'
 
 const router = useRouter()
 const route = useRoute()
 const bookSourceStore = useBookSourceStore()
+const searchStore = useSearchStore()
 
-const keyword = ref('')
+const keyword = computed({
+  get: () => searchStore.keyword,
+  set: (val) => { searchStore.keyword = val },
+})
 const isSearching = ref(false)
-const hasSearched = ref(false)
-const results = ref<SearchResult[]>([])
+const hasSearched = computed(() => searchStore.hasSearched)
+const results = computed(() => searchStore.results)
 const targetSourceUrl = ref<string>('')
 
 onMounted(async () => {
@@ -98,6 +105,9 @@ onMounted(async () => {
 
   if (route.query.sourceUrl) {
     targetSourceUrl.value = String(route.query.sourceUrl)
+    searchStore.targetSourceUrl = targetSourceUrl.value
+  } else if (searchStore.targetSourceUrl) {
+    targetSourceUrl.value = searchStore.targetSourceUrl
   }
 })
 
@@ -108,6 +118,7 @@ const targetSource = computed<BookSource | undefined>(() => {
 
 const clearTargetSource = () => {
   targetSourceUrl.value = ''
+  searchStore.targetSourceUrl = ''
   router.replace({ path: '/search' })
   ElMessage.info('已切回全书源搜索模式')
 }
@@ -142,8 +153,6 @@ const handleSearch = async () => {
   }
 
   isSearching.value = true
-  hasSearched.value = true
-  results.value = []
 
   try {
     const eng = getEngine()
@@ -164,7 +173,7 @@ const handleSearch = async () => {
       }
     }
 
-    results.value = merged
+    searchStore.setResults(query, merged, targetSourceUrl.value)
     if (merged.length === 0) {
       ElMessage.info('未找到相关书籍')
     }
@@ -174,6 +183,29 @@ const handleSearch = async () => {
   } finally {
     isSearching.value = false
   }
+}
+
+const openBookDetail = (result: SearchResult) => {
+  const bookId = generateBookId(result.name, result.author, result.sourceUrl)
+  router.push({
+    path: '/book-detail',
+    query: {
+      id: bookId,
+      name: result.name,
+      author: result.author,
+      bookUrl: result.bookUrl,
+      coverUrl: result.coverUrl,
+      intro: result.intro,
+      kind: result.kind,
+      lastChapter: result.lastChapter,
+      sourceUrl: result.sourceUrl,
+      sourceName: result.sourceName,
+    },
+    state: {
+      id: bookId,
+      ...result,
+    },
+  })
 }
 
 const onImageError = (e: Event) => {

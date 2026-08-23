@@ -10,7 +10,7 @@ export interface BookMeta {
   id: string
   name: string
   author: string
-  format: 'txt' | 'epub'
+  format: 'txt' | 'epub' | 'online'
   totalChapters: number
   currentChapter: number
   currentProgress: number
@@ -18,6 +18,12 @@ export interface BookMeta {
   coverUrl?: string
   durChapterTitle?: string
   latestChapterTitle?: string
+  sourceUrl?: string
+  sourceName?: string
+  bookUrl?: string
+  tocUrl?: string
+  intro?: string
+  kind?: string
 }
 
 export interface ParsedBook {
@@ -76,6 +82,6 @@ export const DEFAULT_READ_SETTINGS: ReadSettings = {
 export interface StoredBook {
   meta: BookMeta
   chapters: BookChapter[]
-  fileData: ArrayBuffer
+  fileData?: ArrayBuffer | null
 }
 

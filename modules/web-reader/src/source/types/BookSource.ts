@@ -42,6 +42,8 @@ export interface BookSource {
   ruleBookInfo?: BookInfoRule
   ruleToc?: TocRule
   ruleContent?: ContentRule
+  /** 是否通过 WebView 通道请求（用于 Cloudflare 保护的书源） */
+  useWebView?: boolean
   [key: string]: any
 }
 

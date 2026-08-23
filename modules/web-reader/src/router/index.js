@@ -26,6 +26,10 @@ if (import.meta.env.VITE_APP_TARGET === 'desktop') {
         path: '/search',
         name: 'search',
         component: () => import('@/views/SearchView.vue'),
+    }, {
+        path: '/book-detail',
+        name: 'book-detail',
+        component: () => import('@/views/BookDetailView.vue'),
     });
 }
 const router = createRouter({

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { getAllBookSources, saveBookSource, deleteBookSource as deleteBookSourceFromDB, importBookSources as importBookSourcesToDB, } from '@/storage/db';
 import { getTransport } from '@/source/transport';
+import { getDefaultUserAgent } from '@/source/engine/SourceEngine';
 export const useBookSourceStore = defineStore('bookSource', () => {
     const sources = ref([]);
     const isLoading = ref(false);
@@ -112,7 +113,7 @@ export const useBookSourceStore = defineStore('bookSource', () => {
             method: 'GET',
             headers: {
                 'Accept': 'application/json, text/plain, */*',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': getDefaultUserAgent(),
             },
             timeout: 30000,
         });

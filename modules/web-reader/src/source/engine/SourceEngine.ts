@@ -1,5 +1,6 @@
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import { getTransport } from '@/source/transport'
+import type { SourceResponse, CfDiagnostics } from '@/source/transport/SourceTransport'
 import { parseSearchResults } from './SearchParser'
 import { parseBookInfo, type BookInfo } from './BookInfoParser'
 import { parseToc, type TocItem } from './TocParser'
@@ -16,6 +17,58 @@ export function decodeResponse(body: Uint8Array, charset: string = 'utf-8'): str
   }
 }
 
+/** 从响应中提取 Cloudflare 诊断信息 */
+export function extractCfDiagnostics(response: SourceResponse): CfDiagnostics {
+  const getHeader = (name: string) =>
+    Object.entries(response.headers).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1]
+
+  const server = getHeader('server')
+  const cfRay = getHeader('cf-ray')
+  const cfMitigated = getHeader('cf-mitigated')
+
+  const isCloudflare = server?.toLowerCase().includes('cloudflare') ?? false
+
+  let isChallenge = false
+  if (response.status === 403 && isCloudflare) {
+    const html = decodeResponse(response.body, response.charset || 'utf-8').toLowerCase()
+    isChallenge = [
+      'just a moment',
+      'attention required',
+      'sorry, you have been blocked',
+      'cf-mitigated',
+      '/cdn-cgi/challenge-platform/',
+    ].some(marker => html.includes(marker))
+  }
+
+  return { isChallenge, cfRay, cfMitigated }
+}
+
+/** Cloudflare 验证挑战错误，携带诊断信息和原始响应 */
+export class CloudflareChallengeError extends Error {
+  readonly diagnostics: CfDiagnostics
+  readonly response: SourceResponse
+
+  constructor(message: string, response: SourceResponse, diagnostics: CfDiagnostics) {
+    super(message)
+    this.name = 'CloudflareChallengeError'
+    this.diagnostics = diagnostics
+    this.response = response
+  }
+}
+
+function createHttpError(response: SourceResponse, fallbackMessage: string): Error {
+  const cfInfo = extractCfDiagnostics(response)
+  if (cfInfo.isChallenge) {
+    return new CloudflareChallengeError(
+      '目标网站触发 Cloudflare 浏览器访问验证（HTTP 403）。请启用 WebView 通道或先完成网页验证。',
+      response,
+      cfInfo,
+    )
+  }
+
+  return new Error(fallbackMessage)
+}
+
 export interface ParsedSearchRequest {
   url: string
   method: 'GET' | 'POST'
@@ -24,17 +77,43 @@ export interface ParsedSearchRequest {
   charset?: string
 }
 
+export function getDefaultUserAgent(): string {
+  if (typeof navigator !== 'undefined' && navigator.userAgent) {
+    return navigator.userAgent
+  }
+  return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
+export function getSourceHeaders(source: BookSource, refererUrl?: string): Record<string, string> {
+  // 仅设置基础 headers，不伪装 Sec-CH-UA / Sec-Fetch-* 等浏览器特有头
+  // 这些 Client Hints 和 Sec-Fetch 头应由真实浏览器生成，reqwest 冒充反而增加被检测为爬虫的风险
+  const headers: Record<string, string> = {
+    'User-Agent': getDefaultUserAgent(),
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Referer': refererUrl || source.bookSourceUrl,
+  }
+
+  if (source.header) {
+    try {
+      const customHeader =
+        typeof source.header === 'string' ? JSON.parse(source.header) : source.header
+      Object.assign(headers, customHeader)
+    } catch {}
+  }
+
+  return headers
+}
+
 export function parseSearchUrl(
   searchUrl: string,
   keyword: string,
-  sourceOrBaseUrl?: BookSource | string,
+  source: BookSource,
   page = 1
 ): ParsedSearchRequest {
+  const bookSourceUrl = source.bookSourceUrl || ''
   let rawUrl = searchUrl.trim()
   let postConfig: any = null
-
-  const bookSourceUrl = typeof sourceOrBaseUrl === 'string' ? sourceOrBaseUrl : (sourceOrBaseUrl?.bookSourceUrl || '')
-  const bookSourceName = typeof sourceOrBaseUrl === 'string' ? '' : (sourceOrBaseUrl?.bookSourceName || '')
 
   const replacePlaceholders = (text: string) => {
     return text
@@ -45,7 +124,7 @@ export function parseSearchUrl(
       .replace(/\{\{source\.baseUrl\}\}/g, bookSourceUrl)
       .replace(/\{\{baseUrl\}\}/g, bookSourceUrl)
       .replace(/\{\{sourceUrl\}\}/g, bookSourceUrl)
-      .replace(/\{\{source\.bookSourceName\}\}/g, bookSourceName)
+      .replace(/\{\{source\.bookSourceName\}\}/g, encodeURIComponent(source.bookSourceName || ''))
   }
 
   // 检查是否有逗号分隔的请求参数，例如: http://example.com/search,{"method":"POST", ...}
@@ -68,12 +147,7 @@ export function parseSearchUrl(
 
   let method: 'GET' | 'POST' = 'GET'
   let body: string | undefined = undefined
-  const headers: Record<string, string> = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-  }
+  const headers = getSourceHeaders(source, bookSourceUrl)
   let charset: string | undefined = undefined
 
   if (postConfig) {
@@ -101,38 +175,97 @@ export function parseSearchUrl(
 }
 
 export class SourceEngine {
+  /**
+   * 统一请求方法：根据书源配置自动选择 reqwest 或 WebView 通道
+   * - useWebView=true 的书源优先使用 WebView fetch（共享浏览器会话/指纹）
+   * - 其余书源使用 reqwest 快速通道
+   * - reqwest 通道遇到 Cloudflare challenge 时抛出 CloudflareChallengeError 提示用户
+   */
+  private async executeRequest(
+    source: BookSource,
+    url: string,
+    method: 'GET' | 'POST',
+    headers?: Record<string, string>,
+    body?: string,
+    charset?: string,
+    timeout?: number,
+  ): Promise<SourceResponse> {
+    const transport = await getTransport()
+
+    // WebView 通道：书源标记需要 WebView 且 transport 支持
+    if (source.useWebView && transport.webviewFetch) {
+      return transport.webviewFetch({
+        sourceId: source.bookSourceUrl,
+        url,
+        method,
+        headers,
+        body,
+        charset,
+        timeout: timeout ?? 25000,
+      })
+    }
+
+    // 默认 reqwest 快速通道
+    const response = await transport.request({
+      sourceId: source.bookSourceUrl,
+      url,
+      method,
+      headers,
+      body,
+      charset,
+      timeout: timeout ?? 25000,
+    })
+
+    // 自动检测 Cloudflare challenge，抛出带诊断信息的错误
+    if (response.status === 403) {
+      const cfInfo = extractCfDiagnostics(response)
+      if (cfInfo.isChallenge) {
+        throw new CloudflareChallengeError(
+          '检测到 Cloudflare 验证，请在书源设置中启用 WebView 通道或先完成网页验证。',
+          response,
+          cfInfo,
+        )
+      }
+    }
+
+    return response
+  }
+
   async search(
     source: BookSource,
     keyword: string,
-    onProgress?: (info: { status: number; finalUrl: string; bodyLength: number }) => void
+    onProgress?: (info: { status: number; finalUrl: string; bodyLength: number; channel?: string }) => void
   ): Promise<SearchResult[]> {
     if (!source.searchUrl || !source.ruleSearch) {
       return []
     }
 
     const searchReq = parseSearchUrl(source.searchUrl, keyword, source)
-    const transport = await getTransport()
 
-    const response = await transport.request({
-      sourceId: source.bookSourceUrl,
-      url: searchReq.url,
-      method: searchReq.method,
-      body: searchReq.body,
-      headers: searchReq.headers,
-      charset: searchReq.charset,
-      timeout: 25000,
-    })
+    const response = await this.executeRequest(
+      source,
+      searchReq.url,
+      searchReq.method,
+      searchReq.headers,
+      searchReq.body,
+      searchReq.charset,
+      25000,
+    )
 
     if (onProgress) {
       onProgress({
         status: response.status,
         finalUrl: response.finalUrl || searchReq.url,
         bodyLength: response.body.length,
+        channel: response.channel,
       })
     }
 
     if (response.status >= 400) {
-      throw new Error(`目标网站返回 HTTP ${response.status} 错误 (URL: ${response.finalUrl || searchReq.url})`)
+      throw createHttpError(
+        response,
+        `目标网站返回 HTTP ${response.status} 错误 (URL: ${response.finalUrl || searchReq.url})`
+      )
     }
 
     const html = decodeResponse(response.body, response.charset || searchReq.charset || 'utf-8')
@@ -174,19 +307,15 @@ export class SourceEngine {
     }
 
     const targetUrl = resolveAbsoluteUrl(bookUrl, source.bookSourceUrl)
-    const transport = await getTransport()
-    const response = await transport.request({
-      sourceId: source.bookSourceUrl,
-      url: targetUrl,
-      method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-    })
+    const response = await this.executeRequest(
+      source,
+      targetUrl,
+      'GET',
+      getSourceHeaders(source, targetUrl),
+    )
 
     if (response.status >= 400) {
-      throw new Error(`请求详情页失败 (HTTP ${response.status})`)
+      throw createHttpError(response, `请求详情页失败 (HTTP ${response.status})`)
     }
 
     const html = decodeResponse(response.body, response.charset || 'utf-8')
@@ -200,19 +329,15 @@ export class SourceEngine {
     }
 
     const targetUrl = resolveAbsoluteUrl(tocUrl, source.bookSourceUrl)
-    const transport = await getTransport()
-    const response = await transport.request({
-      sourceId: source.bookSourceUrl,
-      url: targetUrl,
-      method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-    })
+    const response = await this.executeRequest(
+      source,
+      targetUrl,
+      'GET',
+      getSourceHeaders(source, targetUrl),
+    )
 
     if (response.status >= 400) {
-      throw new Error(`请求目录页失败 (HTTP ${response.status})`)
+      throw createHttpError(response, `请求目录页失败 (HTTP ${response.status})`)
     }
 
     const html = decodeResponse(response.body, response.charset || 'utf-8')
@@ -225,23 +350,19 @@ export class SourceEngine {
       throw new Error('书源未配置 ruleContent')
     }
 
-    const transport = await getTransport()
     let url = resolveAbsoluteUrl(contentUrl, source.bookSourceUrl)
     let fullContent = ''
 
     while (url) {
-      const response = await transport.request({
-        sourceId: source.bookSourceUrl,
+      const response = await this.executeRequest(
+        source,
         url,
-        method: 'GET',
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-      })
+        'GET',
+        getSourceHeaders(source, url),
+      )
 
       if (response.status >= 400) {
-        throw new Error(`请求正文页失败 (HTTP ${response.status})`)
+        throw createHttpError(response, `请求正文页失败 (HTTP ${response.status})`)
       }
 
       const html = decodeResponse(response.body, response.charset || 'utf-8')
@@ -255,3 +376,4 @@ export class SourceEngine {
     return fullContent.trim()
   }
 }
+

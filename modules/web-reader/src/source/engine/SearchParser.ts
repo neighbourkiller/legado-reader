@@ -1,5 +1,5 @@
 import type { SearchRule, SearchResult, BookSource } from '@/source/types/BookSource'
-import { parseList, parseString, resolveAbsoluteUrl } from './RuleParser'
+import { parseList, parseString, resolveAbsoluteUrl, cleanBookTitle } from './RuleParser'
 
 export function parseSearchResults(
   html: string,
@@ -19,7 +19,7 @@ export function parseSearchResults(
       if (!name && typeof item === 'object') {
         name = parseString(item, 'h5 a || h3 a || h4 a || h2 a || h1 a || .title a || .bname a || .name || a')
       }
-      name = name.trim()
+      name = cleanBookTitle(name)
 
       // 2. 书籍详情链接
       let rawBookUrl = parseString(item, rule.bookUrl || '')
