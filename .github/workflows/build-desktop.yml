@@ -64,6 +64,8 @@ jobs:
 
       - name: Build desktop client
         working-directory: modules/web-reader
+        env:
+          NO_STRIP: ${{ runner.os == 'Linux' && 'true' || '' }}
         run: pnpm build:desktop
 
       - name: Upload build artifacts
