@@ -1,41 +1,64 @@
-name: Build Desktop Client
+name: Publish Desktop Release
 
 on:
+  # 推送 reader-v* 标签时自动发布
   push:
     tags:
-      - 'reader-v*'
+      - "reader-v*"
 
-  # 允许在 Actions 页面手动执行
+  # 也允许在 GitHub Actions 页面手动执行
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build (${{ matrix.platform }})
+  publish:
+    name: Build (${{ matrix.name }})
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-latest
+          # Linux x86_64
+          - name: Linux x64
+            platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-          - platform: windows-latest
+            args: ""
+
+          # Windows x86_64
+          - name: Windows x64
+            platform: windows-latest
             target: x86_64-pc-windows-msvc
+            args: ""
+
+          # macOS Apple Silicon
+          - name: macOS ARM64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - name: Checkout
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v7
 
+      # ------------------------------------------------------------
+      # pnpm
+      # ------------------------------------------------------------
       - name: Setup pnpm
         uses: pnpm/action-setup@v6.0.10
         with:
           version: 9.15.9
           run_install: false
 
+      # ------------------------------------------------------------
+      # Node.js
+      # ------------------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
@@ -43,34 +66,91 @@ jobs:
           cache: pnpm
           cache-dependency-path: modules/web-reader/pnpm-lock.yaml
 
-      - name: Install Rust
+      # ------------------------------------------------------------
+      # Rust
+      # ------------------------------------------------------------
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install system dependencies (Ubuntu)
-        if: matrix.platform == 'ubuntu-latest'
+      # ------------------------------------------------------------
+      # Rust cache
+      # ------------------------------------------------------------
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            modules/web-reader/src-tauri -> target
+
+      # ------------------------------------------------------------
+      # Linux dependencies
+      # Tauri 2 使用 WebKitGTK 4.1
+      # ------------------------------------------------------------
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            xdg-utils
 
+      # ------------------------------------------------------------
+      # Frontend dependencies
+      # ------------------------------------------------------------
       - name: Install frontend dependencies
         working-directory: modules/web-reader
         run: pnpm install --frozen-lockfile
 
-      - name: Build desktop client
-        working-directory: modules/web-reader
-        env:
-          NO_STRIP: ${{ runner.os == 'Linux' && 'true' || '' }}
-        run: pnpm build:desktop
+      # ------------------------------------------------------------
+      # Build Tauri + Publish GitHub Release
+      # ------------------------------------------------------------
+      - name: Build and publish desktop application
+        uses: tauri-apps/tauri-action@v1.0.0
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        env:
+          # GitHub 自动提供，无需自己创建 Secret
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Linux AppImage 构建时禁止 strip
+          # 避免部分 Runner / linuxdeploy 环境下 strip ELF 失败
+          NO_STRIP: ${{ runner.os == 'Linux' && 'true' || '' }}
+
+          # macOS 没有 Apple Developer Certificate 时
+          # 使用 ad-hoc signing
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+
         with:
-          name: legado-reader-${{ matrix.platform }}
-          path: |
-            modules/web-reader/src-tauri/target/release/bundle/**
+          # 当前仓库是 monorepo，Tauri 项目不在仓库根目录
+          projectPath: modules/web-reader
+
+          # __VERSION__ 自动读取 tauri.conf.json 中的 version
+          #
+          # 例如：
+          # "version": "1.0.1"
+          #
+          # => reader-v1.0.1
+          tagName: reader-v__VERSION__
+
+          # GitHub Release 名称
+          releaseName: "Legado Reader v__VERSION__"
+
+          # 由 GitHub 自动生成 Release Notes
+          generateReleaseNotes: true
+
+          # false = 构建成功后直接公开发布
+          # true  = 只创建 Draft，需要手动 Publish
+          releaseDraft: false
+
+          # 正式版
+          prerelease: false
+
+          # macOS ARM64 会传：
+          # --target aarch64-apple-darwin
+          #
+          # Linux / Windows 为空，使用当前 Runner 默认 target
+          args: ${{ matrix.args }}
