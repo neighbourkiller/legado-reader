@@ -154,3 +154,50 @@ jobs:
           #
           # Linux / Windows 为空，使用当前 Runner 默认 target
           args: ${{ matrix.args }}
+
+      # ------------------------------------------------------------
+      # Windows portable executable
+      #
+      # Tauri 构建结束后，Windows Runner 中会存在：
+      #
+      # modules/web-reader/src-tauri/target/release/legado-reader.exe
+      #
+      # 这个 exe 就是无需 MSI / NSIS 安装即可直接运行的程序。
+      # ------------------------------------------------------------
+      - name: Prepare Windows portable executable
+        if: runner.os == 'Windows'
+        id: windows-portable
+        shell: pwsh
+        run: |
+          $config = Get-Content "modules/web-reader/src-tauri/tauri.conf.json" | ConvertFrom-Json
+          $version = $config.version
+
+          $source = "modules/web-reader/src-tauri/target/release/legado-reader.exe"
+          $output = "Legado.Reader_${version}_windows-x64-portable.exe"
+
+          if (-not (Test-Path $source)) {
+            throw "Portable executable not found: $source"
+          }
+
+          Copy-Item $source $output
+
+          Write-Host "Portable executable created:"
+          Write-Host $output
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "file=$output" >> $env:GITHUB_OUTPUT
+
+      # ------------------------------------------------------------
+      # Upload Windows portable executable
+      # 上传到 tauri-action 创建的同一个 GitHub Release
+      # ------------------------------------------------------------
+      - name: Upload Windows portable executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload `
+            "reader-v${{ steps.windows-portable.outputs.version }}" `
+            "${{ steps.windows-portable.outputs.file }}" `
+            --clobber
