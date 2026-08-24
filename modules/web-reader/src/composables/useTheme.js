@@ -1,8 +1,34 @@
 import { ref, computed, watchEffect } from 'vue';
 const THEME_STORAGE_KEY = 'legado_theme';
-// Default to 'dark' to match the screenshot theme
-const themeMode = ref(localStorage.getItem(THEME_STORAGE_KEY) || 'dark');
-const systemPrefersDark = ref(window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : false);
+const THEME_ACCENT_STORAGE_KEY = 'legado_theme_accent';
+export const DEFAULT_THEME_MODE = 'dark';
+export const DEFAULT_THEME_ACCENT = 'blue';
+export const THEME_ACCENT_OPTIONS = [
+    { value: 'blue', label: '蓝色', color: '#409EFF' },
+    { value: 'purple', label: '紫色', color: '#7C3AED' },
+    { value: 'cyan', label: '青色', color: '#0891B2' },
+    { value: 'green', label: '绿色', color: '#16A34A' },
+    { value: 'orange', label: '橙色', color: '#EA580C' },
+    { value: 'rose', label: '玫红', color: '#E11D48' },
+];
+const validThemeModes = new Set(['auto', 'light', 'dark']);
+const validThemeAccents = new Set(THEME_ACCENT_OPTIONS.map(option => option.value));
+function readStorage(key) {
+    return typeof localStorage === 'undefined' ? null : localStorage.getItem(key);
+}
+function getStoredThemeMode() {
+    const stored = readStorage(THEME_STORAGE_KEY);
+    return stored && validThemeModes.has(stored) ? stored : DEFAULT_THEME_MODE;
+}
+function getStoredThemeAccent() {
+    const stored = readStorage(THEME_ACCENT_STORAGE_KEY);
+    return stored && validThemeAccents.has(stored) ? stored : DEFAULT_THEME_ACCENT;
+}
+const themeMode = ref(getStoredThemeMode());
+const themeAccent = ref(getStoredThemeAccent());
+const systemPrefersDark = ref(typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : false);
 if (typeof window !== 'undefined' && window.matchMedia) {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     mediaQuery.addEventListener('change', e => {
@@ -10,11 +36,35 @@ if (typeof window !== 'undefined' && window.matchMedia) {
     });
 }
 const isDark = computed(() => {
-    if (themeMode.value === 'auto') {
-        return systemPrefersDark.value;
-    }
-    return themeMode.value === 'dark';
+    return resolveEffectiveDark(themeMode.value, systemPrefersDark.value);
 });
+export function resolveEffectiveDark(mode, prefersDark) {
+    return mode === 'auto' ? prefersDark : mode === 'dark';
+}
+function hexToRgb(hex) {
+    const value = Number.parseInt(hex.slice(1), 16);
+    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+function mixColor(source, target, targetWeight) {
+    const sourceRgb = hexToRgb(source);
+    const targetRgb = hexToRgb(target);
+    const channels = sourceRgb.map((channel, index) => Math.round(channel * (1 - targetWeight) + targetRgb[index] * targetWeight));
+    return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+function applyAccentVariables(dark) {
+    if (typeof document === 'undefined')
+        return;
+    const accent = THEME_ACCENT_OPTIONS.find(option => option.value === themeAccent.value)
+        ?? THEME_ACCENT_OPTIONS[0];
+    const root = document.documentElement;
+    const mixTarget = dark ? '#141414' : '#ffffff';
+    root.style.setProperty('--el-color-primary', accent.color);
+    root.style.setProperty('--legado-primary-rgb', hexToRgb(accent.color).join(', '));
+    for (const level of [3, 5, 7, 8, 9]) {
+        root.style.setProperty(`--el-color-primary-light-${level}`, mixColor(accent.color, mixTarget, level / 10));
+    }
+    root.style.setProperty('--el-color-primary-dark-2', mixColor(accent.color, dark ? '#ffffff' : '#000000', 0.2));
+}
 // Sync with document element class
 watchEffect(() => {
     if (typeof document !== 'undefined') {
@@ -26,16 +76,26 @@ watchEffect(() => {
             document.documentElement.classList.remove('dark');
             document.documentElement.setAttribute('data-theme', 'light');
         }
+        applyAccentVariables(isDark.value);
     }
 });
 export function useTheme() {
-    const setTheme = (mode) => {
+    const applyTheme = (mode) => {
         themeMode.value = mode;
-        localStorage.setItem(THEME_STORAGE_KEY, mode);
+        if (typeof localStorage !== 'undefined')
+            localStorage.setItem(THEME_STORAGE_KEY, mode);
+    };
+    const setAccent = (accent) => {
+        themeAccent.value = accent;
+        if (typeof localStorage !== 'undefined')
+            localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent);
     };
     return {
         themeMode,
+        themeAccent,
+        systemPrefersDark,
         isDark,
-        setTheme,
+        applyTheme,
+        setAccent,
     };
 }

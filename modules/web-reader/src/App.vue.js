@@ -2,6 +2,7 @@ import { onMounted, onUnmounted } from 'vue';
 import { useTheme } from '@/composables/useTheme';
 import { useFullscreen } from '@/composables/useFullscreen';
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue';
+import ThemeSyncDialog from '@/components/ThemeSyncDialog.vue';
 import GlobalHomeButton from '@/components/GlobalHomeButton.vue';
 import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue';
 const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop';
@@ -55,17 +56,21 @@ const __VLS_12 = GlobalDownloadProgress;
 // @ts-ignore
 const __VLS_13 = __VLS_asFunctionalComponent1(__VLS_12, new __VLS_12({}));
 const __VLS_14 = __VLS_13({}, ...__VLS_functionalComponentArgsRest(__VLS_13));
+const __VLS_17 = ThemeSyncDialog;
+// @ts-ignore
+const __VLS_18 = __VLS_asFunctionalComponent1(__VLS_17, new __VLS_17({}));
+const __VLS_19 = __VLS_18({}, ...__VLS_functionalComponentArgsRest(__VLS_18));
 if (__VLS_ctx.isDesktop) {
-    const __VLS_17 = GlobalHomeButton;
-    // @ts-ignore
-    const __VLS_18 = __VLS_asFunctionalComponent1(__VLS_17, new __VLS_17({}));
-    const __VLS_19 = __VLS_18({}, ...__VLS_functionalComponentArgsRest(__VLS_18));
-}
-if (__VLS_ctx.isDesktop) {
-    const __VLS_22 = GlobalSettingsButton;
+    const __VLS_22 = GlobalHomeButton;
     // @ts-ignore
     const __VLS_23 = __VLS_asFunctionalComponent1(__VLS_22, new __VLS_22({}));
     const __VLS_24 = __VLS_23({}, ...__VLS_functionalComponentArgsRest(__VLS_23));
+}
+if (__VLS_ctx.isDesktop) {
+    const __VLS_27 = GlobalSettingsButton;
+    // @ts-ignore
+    const __VLS_28 = __VLS_asFunctionalComponent1(__VLS_27, new __VLS_27({}));
+    const __VLS_29 = __VLS_28({}, ...__VLS_functionalComponentArgsRest(__VLS_28));
 }
 // @ts-ignore
 [isDesktop, isDesktop,];

@@ -191,7 +191,6 @@ import {
   CollectionTag as BookmarkIcon,
 } from '@element-plus/icons-vue'
 import { useReadingStore, type ChapterPayload } from '@/stores/reading'
-import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
 import PopCatalog from '@/components/PopCatalog.vue'
 import ReadSettings from '@/components/ReadSettings.vue'
@@ -209,12 +208,12 @@ import {
   saveBookmark,
 } from '@/storage/db'
 import type { BookmarkRecord } from '@/storage/db'
+import { characterOffsetToParagraphIndex } from '@/backup/compat'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
 const router = useRouter()
 const store = useReadingStore()
-const { isDark } = useTheme()
 const { isFullscreen, toggleFullscreen } = useFullscreen()
 
 const {
@@ -530,7 +529,7 @@ const jumpToBookmark = async (bookmark: BookmarkRecord) => {
     return
   }
   jump(target, { duration: 0 })
-  await store.saveProgress(bookmark.chapterIndex).catch(console.error)
+  await store.saveProgress(bookmark.chapterIndex, bookmark.chapterPos).catch(console.error)
   currentPositionKey.value = bookmark.id
   bookmarkedPositionKey.value = bookmark.id
   bookmarkDrawerPosition.value = {
@@ -597,6 +596,20 @@ const getContent = async (
       }
       if (reloadChapter && store.currentBook) {
         store.currentBook.currentChapter = index
+        if (
+          store.currentBook.legacyChapterCharPos !== undefined &&
+          store.currentBook.legacyChapterCharPos >= 0
+        ) {
+          const rawContent = Array.isArray(payload.content)
+            ? payload.content.join('\n')
+            : payload.content.replace(/<[^>]+>/g, '\n')
+          store.currentBook.currentChapterPos = characterOffsetToParagraphIndex(
+            rawContent,
+            store.currentBook.legacyChapterCharPos,
+          )
+          store.currentBook.legacyChapterCharPos = undefined
+          await store.saveProgress(index, store.currentBook.currentChapterPos).catch(console.error)
+        }
       }
       return true
     }
@@ -741,13 +754,16 @@ const ignoreKeyPress = (event: KeyboardEvent) => {
 
 // 滚动阅读进度更新
 let progressFrame: number | null = null
+let lastSavedPositionKey = ''
 const updateReadingProgress = () => {
   progressFrame = null
   const position = findReadingPosition()
   if (!position) return
   const index = position.chapterIndex
-  if (Number.isInteger(index) && index !== currentChapterIndex.value) {
-    store.saveProgress(index).catch(console.error)
+  const positionKey = `${position.chapterIndex}:${position.chapterPos}`
+  if (Number.isInteger(index) && positionKey !== lastSavedPositionKey) {
+    lastSavedPositionKey = positionKey
+    store.saveProgress(index, position.chapterPos).catch(console.error)
   }
   if (supportsBookDetail) syncBookmarkState(position).catch(console.error)
 }
@@ -777,20 +793,6 @@ watchEffect(() => {
   }
 })
 
-// 监听书架暗黑模式与阅读器主题同步
-watch(
-  () => isDark.value,
-  dark => {
-    if (dark && settings.value.theme !== 6) {
-      settings.value.theme = 6
-      store.updateSettings({ theme: 6 }).catch(console.error)
-    } else if (!dark && settings.value.theme === 6) {
-      settings.value.theme = 1
-      store.updateSettings({ theme: 1 }).catch(console.error)
-    }
-  }
-)
-
 // 监听页面隐藏自动保存进度
 const onVisibilityChange = () => {
   if (document.visibilityState === 'hidden') {
@@ -814,15 +816,6 @@ onMounted(async () => {
     if (supportsBookDetail) {
       await addReadingTime(currentBook.value!, 0).catch(console.error)
       readingSessionStartedAt = Date.now()
-    }
-
-    // 初始化时同步当前书架浅色/暗黑模式
-    if (isDark.value && settings.value.theme !== 6) {
-      settings.value.theme = 6
-      await store.updateSettings({ theme: 6 }).catch(console.error)
-    } else if (!isDark.value && settings.value.theme === 6) {
-      settings.value.theme = 1
-      await store.updateSettings({ theme: 1 }).catch(console.error)
     }
 
     onResize()
@@ -870,10 +863,12 @@ onMounted(async () => {
     )
     await getContent(initialChapter, true)
     await nextTick()
-    const requestedPosition = Number(route.query.pos)
-    if (Number.isInteger(requestedPosition) && requestedPosition >= 0) {
+    const requestedPosition = route.query.pos !== undefined
+      ? Number(route.query.pos)
+      : currentBook.value?.currentChapterPos
+    if (Number.isInteger(requestedPosition) && Number(requestedPosition) >= 0) {
       const target = document.querySelector<HTMLElement>(
-        `[data-chapter-index="${initialChapter}"] [data-chapterpos="${requestedPosition}"]`,
+        `[data-chapter-index="${initialChapter}"] [data-chapterpos="${Number(requestedPosition)}"]`,
       )
       if (target) jump(target, { duration: 0 })
     }

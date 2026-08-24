@@ -530,15 +530,15 @@ const saveEditBook = async () => {
 }
 
 .bookshelf-index-wrapper.dark .recent-book-badge.is-primary {
-  background-color: rgba(64, 158, 255, 0.15);
-  border: 1px solid rgba(64, 158, 255, 0.35);
-  color: #79bbff;
+  background-color: rgba(var(--legado-primary-rgb), 0.15);
+  border: 1px solid rgba(var(--legado-primary-rgb), 0.35);
+  color: var(--el-color-primary-dark-2);
 }
 
 .bookshelf-index-wrapper.dark .recent-book-badge.is-primary:hover {
-  background-color: rgba(64, 158, 255, 0.25);
-  border-color: rgba(64, 158, 255, 0.5);
-  color: #9bf1ff;
+  background-color: rgba(var(--legado-primary-rgb), 0.25);
+  border-color: rgba(var(--legado-primary-rgb), 0.5);
+  color: var(--el-color-primary-dark-2);
 }
 
 .bookshelf-index-wrapper.dark .recent-book-badge.is-warning {
@@ -604,15 +604,15 @@ const saveEditBook = async () => {
 }
 
 .bookshelf-index-wrapper.light .recent-book-badge.is-primary {
-  background-color: #ecf5ff;
-  border: 1px solid #d9ecff;
-  color: #409eff;
+  background-color: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
 }
 
 .bookshelf-index-wrapper.light .recent-book-badge.is-primary:hover {
-  background-color: #d9ecff;
-  border-color: #c6e2ff;
-  color: #2b85e4;
+  background-color: var(--el-color-primary-light-8);
+  border-color: var(--el-color-primary-light-7);
+  color: var(--el-color-primary-dark-2);
 }
 
 .bookshelf-index-wrapper.light .recent-book-badge.is-warning {
@@ -808,8 +808,8 @@ const saveEditBook = async () => {
   font-size: 13px;
   padding: 2px 8px;
   border-radius: 12px;
-  background-color: rgba(64, 158, 255, 0.15);
-  color: #409eff;
+  background-color: rgba(var(--legado-primary-rgb), 0.15);
+  color: var(--el-color-primary);
 }
 
 .shelf-header-right {
@@ -850,7 +850,7 @@ const saveEditBook = async () => {
 
 .drag-drop-box {
   padding: 40px 60px;
-  border: 2px dashed #409eff;
+  border: 2px dashed var(--el-color-primary);
   border-radius: 8px;
   text-align: center;
   background: rgba(20, 20, 20, 0.85);
@@ -859,7 +859,7 @@ const saveEditBook = async () => {
 
 .drag-icon {
   font-size: 64px;
-  color: #409eff;
+  color: var(--el-color-primary);
   margin-bottom: 16px;
 }
 

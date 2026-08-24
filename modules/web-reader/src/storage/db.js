@@ -1,6 +1,6 @@
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types';
 const DB_NAME = 'legado-web-reader';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_BOOKS = 'books';
 const STORE_SETTINGS = 'settings';
 const STORE_BOOK_SOURCES = 'bookSources';
@@ -8,6 +8,27 @@ const STORE_REMOTE_BOOKS = 'remoteBooks';
 const STORE_CHAPTER_CONTENTS = 'chapterContents';
 const STORE_BOOKMARKS = 'bookmarks';
 const STORE_READING_RECORDS = 'readingRecords';
+export const DATABASE_STORE_NAMES = [
+    STORE_BOOKS,
+    STORE_SETTINGS,
+    STORE_BOOK_SOURCES,
+    STORE_REMOTE_BOOKS,
+    STORE_CHAPTER_CONTENTS,
+    STORE_BOOKMARKS,
+    STORE_READING_RECORDS,
+];
+const DEVICE_ID_KEY = 'legado_tauri_device_id';
+export function getLocalDeviceId() {
+    const existing = localStorage.getItem(DEVICE_ID_KEY)?.trim();
+    if (existing)
+        return existing;
+    const suffix = typeof crypto?.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const deviceId = `tauri-${suffix}`;
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    return deviceId;
+}
 let cachedDb = null;
 function openDB() {
     if (cachedDb) {
@@ -58,6 +79,30 @@ function openDB() {
                 }
                 if (!db.objectStoreNames.contains(STORE_READING_RECORDS)) {
                     db.createObjectStore(STORE_READING_RECORDS, { keyPath: 'bookId' });
+                }
+            }
+            // v4 -> v5: 阅读时长保留各设备贡献，保证 Android 备份重复导入幂等。
+            if (oldVersion < 5 && db.objectStoreNames.contains(STORE_READING_RECORDS)) {
+                const store = request.transaction?.objectStore(STORE_READING_RECORDS);
+                const cursorRequest = store?.openCursor();
+                if (cursorRequest) {
+                    cursorRequest.onsuccess = () => {
+                        const cursor = cursorRequest.result;
+                        if (!cursor)
+                            return;
+                        const record = cursor.value;
+                        if (!record.devices || Object.keys(record.devices).length === 0) {
+                            record.devices = {
+                                [getLocalDeviceId()]: {
+                                    readTime: Math.max(0, record.readTime || 0),
+                                    lastRead: record.lastRead || Date.now(),
+                                    author: record.bookAuthor || '',
+                                },
+                            };
+                            cursor.update(record);
+                        }
+                        cursor.continue();
+                    };
                 }
             }
         };
@@ -295,12 +340,22 @@ export async function addReadingTime(book, duration) {
             const request = store.get(book.id);
             request.onsuccess = () => {
                 const current = request.result;
+                const deviceId = getLocalDeviceId();
+                const devices = normalizeReadingDevices(current);
+                const currentDevice = devices[deviceId];
+                devices[deviceId] = {
+                    readTime: Math.max(0, currentDevice?.readTime || 0) + Math.max(0, duration),
+                    lastRead: Date.now(),
+                    author: book.author,
+                };
+                const aggregate = aggregateReadingDevices(devices);
                 store.put({
                     bookId: book.id,
                     bookName: book.name,
                     bookAuthor: book.author,
-                    readTime: Math.max(0, current?.readTime || 0) + Math.max(0, duration),
-                    lastRead: Date.now(),
+                    readTime: aggregate.readTime,
+                    lastRead: aggregate.lastRead,
+                    devices,
                 });
             };
             request.onerror = () => reject(request.error);
@@ -321,7 +376,7 @@ export async function getAllReadingRecords() {
             const tx = db.transaction(STORE_READING_RECORDS, 'readonly');
             const request = tx.objectStore(STORE_READING_RECORDS).getAll();
             request.onsuccess = () => {
-                const records = (request.result || []);
+                const records = (request.result || []).map(normalizeReadingRecord);
                 records.sort((a, b) => b.lastRead - a.lastRead);
                 resolve(records);
             };
@@ -332,6 +387,36 @@ export async function getAllReadingRecords() {
             reject(err);
         }
     });
+}
+export function normalizeReadingDevices(record) {
+    if (record?.devices && Object.keys(record.devices).length > 0) {
+        return JSON.parse(JSON.stringify(record.devices));
+    }
+    if (!record)
+        return {};
+    return {
+        [getLocalDeviceId()]: {
+            readTime: Math.max(0, record.readTime || 0),
+            lastRead: record.lastRead || Date.now(),
+            author: record.bookAuthor || '',
+        },
+    };
+}
+export function aggregateReadingDevices(devices) {
+    return Object.values(devices).reduce((result, item) => ({
+        readTime: result.readTime + Math.max(0, item.readTime || 0),
+        lastRead: Math.max(result.lastRead, item.lastRead || 0),
+    }), { readTime: 0, lastRead: 0 });
+}
+export function normalizeReadingRecord(record) {
+    const devices = normalizeReadingDevices(record);
+    const aggregate = aggregateReadingDevices(devices);
+    return {
+        ...record,
+        readTime: aggregate.readTime,
+        lastRead: aggregate.lastRead,
+        devices,
+    };
 }
 export async function deleteReadingRecord(bookId) {
     const db = await openDB();
@@ -424,6 +509,86 @@ export async function getBookChapterContents(bookId) {
             const request = tx.objectStore(STORE_CHAPTER_CONTENTS).index('bookId').getAll(bookId);
             request.onsuccess = () => resolve(request.result || []);
             request.onerror = () => reject(request.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+function estimateChapterContentSize(record) {
+    return new TextEncoder().encode(JSON.stringify(record)).byteLength;
+}
+export async function getChapterCacheSummaries() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction([STORE_BOOKS, STORE_CHAPTER_CONTENTS], 'readonly');
+            const booksRequest = tx.objectStore(STORE_BOOKS).getAll();
+            const contentsRequest = tx.objectStore(STORE_CHAPTER_CONTENTS).getAll();
+            let books = [];
+            let contents = [];
+            booksRequest.onsuccess = () => { books = booksRequest.result || []; };
+            contentsRequest.onsuccess = () => { contents = contentsRequest.result || []; };
+            tx.oncomplete = () => {
+                const bookMetas = new Map(books.map(book => [book.meta.id, book.meta]));
+                const summaries = new Map();
+                for (const record of contents) {
+                    const existing = summaries.get(record.bookId);
+                    if (existing) {
+                        existing.chapterCount += 1;
+                        existing.size += estimateChapterContentSize(record);
+                        continue;
+                    }
+                    const meta = bookMetas.get(record.bookId);
+                    summaries.set(record.bookId, {
+                        bookId: record.bookId,
+                        bookName: meta?.name || '',
+                        bookAuthor: meta?.author || '',
+                        chapterCount: 1,
+                        size: estimateChapterContentSize(record),
+                    });
+                }
+                resolve([...summaries.values()].sort((a, b) => (a.bookName || a.bookId).localeCompare(b.bookName || b.bookId, 'zh-CN')));
+            };
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function deleteBookChapterContents(bookId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readwrite');
+            const store = tx.objectStore(STORE_CHAPTER_CONTENTS);
+            const chapterKeys = store.index('bookId').getAllKeys(bookId);
+            chapterKeys.onsuccess = () => {
+                chapterKeys.result.forEach(key => store.delete(key));
+            };
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+export async function clearChapterContents() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(STORE_CHAPTER_CONTENTS, 'readwrite');
+            tx.objectStore(STORE_CHAPTER_CONTENTS).clear();
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
         }
         catch (err) {
             cachedDb = null;
@@ -546,6 +711,68 @@ export async function importBookSources(sources) {
                 }
             }
             tx.oncomplete = () => resolve(uniqueUrls.size);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+/**
+ * 在同一个只读事务中导出全部持久化 store，避免备份跨 store 读取到不一致状态。
+ */
+export async function exportDatabaseSnapshot() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction([...DATABASE_STORE_NAMES], 'readonly');
+            const snapshot = {};
+            let pending = DATABASE_STORE_NAMES.length;
+            for (const storeName of DATABASE_STORE_NAMES) {
+                const request = tx.objectStore(storeName).getAll();
+                request.onsuccess = () => {
+                    snapshot[storeName] = request.result || [];
+                    pending -= 1;
+                };
+                request.onerror = () => reject(request.error);
+            }
+            tx.oncomplete = () => {
+                if (pending === 0)
+                    resolve(snapshot);
+                else
+                    reject(new Error('数据库快照读取不完整'));
+            };
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }
+        catch (err) {
+            cachedDb = null;
+            reject(err);
+        }
+    });
+}
+/**
+ * 在一个多 store 事务内写入备份。clearStores 只清理由调用方明确选择的类别。
+ */
+export async function importDatabaseSnapshot(snapshot, clearStores = []) {
+    const targetStores = DATABASE_STORE_NAMES.filter(storeName => clearStores.includes(storeName) || snapshot[storeName] !== undefined);
+    if (targetStores.length === 0)
+        return;
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction(targetStores, 'readwrite');
+            for (const storeName of targetStores) {
+                const store = tx.objectStore(storeName);
+                if (clearStores.includes(storeName))
+                    store.clear();
+                for (const record of snapshot[storeName] || []) {
+                    store.put(record);
+                }
+            }
+            tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);
         }

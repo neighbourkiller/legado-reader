@@ -66,11 +66,27 @@
               <el-radio-button value="reader">正文页</el-radio-button>
             </el-radio-group>
           </div>
+          <div class="preference-row">
+            <div class="preference-copy">
+              <strong>全局主题与阅读页</strong>
+              <small>切换全局明暗主题时，选择是否同步修改阅读页</small>
+            </div>
+            <el-radio-group
+              :model-value="appSettingsStore.readerThemeSyncPreference"
+              @update:model-value="handleThemeSyncPreferenceChange"
+            >
+              <el-radio-button value="none">每次询问</el-radio-button>
+              <el-radio-button value="sync">始终同步</el-radio-button>
+              <el-radio-button value="independent">不同步</el-radio-button>
+            </el-radio-group>
+          </div>
         </div>
 
+        <ThemeSettingsPanel v-else-if="selectedKey === 'theme'" />
         <BookmarksPanel v-else-if="selectedKey === 'bookmarks'" />
         <ReadingHistoryPanel v-else-if="selectedKey === 'history'" />
         <FileManagerPanel v-else-if="selectedKey === 'files'" />
+        <BackupPanel v-else-if="selectedKey === 'backup'" />
         <AboutPanel v-else-if="selectedKey === 'about'" />
         <el-empty v-else description="该功能暂未实现" />
       </section>
@@ -96,10 +112,15 @@ import {
   InfoFilled,
 } from '@element-plus/icons-vue'
 import { useAppSettingsStore } from '@/stores/appSettings'
-import type { BookshelfClickAction } from '@/stores/appSettings'
+import type {
+  BookshelfClickAction,
+  ReaderThemeSyncPreference,
+} from '@/stores/appSettings'
+import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel.vue'
 import BookmarksPanel from '@/components/settings/BookmarksPanel.vue'
 import ReadingHistoryPanel from '@/components/settings/ReadingHistoryPanel.vue'
 import FileManagerPanel from '@/components/settings/FileManagerPanel.vue'
+import BackupPanel from '@/components/settings/BackupPanel.vue'
 import AboutPanel from '@/components/settings/AboutPanel.vue'
 
 type SettingKey =
@@ -200,6 +221,12 @@ const selectItem = (item: SettingItem) => {
 const handleActionChange = (value: string | number | boolean | undefined) => {
   if (value === 'detail' || value === 'reader') {
     appSettingsStore.setBookshelfClickAction(value as BookshelfClickAction)
+  }
+}
+
+const handleThemeSyncPreferenceChange = (value: string | number | boolean | undefined) => {
+  if (value === 'none' || value === 'sync' || value === 'independent') {
+    appSettingsStore.setReaderThemeSyncPreference(value as ReaderThemeSyncPreference)
   }
 }
 </script>
@@ -348,6 +375,10 @@ const handleActionChange = (value: string | number | boolean | undefined) => {
   gap: 24px;
   min-height: 82px;
   padding: 16px 20px;
+}
+
+.preference-row + .preference-row {
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .preference-copy {

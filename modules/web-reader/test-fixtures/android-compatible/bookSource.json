@@ -1,0 +1,8 @@
+[
+  {
+    "bookSourceUrl": "https://source.example.com",
+    "bookSourceName": "Tauri 兼容测试书源",
+    "bookSourceType": 0,
+    "enabled": true
+  }
+]

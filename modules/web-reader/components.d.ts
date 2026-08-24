@@ -8,16 +8,20 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AboutPanel: typeof import('./src/components/settings/AboutPanel.vue')['default']
+    BackupPanel: typeof import('./src/components/settings/BackupPanel.vue')['default']
     BookCard: typeof import('./src/components/BookCard.vue')['default']
     BookmarksPanel: typeof import('./src/components/settings/BookmarksPanel.vue')['default']
     CatalogItem: typeof import('./src/components/CatalogItem.vue')['default']
     ChapterContent: typeof import('./src/components/ChapterContent.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElButton: typeof import('element-plus/es')['ElButton']
+    ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElCollapse: typeof import('element-plus/es')['ElCollapse']
     ElCollapseItem: typeof import('element-plus/es')['ElCollapseItem']
     ElConfigProvider: typeof import('element-plus/es')['ElConfigProvider']
+    ElDescriptions: typeof import('element-plus/es')['ElDescriptions']
+    ElDescriptionsItem: typeof import('element-plus/es')['ElDescriptionsItem']
     ElDialog: typeof import('element-plus/es')['ElDialog']
     ElDivider: typeof import('element-plus/es')['ElDivider']
     ElDrawer: typeof import('element-plus/es')['ElDrawer']
@@ -37,6 +41,8 @@ declare module 'vue' {
     ElRadioGroup: typeof import('element-plus/es')['ElRadioGroup']
     ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
+    ElTable: typeof import('element-plus/es')['ElTable']
+    ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
     ElTabPane: typeof import('element-plus/es')['ElTabPane']
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
@@ -56,6 +62,8 @@ declare module 'vue' {
     SourceDebugDialog: typeof import('./src/components/SourceDebugDialog.vue')['default']
     SourceEditDialog: typeof import('./src/components/SourceEditDialog.vue')['default']
     SystemFontDialog: typeof import('./src/components/SystemFontDialog.vue')['default']
+    ThemeSettingsPanel: typeof import('./src/components/settings/ThemeSettingsPanel.vue')['default']
+    ThemeSyncDialog: typeof import('./src/components/ThemeSyncDialog.vue')['default']
     ThemeToggle: typeof import('./src/components/ThemeToggle.vue')['default']
   }
   export interface ComponentCustomProperties {

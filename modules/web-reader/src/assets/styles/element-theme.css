@@ -52,7 +52,7 @@ html.dark .el-input__wrapper {
 }
 
 html.dark .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #409eff inset !important;
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
 }
 
 html.dark .el-input__inner {
@@ -135,15 +135,15 @@ html.dark .el-button:not(.el-button--primary):not(.el-button--danger):hover {
 }
 
 html.dark .el-button--primary.is-plain {
-  background-color: rgba(64, 158, 255, 0.15) !important;
-  border-color: rgba(64, 158, 255, 0.35) !important;
-  color: #79bbff !important;
+  background-color: rgba(var(--legado-primary-rgb), 0.15) !important;
+  border-color: rgba(var(--legado-primary-rgb), 0.35) !important;
+  color: var(--el-color-primary-light-3) !important;
 }
 
 html.dark .el-button--primary.is-plain:hover {
-  background-color: rgba(64, 158, 255, 0.25) !important;
-  border-color: rgba(64, 158, 255, 0.5) !important;
-  color: #9bf1ff !important;
+  background-color: rgba(var(--legado-primary-rgb), 0.25) !important;
+  border-color: rgba(var(--legado-primary-rgb), 0.5) !important;
+  color: var(--el-color-primary-light-3) !important;
 }
 
 /* ================= Message Box (ElMessageBox) in Dark Mode ================= */

@@ -3,6 +3,7 @@
     <div class="app-container">
       <router-view />
       <GlobalDownloadProgress />
+      <ThemeSyncDialog />
       <GlobalHomeButton v-if="isDesktop" />
       <GlobalSettingsButton v-if="isDesktop" />
     </div>
@@ -14,6 +15,7 @@ import { onMounted, onUnmounted } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
+import ThemeSyncDialog from '@/components/ThemeSyncDialog.vue'
 import GlobalHomeButton from '@/components/GlobalHomeButton.vue'
 import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue'
 

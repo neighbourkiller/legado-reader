@@ -1,0 +1,16 @@
+[
+  {
+    "bookUrl": "https://book.example.com/fixture",
+    "tocUrl": "https://book.example.com/fixture/toc",
+    "origin": "https://source.example.com",
+    "originName": "Tauri 兼容测试书源",
+    "name": "Tauri 兼容测试书",
+    "author": "兼容作者",
+    "type": 0,
+    "totalChapterNum": 12,
+    "durChapterTitle": "第三章",
+    "durChapterIndex": 2,
+    "durChapterPos": 18,
+    "durChapterTime": 1787533200000
+  }
+]

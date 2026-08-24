@@ -12,11 +12,14 @@
     "build:web": "vue-tsc --build --force && vite build --mode web",
     "build:desktop-ui": "vue-tsc --build --force && vite build --mode desktop",
     "build:desktop": "tauri build",
-    "preview": "vite preview --mode web"
+    "preview": "vite preview --mode web",
+    "test": "vitest run"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
     "@vueuse/core": "^14.4.0",
     "@vueuse/shared": "^14.4.0",
     "element-plus": "^2.14.3",
@@ -30,10 +33,12 @@
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.2.0",
     "@vitejs/plugin-vue": "^6.0.8",
+    "fake-indexeddb": "^6.2.4",
     "typescript": "~5.6.3",
     "unplugin-auto-import": "^21.1.0",
     "unplugin-vue-components": "^0.27.4",
     "vite": "^8.2.1",
+    "vitest": "^3.2.4",
     "vue-tsc": "^3.3.9"
   }
 }

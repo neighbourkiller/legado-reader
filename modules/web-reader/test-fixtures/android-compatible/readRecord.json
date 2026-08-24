@@ -1,0 +1,9 @@
+[
+  {
+    "deviceId": "tauri-fixture-device",
+    "bookName": "Tauri 兼容测试书",
+    "author": "兼容作者",
+    "readTime": 3600000,
+    "lastRead": 1787533200002
+  }
+]

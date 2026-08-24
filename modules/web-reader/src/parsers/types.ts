@@ -14,6 +14,10 @@ export interface BookMeta {
   totalChapters: number
   currentChapter: number
   currentProgress: number
+  /** Tauri 阅读器中的段落索引，用于桌面端精确恢复。 */
+  currentChapterPos?: number
+  /** 从 Android 导入、尚未换算为段落索引的章节字符偏移。 */
+  legacyChapterCharPos?: number
   lastReadTime: number
   coverUrl?: string
   durChapterTitle?: string
@@ -84,4 +88,3 @@ export interface StoredBook {
   chapters: BookChapter[]
   fileData?: ArrayBuffer | null
 }
-

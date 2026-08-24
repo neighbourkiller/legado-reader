@@ -6,6 +6,9 @@ import { getTxtChapterContent, getEpubChapterContent } from '@/parsers'
 import {
   getBook,
   getChapterContent,
+  getBookmarksByBookId,
+  saveBook,
+  saveBookmark,
   saveChapterContent,
   updateBookMeta,
   saveSettings,
@@ -13,12 +16,18 @@ import {
 } from '@/storage/db'
 import { useBookSourceStore } from '@/stores/bookSource'
 import { SourceEngine } from '@/source/engine/SourceEngine'
+import { characterOffsetToParagraphIndex } from '@/backup/compat'
 
 export interface ChapterPayload {
   index: number
   title: string
   content: string[] | string
   format: 'txt' | 'epub'
+}
+
+export function resolveSyncedReaderTheme(currentTheme: number, dark: boolean): number {
+  if (dark) return 6
+  return currentTheme === 6 ? 1 : currentTheme
 }
 
 const SETTINGS_KEY = 'legado_web_reader_settings'
@@ -72,6 +81,27 @@ function normalizeOnlineContent(rawContent: string, chapterTitle: string): strin
   return paragraphs.length > 0 ? paragraphs : ['[本章内容为空]']
 }
 
+async function resolveImportedBookmarkPositions(
+  bookId: string,
+  chapterIndex: number,
+  content: string,
+): Promise<void> {
+  const bookmarks = await getBookmarksByBookId(bookId)
+  const unresolved = bookmarks.filter(
+    bookmark => bookmark.chapterIndex === chapterIndex && bookmark.androidChapterPos !== undefined,
+  )
+  for (const bookmark of unresolved) {
+    const chapterPos = characterOffsetToParagraphIndex(
+      content,
+      bookmark.androidChapterPos || 0,
+      bookmark.content,
+    )
+    await saveBookmark({ ...bookmark, chapterPos, androidChapterPos: undefined }).catch(error => {
+      console.warn('换算 Android 书签位置失败', error)
+    })
+  }
+}
+
 export const useReadingStore = defineStore('reading', () => {
   const currentBook = ref<BookMeta | null>(null)
   const chapters = ref<BookChapter[]>([])
@@ -84,6 +114,7 @@ export const useReadingStore = defineStore('reading', () => {
   const readSettingsVisible = ref(false)
 
   let activeBlobUrls: string[] = []
+  let settingsHydrated = false
 
   function revokeActiveBlobUrls() {
     if (activeBlobUrls.length > 0) {
@@ -98,6 +129,27 @@ export const useReadingStore = defineStore('reading', () => {
     return chapters.value[idx]?.title ?? ''
   })
 
+  async function hydrateSettings() {
+    if (settingsHydrated) return
+    const dbSettings = await loadSettings()
+    const localSettings = loadLocalSettings()
+    // localStorage is written synchronously before IndexedDB. Prefer it when
+    // present so a failed/older IndexedDB record cannot erase recent changes.
+    settings.value = normalizeSettings(dbSettings, localSettings)
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
+    } catch (e) {
+      console.warn('Failed to sync settings to localStorage', e)
+    }
+    // Migrate settings that older versions only managed to persist locally.
+    if (localSettings) {
+      await saveSettings(settings.value).catch(err => {
+        console.warn('Failed to save migrated settings to IndexedDB', err)
+      })
+    }
+    settingsHydrated = true
+  }
+
   const progress = computed(() => {
     if (!currentBook.value || currentBook.value.totalChapters === 0) return 0
     return Math.round(
@@ -111,27 +163,51 @@ export const useReadingStore = defineStore('reading', () => {
       const stored = await getBook(id)
       if (!stored) throw new Error('书籍未找到')
 
+      // Android 备份不包含章节目录。网络书第一次打开时使用对应书源补齐，
+      // 后续仍走本地缓存，不要求修改 Android 端的生产备份逻辑。
+      if (stored.meta.format === 'online' && stored.chapters.length === 0) {
+        const sourceUrl = stored.meta.sourceUrl
+        if (!sourceUrl || !stored.meta.bookUrl) {
+          throw new Error('从安卓恢复的网络书籍缺少书源或详情页地址')
+        }
+        const bookSourceStore = useBookSourceStore()
+        if (bookSourceStore.sources.length === 0) await bookSourceStore.loadSources()
+        const source = bookSourceStore.sources.find(item => item.bookSourceUrl === sourceUrl)
+        if (!source) {
+          throw new Error(`无法补齐目录：未找到对应书源 ${stored.meta.sourceName || sourceUrl}`)
+        }
+        const engine = new SourceEngine()
+        let tocUrl = stored.meta.tocUrl || stored.meta.bookUrl
+        try {
+          const info = await engine.getBookInfo(source, stored.meta.bookUrl)
+          if (info.tocUrl) tocUrl = info.tocUrl
+          if (info.coverUrl) stored.meta.coverUrl = info.coverUrl
+          if (info.intro) stored.meta.intro = info.intro
+        } catch (error) {
+          console.warn('恢复书籍时刷新详情失败，继续尝试已有目录地址', error)
+        }
+        const rawChapters = await engine.getToc(source, tocUrl)
+        if (rawChapters.length === 0) throw new Error('对应书源未返回章节目录')
+        stored.chapters = rawChapters.map((chapter, index) => ({
+          index,
+          title: chapter.name,
+          href: chapter.url,
+        }))
+        stored.meta.tocUrl = tocUrl
+        stored.meta.totalChapters = stored.chapters.length
+        stored.meta.currentChapter = Math.min(
+          Math.max(0, stored.meta.currentChapter),
+          stored.chapters.length - 1,
+        )
+        stored.meta.latestChapterTitle = stored.chapters[stored.chapters.length - 1]?.title
+        await saveBook(stored)
+      }
+
       currentBook.value = stored.meta
       chapters.value = stored.chapters
       fileData.value = stored.fileData || null
 
-      // Load settings
-      const dbSettings = await loadSettings()
-      const localSettings = loadLocalSettings()
-      // localStorage is written synchronously before IndexedDB. Prefer it when
-      // present so a failed/older IndexedDB record cannot erase recent changes.
-      settings.value = normalizeSettings(dbSettings, localSettings)
-      try {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
-      } catch (e) {
-        console.warn('Failed to sync settings to localStorage', e)
-      }
-      // Migrate settings that older versions only managed to persist locally.
-      if (localSettings) {
-        await saveSettings(settings.value).catch(err => {
-          console.warn('Failed to save migrated settings to IndexedDB', err)
-        })
-      }
+      await hydrateSettings()
     } finally {
       isLoading.value = false
     }
@@ -168,6 +244,11 @@ export const useReadingStore = defineStore('reading', () => {
           chapterHref,
         )
         if (cached) {
+          await resolveImportedBookmarkPositions(
+            currentBook.value.id,
+            index,
+            normalizeOnlineContent(cached.content, chapter.title).join('\n'),
+          )
           return {
             index,
             title: chapter.title,
@@ -204,6 +285,12 @@ export const useReadingStore = defineStore('reading', () => {
             chapterUrl: chapterHref,
           })
         }
+
+        await resolveImportedBookmarkPositions(
+          currentBook.value.id,
+          index,
+          normalizeOnlineContent(rawContent, chapter.title).join('\n'),
+        )
 
         return {
           index,
@@ -305,7 +392,7 @@ export const useReadingStore = defineStore('reading', () => {
     }
   }
 
-  async function saveProgress(chapterIndex?: number) {
+  async function saveProgress(chapterIndex?: number, chapterPos?: number) {
     if (!currentBook.value) return
     const targetIndex = chapterIndex !== undefined ? chapterIndex : currentBook.value.currentChapter
     currentBook.value.currentChapter = targetIndex
@@ -313,6 +400,10 @@ export const useReadingStore = defineStore('reading', () => {
       ((targetIndex + 1) / (chapters.value.length || 1)) * 100
     )
     currentBook.value.lastReadTime = Date.now()
+    if (chapterPos !== undefined && Number.isInteger(chapterPos) && chapterPos >= 0) {
+      currentBook.value.currentChapterPos = chapterPos
+      currentBook.value.legacyChapterCharPos = undefined
+    }
     if (chapters.value[targetIndex]) {
       currentBook.value.durChapterTitle = chapters.value[targetIndex].title
     }
@@ -321,6 +412,8 @@ export const useReadingStore = defineStore('reading', () => {
       currentChapter: currentBook.value.currentChapter,
       currentProgress: currentBook.value.currentProgress,
       durChapterTitle: currentBook.value.durChapterTitle,
+      currentChapterPos: currentBook.value.currentChapterPos,
+      legacyChapterCharPos: currentBook.value.legacyChapterCharPos,
       lastReadTime: currentBook.value.lastReadTime,
     })
   }
@@ -333,6 +426,13 @@ export const useReadingStore = defineStore('reading', () => {
       console.warn('Failed to write settings to localStorage', e)
     }
     await saveSettings(settings.value)
+  }
+
+  async function syncThemeWithGlobal(dark: boolean) {
+    await hydrateSettings()
+    const theme = resolveSyncedReaderTheme(settings.value.theme, dark)
+    if (theme === settings.value.theme) return
+    await updateSettings({ theme })
   }
 
   function setMiniInterface(val: boolean) {
@@ -365,6 +465,7 @@ export const useReadingStore = defineStore('reading', () => {
     prevChapter,
     saveProgress,
     updateSettings,
+    syncThemeWithGlobal,
     setMiniInterface,
     cleanup,
   }

@@ -517,7 +517,7 @@ const copyLogs = () => {
 
 .step-card.step-running {
   border-color: var(--el-color-primary);
-  box-shadow: 0 0 8px rgba(64, 158, 255, 0.2);
+  box-shadow: 0 0 8px rgba(var(--legado-primary-rgb), 0.2);
 }
 
 .step-card.step-success {

@@ -6,7 +6,7 @@
       :class="{ active: themeMode === 'auto' }"
       title="跟随系统"
       aria-label="跟随系统"
-      @click="setTheme('auto')"
+      @click="requestTheme('auto')"
     >
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -21,7 +21,7 @@
       :class="{ active: themeMode === 'light' }"
       title="浅色模式"
       aria-label="浅色模式"
-      @click="setTheme('light')"
+      @click="requestTheme('light')"
     >
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="5"></circle>
@@ -42,7 +42,7 @@
       :class="{ active: themeMode === 'dark' }"
       title="暗黑模式"
       aria-label="暗黑模式"
-      @click="setTheme('dark')"
+      @click="requestTheme('dark')"
     >
       <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
@@ -53,8 +53,10 @@
 
 <script setup lang="ts">
 import { useTheme } from '@/composables/useTheme'
+import { useThemeController } from '@/composables/useThemeController'
 
-const { themeMode, isDark, setTheme } = useTheme()
+const { themeMode, isDark } = useTheme()
+const { requestTheme } = useThemeController()
 </script>
 
 <style scoped>

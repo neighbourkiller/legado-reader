@@ -3,14 +3,12 @@ import { storeToRefs } from 'pinia';
 import { ElMessageBox, ElMessage } from 'element-plus';
 import { useDebounceFn } from '@vueuse/shared';
 import { useReadingStore } from '@/stores/reading';
-import { useTheme } from '@/composables/useTheme';
 import themeConfig from '@/config/themeConfig';
 import SystemFontDialog from './SystemFontDialog.vue';
 import '@/assets/fonts/popfont.css';
 import '@/assets/fonts/iconfont.css';
 const store = useReadingStore();
 const { settings, miniInterface } = storeToRefs(store);
-const { setTheme: setGlobalTheme } = useTheme();
 const saveDebounced = useDebounceFn(() => {
     store.updateSettings(settings.value);
 }, 400);
@@ -33,12 +31,6 @@ const popupTheme = computed(() => {
 });
 const setTheme = (idx) => {
     settings.value.theme = idx;
-    if (idx === 6) {
-        setGlobalTheme('dark');
-    }
-    else {
-        setGlobalTheme('light');
-    }
     saveDebounced();
 };
 // 预设字体

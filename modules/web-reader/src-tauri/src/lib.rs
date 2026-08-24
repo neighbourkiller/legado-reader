@@ -2,6 +2,7 @@ mod app_files;
 mod cookie_store;
 mod source_http;
 mod source_policy;
+mod webdav;
 
 use app_files::open_app_data_dir;
 use source_http::{
@@ -10,12 +11,18 @@ use source_http::{
     toggle_fullscreen, webview_fetch, AppState,
 };
 use tauri::Manager;
+use webdav::{
+    download_webdav_backup, get_webdav_config, list_webdav_backups, save_webdav_config,
+    test_webdav_connection, upload_webdav_backup,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             app.manage(AppState::new());
 
@@ -48,7 +55,13 @@ pub fn run() {
             webview_fetch,
             toggle_fullscreen,
             exit_fullscreen,
-            open_app_data_dir
+            open_app_data_dir,
+            get_webdav_config,
+            save_webdav_config,
+            test_webdav_connection,
+            list_webdav_backups,
+            upload_webdav_backup,
+            download_webdav_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

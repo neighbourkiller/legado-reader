@@ -1,5 +1,7 @@
 import { useTheme } from '@/composables/useTheme';
-const { themeMode, isDark, setTheme } = useTheme();
+import { useThemeController } from '@/composables/useThemeController';
+const { themeMode, isDark } = useTheme();
+const { requestTheme } = useThemeController();
 const __VLS_ctx = {
     ...{},
     ...{},
@@ -25,9 +27,9 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
 /** @type {__VLS_StyleScopedClasses['dark']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: (...[$event]) => {
-            return (__VLS_ctx.setTheme('auto'));
+            return (__VLS_ctx.requestTheme('auto'));
             // @ts-ignore
-            [isDark, setTheme,];
+            [isDark, requestTheme,];
         } },
     type: "button",
     ...{ class: "toggle-btn" },
@@ -69,9 +71,9 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.line, __VLS_intrinsics.line)({
 });
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: (...[$event]) => {
-            return (__VLS_ctx.setTheme('light'));
+            return (__VLS_ctx.requestTheme('light'));
             // @ts-ignore
-            [setTheme, themeMode,];
+            [requestTheme, themeMode,];
         } },
     type: "button",
     ...{ class: "toggle-btn" },
@@ -146,9 +148,9 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.line, __VLS_intrinsics.line)({
 });
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: (...[$event]) => {
-            return (__VLS_ctx.setTheme('dark'));
+            return (__VLS_ctx.requestTheme('dark'));
             // @ts-ignore
-            [setTheme, themeMode,];
+            [requestTheme, themeMode,];
         } },
     type: "button",
     ...{ class: "toggle-btn" },

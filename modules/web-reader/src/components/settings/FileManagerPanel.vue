@@ -102,6 +102,58 @@
       <span>{{ statusText }}</span>
       <el-button text :icon="Refresh" :loading="loading" @click="loadFiles">刷新</el-button>
     </div>
+
+    <section class="cache-section" aria-labelledby="chapter-cache-title">
+      <div class="section-heading">
+        <div>
+          <h3 id="chapter-cache-title">离线章节缓存</h3>
+          <p>按书籍管理已下载或阅读时自动保存的网络章节正文</p>
+        </div>
+        <el-button
+          type="danger"
+          plain
+          :disabled="cacheSummaries.length === 0"
+          :loading="clearingAllCaches"
+          @click="clearAllCaches"
+        >
+          全部清理
+        </el-button>
+      </div>
+
+      <div class="cache-summary">
+        <span>{{ cacheSummaries.length }} 本书</span>
+        <span>{{ totalCachedChapters }} 章</span>
+        <span>约 {{ formatSize(totalCacheSize) }}</span>
+      </div>
+
+      <div class="cache-list-header">
+        <span>书籍</span>
+        <span>缓存章数</span>
+        <span>占用空间（约）</span>
+        <span>操作</span>
+      </div>
+      <div class="cache-list">
+        <article v-for="cache in cacheSummaries" :key="cache.bookId" class="cache-row">
+          <span class="cache-book">
+            <strong>{{ cache.bookName || '未知书籍' }}</strong>
+            <small>{{ cache.bookAuthor || cache.bookId }}</small>
+          </span>
+          <span>{{ cache.chapterCount }} 章</span>
+          <span>{{ formatSize(cache.size) }}</span>
+          <span>
+            <el-button
+              text
+              type="danger"
+              :loading="clearingBookId === cache.bookId"
+              @click="clearBookCache(cache)"
+            >
+              清理
+            </el-button>
+          </span>
+        </article>
+        <el-empty v-if="cacheSummaries.length === 0" description="暂无离线章节缓存" />
+      </div>
+    </section>
   </div>
 </template>
 
@@ -110,8 +162,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Back, Document, FolderOpened, Refresh, Search } from '@element-plus/icons-vue'
-import { getAllStoredBookFiles } from '@/storage/db'
-import type { StoredBookFileInfo } from '@/storage/db'
+import {
+  clearChapterContents,
+  deleteBookChapterContents,
+  getAllStoredBookFiles,
+  getChapterCacheSummaries,
+} from '@/storage/db'
+import type { ChapterCacheSummary, StoredBookFileInfo } from '@/storage/db'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import { platform } from '@/platform/capabilities'
 import { openAppDataDirectory } from '@/platform/appFiles'
@@ -122,9 +179,12 @@ const router = useRouter()
 const bookshelfStore = useBookshelfStore()
 const loading = ref(false)
 const openingAppDirectory = ref(false)
+const clearingAllCaches = ref(false)
+const clearingBookId = ref('')
 const keyword = ref('')
 const currentDirectory = ref<Directory>('root')
 const files = ref<StoredBookFileInfo[]>([])
+const cacheSummaries = ref<ChapterCacheSummary[]>([])
 
 const normalizedKeyword = computed(() => keyword.value.trim().toLowerCase())
 const showBooksFolder = computed(() =>
@@ -139,6 +199,12 @@ const filteredFiles = computed(() => {
 })
 const allFilesSize = computed(() => files.value.reduce((total, file) => total + file.size, 0))
 const visibleFilesSize = computed(() => filteredFiles.value.reduce((total, file) => total + file.size, 0))
+const totalCachedChapters = computed(() =>
+  cacheSummaries.value.reduce((total, cache) => total + cache.chapterCount, 0),
+)
+const totalCacheSize = computed(() =>
+  cacheSummaries.value.reduce((total, cache) => total + cache.size, 0),
+)
 const showEmpty = computed(() =>
   currentDirectory.value === 'root' ? !showBooksFolder.value : filteredFiles.value.length === 0,
 )
@@ -169,12 +235,59 @@ const handleOpenAppDirectory = async () => {
 const loadFiles = async () => {
   loading.value = true
   try {
-    files.value = await getAllStoredBookFiles()
+    const [storedFiles, chapterCaches] = await Promise.all([
+      getAllStoredBookFiles(),
+      getChapterCacheSummaries(),
+    ])
+    files.value = storedFiles
+    cacheSummaries.value = chapterCaches
   } catch (error) {
     console.error('读取客户端文件失败', error)
     ElMessage.error('读取客户端文件失败')
   } finally {
     loading.value = false
+  }
+}
+
+const clearBookCache = async (cache: ChapterCacheSummary) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定清理《${cache.bookName || '未知书籍'}》的 ${cache.chapterCount} 章离线缓存吗？`,
+      '清理离线章节缓存',
+      { confirmButtonText: '清理', cancelButtonText: '取消', type: 'warning' },
+    )
+    clearingBookId.value = cache.bookId
+    await deleteBookChapterContents(cache.bookId)
+    cacheSummaries.value = cacheSummaries.value.filter(item => item.bookId !== cache.bookId)
+    ElMessage.success('该书离线章节缓存已清理')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      console.error('清理单书离线章节缓存失败', error)
+      ElMessage.error('清理离线章节缓存失败')
+    }
+  } finally {
+    clearingBookId.value = ''
+  }
+}
+
+const clearAllCaches = async () => {
+  try {
+    await ElMessageBox.confirm(
+      `确定清理全部 ${totalCachedChapters.value} 章离线缓存吗？此操作不会删除书籍、书签和阅读记录。`,
+      '清理全部离线章节缓存',
+      { confirmButtonText: '全部清理', cancelButtonText: '取消', type: 'warning' },
+    )
+    clearingAllCaches.value = true
+    await clearChapterContents()
+    cacheSummaries.value = []
+    ElMessage.success('全部离线章节缓存已清理')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      console.error('清理全部离线章节缓存失败', error)
+      ElMessage.error('清理全部离线章节缓存失败')
+    }
+  } finally {
+    clearingAllCaches.value = false
   }
 }
 
@@ -187,6 +300,7 @@ const removeFile = async (file: StoredBookFileInfo) => {
     )
     await bookshelfStore.deleteBook(file.id)
     files.value = files.value.filter(item => item.id !== file.id)
+    cacheSummaries.value = cacheSummaries.value.filter(item => item.bookId !== file.id)
     ElMessage.success('客户端文件已删除')
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
@@ -249,6 +363,22 @@ button.name-cell { padding: 0; cursor: pointer; }
 .row-actions .el-button + .el-button { margin-left: 2px; }
 .status-bar { display: flex; align-items: center; justify-content: space-between; min-height: 42px; color: var(--el-text-color-secondary); font-size: 12px; }
 .file-list :deep(.el-empty) { padding: 34px 0; }
+.cache-section { margin-top: 28px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
+.section-heading h3 { margin: 0 0 5px; color: var(--el-text-color-primary); font-size: 16px; }
+.section-heading p { margin: 0; color: var(--el-text-color-secondary); font-size: 13px; }
+.cache-summary { display: flex; gap: 18px; padding: 11px 16px; border: 1px solid var(--el-border-color-lighter); border-bottom: 0; border-radius: 10px 10px 0 0; color: var(--el-text-color-secondary); background: var(--el-fill-color-light); font-size: 12px; }
+.cache-list-header, .cache-row { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 140px 80px; align-items: center; column-gap: 12px; }
+.cache-list-header { padding: 9px 16px; border: 1px solid var(--el-border-color-lighter); border-bottom: 0; color: var(--el-text-color-secondary); font-size: 12px; }
+.cache-list { overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 0 0 10px 10px; background: var(--el-bg-color-overlay); }
+.cache-row { min-height: 62px; padding: 8px 16px; border-bottom: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-secondary); font-size: 12px; }
+.cache-row:last-of-type { border-bottom: 0; }
+.cache-row:hover { background: var(--el-fill-color-light); }
+.cache-book { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.cache-book strong, .cache-book small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cache-book strong { color: var(--el-text-color-primary); font-size: 14px; font-weight: 500; }
+.cache-book small { color: var(--el-text-color-secondary); }
+.cache-list :deep(.el-empty) { padding: 30px 0; }
 
 @media screen and (max-width: 900px) {
   .list-header, .file-row { grid-template-columns: minmax(220px, 1fr) 72px 80px 110px; }
@@ -257,11 +387,17 @@ button.name-cell { padding: 0; cursor: pointer; }
 
 @media screen and (max-width: 640px) {
   .native-folder-action { align-items: stretch; flex-direction: column; }
+  .section-heading { align-items: stretch; flex-direction: column; }
+  .section-heading .el-button { align-self: flex-start; }
   .path-bar { align-items: stretch; flex-direction: column; }
   .path-bar .el-input { width: 100%; }
   .list-header { display: none; }
   .file-list { border-radius: 10px; }
   .file-row { grid-template-columns: minmax(0, 1fr) auto; }
   .file-row > :nth-child(2), .file-row > :nth-child(3), .file-row > :nth-child(4) { display: none; }
+  .cache-list-header { display: none; }
+  .cache-list { border-radius: 0 0 10px 10px; }
+  .cache-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .cache-row > :nth-child(2), .cache-row > :nth-child(3) { display: none; }
 }
 </style>

@@ -16,12 +16,28 @@ function loadStoredSettings() {
 export const useAppSettingsStore = defineStore('appSettings', () => {
     const stored = loadStoredSettings();
     const bookshelfClickAction = ref(stored.bookshelfClickAction === 'detail' ? 'detail' : 'reader');
+    const readerThemeSyncPreference = ref(stored.readerThemeSyncPreference === 'sync' ||
+        stored.readerThemeSyncPreference === 'independent'
+        ? stored.readerThemeSyncPreference
+        : 'none');
+    const persistSettings = () => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            bookshelfClickAction: bookshelfClickAction.value,
+            readerThemeSyncPreference: readerThemeSyncPreference.value,
+        }));
+    };
     const setBookshelfClickAction = (action) => {
         bookshelfClickAction.value = action;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ bookshelfClickAction: action }));
+        persistSettings();
+    };
+    const setReaderThemeSyncPreference = (preference) => {
+        readerThemeSyncPreference.value = preference;
+        persistSettings();
     };
     return {
         bookshelfClickAction,
+        readerThemeSyncPreference,
         setBookshelfClickAction,
+        setReaderThemeSyncPreference,
     };
 });
