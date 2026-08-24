@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { getAllBookSources, saveBookSource, deleteBookSource as deleteBookSourceFromDB, importBookSources as importBookSourcesToDB, } from '@/storage/db';
+import { getAllBookSources, saveBookSource, deleteBookSource as deleteBookSourceFromDB, importBookSources as importBookSourcesToDB, getAllReplaceRules, saveReplaceRule, } from '@/storage/db';
 import { getTransport } from '@/source/transport';
 import { getDefaultUserAgent } from '@/source/engine/SourceEngine';
+import { applyRulesToSourceJson, ReplacementTimeoutError } from '@/utils/replaceRules';
 export const useBookSourceStore = defineStore('bookSource', () => {
     const sources = ref([]);
     const isLoading = ref(false);
@@ -45,7 +46,7 @@ export const useBookSourceStore = defineStore('bookSource', () => {
         }
         sources.value = [];
     }
-    async function importSources(jsonText) {
+    function parseSources(jsonText) {
         let parsed;
         const trimmed = jsonText.trim();
         try {
@@ -93,15 +94,53 @@ export const useBookSourceStore = defineStore('bookSource', () => {
         if (validList.length === 0) {
             throw new Error('数据中未包含有效的书源规则对象');
         }
+        return validList;
+    }
+    async function previewSourceImport(jsonText) {
+        const original = parseSources(jsonText);
+        const rules = await getAllReplaceRules();
+        const replaced = [];
+        const errors = [];
+        let changed = 0;
+        for (const source of original) {
+            try {
+                const result = await applyRulesToSourceJson(source, rules);
+                replaced.push(result);
+                if (JSON.stringify(result) !== JSON.stringify(source))
+                    changed += 1;
+            }
+            catch (error) {
+                if (error instanceof ReplacementTimeoutError) {
+                    await saveReplaceRule({ ...error.rule, isEnabled: false }).catch(console.error);
+                }
+                replaced.push(source);
+                errors.push({
+                    name: String(source.bookSourceName || source.bookSourceUrl || '未命名书源'),
+                    message: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        return { original, replaced, changed, errors };
+    }
+    async function importPreparedSources(preview, useReplacement) {
+        if (useReplacement && preview.errors.length > 0) {
+            throw new Error(`有 ${preview.errors.length} 条书源替换失败，请改为导入原始书源或修正规则`);
+        }
+        const validList = useReplacement ? preview.replaced : preview.original;
         const uniqueCount = await importBookSourcesToDB(validList);
         await loadSources();
         return {
             total: validList.length,
             unique: uniqueCount,
             duplicates: validList.length - uniqueCount,
+            changed: useReplacement ? preview.changed : 0,
+            replacementErrors: preview.errors.length,
         };
     }
-    async function importSourcesFromUrl(url) {
+    async function importSources(jsonText, useReplacement = true) {
+        return importPreparedSources(await previewSourceImport(jsonText), useReplacement);
+    }
+    async function fetchSourceText(url) {
         const targetUrl = url.trim();
         if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
             throw new Error('请输入以 http:// 或 https:// 开头的有效链接');
@@ -120,8 +159,13 @@ export const useBookSourceStore = defineStore('bookSource', () => {
         if (res.status < 200 || res.status >= 300) {
             throw new Error(`网络请求失败 (HTTP ${res.status})`);
         }
-        const text = new TextDecoder(res.charset || 'utf-8').decode(res.body);
-        return await importSources(text);
+        return new TextDecoder(res.charset || 'utf-8').decode(res.body);
+    }
+    async function previewSourceImportFromUrl(url) {
+        return previewSourceImport(await fetchSourceText(url));
+    }
+    async function importSourcesFromUrl(url, useReplacement = true) {
+        return importSources(await fetchSourceText(url), useReplacement);
     }
     async function toggleSource(bookSourceUrl) {
         const source = sources.value.find(s => s.bookSourceUrl === bookSourceUrl);
@@ -163,6 +207,9 @@ export const useBookSourceStore = defineStore('bookSource', () => {
         deleteAllSources,
         importSources,
         importSourcesFromUrl,
+        previewSourceImport,
+        previewSourceImportFromUrl,
+        importPreparedSources,
         toggleSource,
         setAllSourcesEnabled,
         getEnabledSources,

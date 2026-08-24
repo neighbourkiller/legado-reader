@@ -10,18 +10,27 @@ import ReadSettings from '@/components/ReadSettings.vue';
 import ChapterContent from '@/components/ChapterContent.vue';
 import NovelDownloadDialog from '@/components/NovelDownloadDialog.vue';
 import ReaderBookmarksDrawer from '@/components/ReaderBookmarksDrawer.vue';
+import ReaderSelectionMenu from '@/components/ReaderSelectionMenu.vue';
+import ReplaceRuleDialog from '@/components/ReplaceRuleDialog.vue';
+import HighlightEditDialog from '@/components/HighlightEditDialog.vue';
 import themeConfig from '@/config/themeConfig';
 import jump from '@/plugins/jump';
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow';
-import { addReadingTime, deleteBookmark, getBookmarksByBookId, getBookmarkAt, saveBookmark, } from '@/storage/db';
+import { addReadingTime, deleteBookmark, getBookmarksByBookId, getBookmarkAt, getAllReplaceRules, getHighlightsByBookId, saveBookmark, saveHighlight, saveReplaceRule, deleteHighlight, } from '@/storage/db';
 import { characterOffsetToParagraphIndex } from '@/backup/compat';
+import { useAppSettingsStore } from '@/stores/appSettings';
+import { captureReaderSelection, findTextRange, resolveTextAnchor } from '@/utils/textSelection';
+import { applyRulesToChapter, ReplacementTimeoutError } from '@/utils/replaceRules';
+import { openExternalUrl } from '@/platform/externalBrowser';
 import '@/assets/fonts/iconfont.css';
 const route = useRoute();
 const router = useRouter();
 const store = useReadingStore();
+const appSettings = useAppSettingsStore();
 const { isFullscreen, toggleFullscreen } = useFullscreen();
 const { currentBook, chapters, settings, miniInterface, popCataVisible, readSettingsVisible, } = storeToRefs(store);
 const chapterData = ref([]);
+const rawChapterData = ref([]);
 const chapterLoading = ref(false);
 const showToolBar = ref(false);
 const downloadDialogVisible = ref(false);
@@ -29,6 +38,19 @@ const bookmarkDrawerVisible = ref(false);
 const bookmarkSaving = ref(false);
 const bookmarksLoading = ref(false);
 const currentBookBookmarks = ref([]);
+const currentBookHighlights = ref([]);
+const replaceRules = ref([]);
+const renderRevision = ref(0);
+const selectionSnapshot = ref(null);
+const selectionMenuPosition = ref({
+    left: 0,
+    top: 0,
+    placement: 'above',
+});
+const replaceDialogVisible = ref(false);
+const pendingSelectionText = ref('');
+const highlightEditVisible = ref(false);
+const editingHighlight = ref(null);
 const bookmarkDrawerPosition = ref(null);
 const currentPositionKey = ref('');
 const bookmarkedPositionKey = ref('');
@@ -196,6 +218,19 @@ const loadCurrentBookBookmarks = async () => {
         bookmarksLoading.value = false;
     }
 };
+const loadCurrentBookHighlights = async () => {
+    if (!currentBook.value)
+        return;
+    try {
+        currentBookHighlights.value = await getHighlightsByBookId(currentBook.value.id);
+        renderRevision.value += 1;
+    }
+    catch (error) {
+        console.error('读取本书标注失败', error);
+        ElMessage.error('读取本书标注失败');
+    }
+};
+const highlightsForChapter = (chapterIndex) => currentBookHighlights.value.filter(item => item.chapterIndex === chapterIndex);
 const openBookmarksDrawer = async () => {
     const position = findReadingPosition();
     bookmarkDrawerPosition.value = position;
@@ -203,6 +238,7 @@ const openBookmarksDrawer = async () => {
     if (position)
         await syncBookmarkState(position);
     await loadCurrentBookBookmarks();
+    await loadCurrentBookHighlights();
 };
 const toggleBookmark = async (position) => {
     if (bookmarkSaving.value || !currentBook.value)
@@ -232,6 +268,8 @@ const toggleBookmark = async (position) => {
                 chapterPos: position.chapterPos,
                 chapterTitle,
                 content: position.content || chapterTitle,
+                startOffset: 0,
+                endOffset: 0,
                 createdAt: Date.now(),
             });
             bookmarkedPositionKey.value = key;
@@ -281,7 +319,20 @@ const jumpToBookmark = async (bookmark) => {
         ElMessage.warning('暂时无法定位到该书签');
         return;
     }
-    jump(target, { duration: 0 });
+    const body = document.querySelector(`[data-chapter-index="${bookmark.chapterIndex}"] [data-reader-body]`);
+    const hasPreciseAnchor = (bookmark.endOffset || 0) > (bookmark.startOffset || 0);
+    const resolvedAnchor = body && hasPreciseAnchor
+        ? resolveTextAnchor(body.textContent || '', bookmark.content, bookmark.startOffset || 0)
+        : null;
+    if (hasPreciseAnchor && !resolvedAnchor) {
+        ElMessage.warning('该书签受正文替换影响，当前无法定位');
+        return;
+    }
+    const exactRange = body && resolvedAnchor
+        ? findTextRange(body, resolvedAnchor.startOffset, resolvedAnchor.endOffset)
+        : null;
+    const exactTarget = exactRange?.startContainer.parentElement || target;
+    jump(exactTarget, { duration: 0 });
     await store.saveProgress(bookmark.chapterIndex, bookmark.chapterPos).catch(console.error);
     currentPositionKey.value = bookmark.id;
     bookmarkedPositionKey.value = bookmark.id;
@@ -299,6 +350,204 @@ const jumpToBookmark = async (bookmark) => {
         },
     }).catch(console.error);
 };
+const chapterBody = (chapterIndex) => document.querySelector(`[data-chapter-index="${chapterIndex}"] [data-reader-body]`);
+const resolvedHighlightRange = (highlight) => {
+    const body = chapterBody(highlight.chapterIndex);
+    if (!body)
+        return null;
+    const fullText = body.textContent || '';
+    const resolved = resolveTextAnchor(fullText, highlight.text, highlight.startOffset);
+    return resolved ? findTextRange(body, resolved.startOffset, resolved.endOffset) : null;
+};
+const jumpToHighlight = async (highlight) => {
+    bookmarkDrawerVisible.value = false;
+    if (!chapterData.value.some(chapter => chapter.index === highlight.chapterIndex)) {
+        const loaded = await getContent(highlight.chapterIndex, true);
+        if (!loaded)
+            return;
+    }
+    await nextTick();
+    const range = resolvedHighlightRange(highlight);
+    if (!range) {
+        ElMessage.warning('该标注受正文替换影响，当前无法定位');
+        return;
+    }
+    const target = range.startContainer.parentElement;
+    if (target)
+        jump(target, { duration: 0 });
+    await store.saveProgress(highlight.chapterIndex, highlight.startParagraph).catch(console.error);
+};
+const openHighlightEditor = (highlight) => {
+    editingHighlight.value = highlight;
+    highlightEditVisible.value = true;
+};
+const saveHighlightEdit = async (style, note) => {
+    if (!editingHighlight.value)
+        return;
+    const updated = { ...editingHighlight.value, style, note };
+    await saveHighlight(updated);
+    currentBookHighlights.value = currentBookHighlights.value.map(item => item.id === updated.id ? updated : item);
+    appSettings.setLastHighlightStyle(style);
+    highlightEditVisible.value = false;
+    editingHighlight.value = null;
+    renderRevision.value += 1;
+    ElMessage.success('标注已更新');
+};
+const removeHighlight = async (highlight) => {
+    try {
+        await ElMessageBox.confirm('确定删除这条标注吗？', '删除标注', {
+            confirmButtonText: '删除',
+            cancelButtonText: '取消',
+            type: 'warning',
+        });
+        await deleteHighlight(highlight.id);
+        currentBookHighlights.value = currentBookHighlights.value.filter(item => item.id !== highlight.id);
+        highlightEditVisible.value = false;
+        editingHighlight.value = null;
+        renderRevision.value += 1;
+        ElMessage.success('标注已删除');
+    }
+    catch (error) {
+        if (error !== 'cancel' && error !== 'close') {
+            console.error('删除标注失败', error);
+            ElMessage.error('删除标注失败');
+        }
+    }
+};
+const clearSelectionMenu = (clearNativeSelection = true) => {
+    selectionSnapshot.value = null;
+    if (clearNativeSelection)
+        window.getSelection()?.removeAllRanges();
+};
+const showSelectionMenu = () => {
+    if (!supportsBookDetail || replaceDialogVisible.value || highlightEditVisible.value)
+        return;
+    const snapshot = captureReaderSelection(window.getSelection());
+    if (!snapshot) {
+        selectionSnapshot.value = null;
+        return;
+    }
+    const menuWidth = 322;
+    const left = Math.min(window.innerWidth - menuWidth / 2 - 8, Math.max(menuWidth / 2 + 8, snapshot.rect.left + snapshot.rect.width / 2));
+    const showAbove = snapshot.rect.top >= 58;
+    selectionMenuPosition.value = {
+        left,
+        top: showAbove ? snapshot.rect.top - 8 : snapshot.rect.bottom + 8,
+        placement: showAbove ? 'above' : 'below',
+    };
+    selectionSnapshot.value = snapshot;
+};
+const onSelectionPointerUp = (event) => {
+    if (event.target?.closest('.reader-selection-menu'))
+        return;
+    window.setTimeout(showSelectionMenu, 0);
+};
+const copySelection = async () => {
+    const text = selectionSnapshot.value?.text;
+    if (!text)
+        return;
+    try {
+        await navigator.clipboard.writeText(text);
+        clearSelectionMenu();
+        ElMessage.success('已复制');
+    }
+    catch (error) {
+        console.error('复制失败', error);
+        ElMessage.error('复制失败，请检查系统剪贴板权限');
+    }
+};
+const openReplaceDialog = () => {
+    const snapshot = selectionSnapshot.value;
+    if (!snapshot?.anchor)
+        return;
+    pendingSelectionText.value = snapshot.text;
+    replaceDialogVisible.value = true;
+    clearSelectionMenu();
+};
+const bookmarkSelection = async () => {
+    const anchor = selectionSnapshot.value?.anchor;
+    if (!anchor || !currentBook.value)
+        return;
+    const id = `${currentBook.value.id}:${anchor.chapterIndex}:${anchor.startParagraph}:${anchor.startOffset}`;
+    const chapterTitle = chapters.value[anchor.chapterIndex]?.title || `第${anchor.chapterIndex + 1}章`;
+    try {
+        await saveBookmark({
+            id,
+            bookId: currentBook.value.id,
+            bookName: currentBook.value.name,
+            bookAuthor: currentBook.value.author,
+            chapterIndex: anchor.chapterIndex,
+            chapterPos: anchor.startParagraph,
+            startOffset: anchor.startOffset,
+            endOffset: anchor.endOffset,
+            chapterTitle,
+            content: anchor.text,
+            createdAt: Date.now(),
+        });
+        await loadCurrentBookBookmarks();
+        clearSelectionMenu();
+        ElMessage.success('书签已添加');
+    }
+    catch (error) {
+        console.error('添加精确书签失败', error);
+        ElMessage.error('书签添加失败');
+    }
+};
+const highlightSelection = async (style) => {
+    const anchor = selectionSnapshot.value?.anchor;
+    if (!anchor || !currentBook.value)
+        return;
+    const chapter = chapters.value[anchor.chapterIndex];
+    const record = {
+        id: `${currentBook.value.id}:${anchor.chapterIndex}:${anchor.startOffset}:${Date.now()}`,
+        bookId: currentBook.value.id,
+        bookName: currentBook.value.name,
+        bookAuthor: currentBook.value.author,
+        bookUrl: currentBook.value.bookUrl,
+        chapterUrl: chapter?.href,
+        chapterIndex: anchor.chapterIndex,
+        chapterTitle: chapter?.title || `第${anchor.chapterIndex + 1}章`,
+        startOffset: anchor.startOffset,
+        endOffset: anchor.endOffset,
+        startParagraph: anchor.startParagraph,
+        endParagraph: anchor.endParagraph,
+        text: anchor.text,
+        style,
+        createdAt: Date.now(),
+    };
+    try {
+        await saveHighlight(record);
+        currentBookHighlights.value.push(record);
+        appSettings.setLastHighlightStyle(style);
+        clearSelectionMenu();
+        renderRevision.value += 1;
+        ElMessage.success('已添加高亮');
+    }
+    catch (error) {
+        console.error('添加高亮失败', error);
+        ElMessage.error('高亮保存失败');
+    }
+};
+const searchSelection = async () => {
+    const text = selectionSnapshot.value?.text.trim();
+    if (!text)
+        return;
+    const directUrl = /^https?:\/\/\S+$/i.test(text) ? text : null;
+    const templates = {
+        bing: 'https://www.bing.com/search?q=',
+        baidu: 'https://www.baidu.com/s?wd=',
+        google: 'https://www.google.com/search?q=',
+    };
+    const url = directUrl || `${templates[appSettings.searchEngine]}${encodeURIComponent(text)}`;
+    try {
+        await openExternalUrl(url);
+        clearSelectionMenu();
+    }
+    catch (error) {
+        console.error('打开系统浏览器失败', error);
+        ElMessage.error('无法打开系统默认浏览器，选区已保留');
+    }
+};
 const flushReadingSession = async (continueSession = document.visibilityState === 'visible') => {
     if (!supportsBookDetail || !currentBook.value || readingSessionStartedAt === 0)
         return;
@@ -314,6 +563,43 @@ const handleWrapperClick = () => {
         showToolBar.value = !showToolBar.value;
     }
 };
+const replaceContext = () => ({
+    bookName: currentBook.value?.name || '',
+    sourceUrl: currentBook.value?.sourceUrl,
+});
+const processChapterPayload = async (payload) => {
+    try {
+        return await applyRulesToChapter(payload, replaceRules.value, replaceContext());
+    }
+    catch (error) {
+        if (error instanceof ReplacementTimeoutError) {
+            const disabled = { ...error.rule, isEnabled: false };
+            await saveReplaceRule(disabled).catch(console.error);
+            replaceRules.value = replaceRules.value.map(rule => rule.id === disabled.id ? disabled : rule);
+            ElMessage.error(`替换规则“${disabled.name}”执行超时，已自动停用`);
+            return applyRulesToChapter(payload, replaceRules.value, replaceContext());
+        }
+        throw error;
+    }
+};
+const reprocessLoadedChapters = async () => {
+    const generation = contentGeneration;
+    const processed = await Promise.all(rawChapterData.value.map(processChapterPayload));
+    if (generation !== contentGeneration)
+        return;
+    chapterData.value = processed;
+    renderRevision.value += 1;
+};
+const handleReplaceRuleSaved = async () => {
+    replaceRules.value = await getAllReplaceRules();
+    try {
+        await reprocessLoadedChapters();
+    }
+    catch (error) {
+        console.error('重新处理已加载正文失败', error);
+        ElMessage.error(error instanceof Error ? error.message : '正文重新处理失败');
+    }
+};
 // 获取章节内容
 const getContent = async (index, reloadChapter = true, forceRefresh = false) => {
     if (index < 0 || index >= chapters.value.length)
@@ -323,21 +609,26 @@ const getContent = async (index, reloadChapter = true, forceRefresh = false) => 
     if (reloadChapter && !forceRefresh) {
         window.scrollTo(0, 0);
         chapterData.value = [];
+        rawChapterData.value = [];
         await store.saveProgress(index).catch(console.error);
     }
     else if (!reloadChapter) {
         chapterData.value = trimChapterWindowBeforeAppend(chapterData.value);
+        rawChapterData.value = trimChapterWindowBeforeAppend(rawChapterData.value);
     }
     try {
         const payload = await store.fetchChapter(index, { forceRefresh });
         if (generation !== contentGeneration)
             return false;
         if (payload) {
+            const processedPayload = await processChapterPayload(payload);
             if (forceRefresh) {
-                chapterData.value = [payload];
+                rawChapterData.value = [payload];
+                chapterData.value = [processedPayload];
             }
             else {
-                chapterData.value.push(payload);
+                rawChapterData.value.push(payload);
+                chapterData.value.push(processedPayload);
             }
             if (reloadChapter && store.currentBook) {
                 store.currentBook.currentChapter = index;
@@ -440,6 +731,11 @@ const toNextChapter = async () => {
 // 键盘事件
 let canJump = true;
 const handleKeyPress = (event) => {
+    if (event.key === 'Escape' && selectionSnapshot.value) {
+        event.stopPropagation();
+        clearSelectionMenu();
+        return;
+    }
     if (!canJump)
         return;
     switch (event.key) {
@@ -508,12 +804,16 @@ const updateReadingProgress = () => {
         syncBookmarkState(position).catch(console.error);
 };
 const onScroll = () => {
+    if (selectionSnapshot.value)
+        clearSelectionMenu();
     if (progressFrame === null) {
         progressFrame = window.requestAnimationFrame(updateReadingProgress);
     }
 };
 // 窗口尺寸变化
 const onResize = () => {
+    if (selectionSnapshot.value)
+        clearSelectionMenu();
     store.setMiniInterface(window.innerWidth < 776);
     if (!store.miniInterface) {
         if (settings.value.readWidth < 640)
@@ -551,6 +851,8 @@ onMounted(async () => {
     try {
         await store.loadBook(bookId);
         if (supportsBookDetail) {
+            replaceRules.value = await getAllReplaceRules().catch(() => []);
+            await loadCurrentBookHighlights();
             await addReadingTime(currentBook.value, 0).catch(console.error);
             readingSessionStartedAt = Date.now();
         }
@@ -599,6 +901,7 @@ onMounted(async () => {
         window.addEventListener('keyup', handleKeyPress);
         window.addEventListener('keydown', ignoreKeyPress);
         window.addEventListener('scroll', onScroll, { passive: true });
+        document.addEventListener('pointerup', onSelectionPointerUp);
         document.addEventListener('visibilitychange', onVisibilityChange);
         scrollObserver = new IntersectionObserver(onReachBottom, {
             rootMargin: '-100% 0% 20% 0%',
@@ -619,6 +922,7 @@ onUnmounted(() => {
     window.removeEventListener('keydown', ignoreKeyPress);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('scroll', onScroll);
+    document.removeEventListener('pointerup', onSelectionPointerUp);
     document.removeEventListener('visibilitychange', onVisibilityChange);
     if (progressFrame !== null)
         window.cancelAnimationFrame(progressFrame);
@@ -630,6 +934,7 @@ onUnmounted(() => {
 });
 onBeforeRouteLeave(() => {
     window.removeEventListener('keyup', handleKeyPress);
+    document.removeEventListener('pointerup', onSelectionPointerUp);
     if (currentBook.value) {
         store.saveProgress().catch(console.error);
         flushReadingSession(false).catch(console.error);
@@ -1054,6 +1359,8 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
     const __VLS_70 = ChapterContent;
     // @ts-ignore
     const __VLS_71 = __VLS_asFunctionalComponent1(__VLS_70, new __VLS_70({
+        ...{ 'onHighlightClick': {} },
+        key: (`${data.index}:${__VLS_ctx.renderRevision}`),
         contents: (data.content),
         title: (data.title),
         format: (data.format),
@@ -1061,8 +1368,11 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         fontSize: (__VLS_ctx.fontSizeStr),
         fontFamily: (__VLS_ctx.fontFamilyStr),
         chapterIndex: (data.index),
+        highlights: (__VLS_ctx.highlightsForChapter(data.index)),
     }));
     const __VLS_72 = __VLS_71({
+        ...{ 'onHighlightClick': {} },
+        key: (`${data.index}:${__VLS_ctx.renderRevision}`),
         contents: (data.content),
         title: (data.title),
         format: (data.format),
@@ -1070,9 +1380,17 @@ for (const [data] of __VLS_vFor((__VLS_ctx.chapterData))) {
         fontSize: (__VLS_ctx.fontSizeStr),
         fontFamily: (__VLS_ctx.fontFamilyStr),
         chapterIndex: (data.index),
+        highlights: (__VLS_ctx.highlightsForChapter(data.index)),
     }, ...__VLS_functionalComponentArgsRest(__VLS_71));
+    let __VLS_75;
+    const __VLS_76 = {
+        /** @type {typeof __VLS_75.highlightClick} */
+        onHighlightClick: (__VLS_ctx.openHighlightEditor),
+    };
+    var __VLS_73;
+    var __VLS_74;
     // @ts-ignore
-    [rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, settings, fontSizeStr, fontFamilyStr,];
+    [rightBarTheme, toPreChapter, isFirstChapter, miniInterface, miniInterface, toNextChapter, isLastChapter, chapterTheme, chapterData, renderRevision, settings, fontSizeStr, fontFamilyStr, highlightsForChapter, openHighlightEditor,];
 }
 if (__VLS_ctx.infiniteLoading) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
@@ -1086,56 +1404,182 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ref: "bottomRef",
 });
 /** @type {__VLS_StyleScopedClasses['bottom-bar']} */ ;
-const __VLS_75 = NovelDownloadDialog;
+const __VLS_77 = NovelDownloadDialog;
 // @ts-ignore
-const __VLS_76 = __VLS_asFunctionalComponent1(__VLS_75, new __VLS_75({
+const __VLS_78 = __VLS_asFunctionalComponent1(__VLS_77, new __VLS_77({
     modelValue: (__VLS_ctx.downloadDialogVisible),
     book: (__VLS_ctx.currentBook),
     chapters: (__VLS_ctx.chapters),
 }));
-const __VLS_77 = __VLS_76({
+const __VLS_79 = __VLS_78({
     modelValue: (__VLS_ctx.downloadDialogVisible),
     book: (__VLS_ctx.currentBook),
     chapters: (__VLS_ctx.chapters),
-}, ...__VLS_functionalComponentArgsRest(__VLS_76));
-const __VLS_80 = ReaderBookmarksDrawer;
+}, ...__VLS_functionalComponentArgsRest(__VLS_78));
+const __VLS_82 = ReaderBookmarksDrawer;
 // @ts-ignore
-const __VLS_81 = __VLS_asFunctionalComponent1(__VLS_80, new __VLS_80({
+const __VLS_83 = __VLS_asFunctionalComponent1(__VLS_82, new __VLS_82({
     ...{ 'onToggleCurrent': {} },
     ...{ 'onJump': {} },
     ...{ 'onDelete': {} },
+    ...{ 'onHighlightJump': {} },
+    ...{ 'onHighlightEdit': {} },
+    ...{ 'onHighlightDelete': {} },
     modelValue: (__VLS_ctx.bookmarkDrawerVisible),
     bookmarks: (__VLS_ctx.currentBookBookmarks),
+    highlights: (__VLS_ctx.currentBookHighlights),
     loading: (__VLS_ctx.bookmarksLoading),
     saving: (__VLS_ctx.bookmarkSaving),
     currentPositionBookmarked: (__VLS_ctx.isCurrentPositionBookmarked),
 }));
-const __VLS_82 = __VLS_81({
+const __VLS_84 = __VLS_83({
     ...{ 'onToggleCurrent': {} },
     ...{ 'onJump': {} },
     ...{ 'onDelete': {} },
+    ...{ 'onHighlightJump': {} },
+    ...{ 'onHighlightEdit': {} },
+    ...{ 'onHighlightDelete': {} },
     modelValue: (__VLS_ctx.bookmarkDrawerVisible),
     bookmarks: (__VLS_ctx.currentBookBookmarks),
+    highlights: (__VLS_ctx.currentBookHighlights),
     loading: (__VLS_ctx.bookmarksLoading),
     saving: (__VLS_ctx.bookmarkSaving),
     currentPositionBookmarked: (__VLS_ctx.isCurrentPositionBookmarked),
-}, ...__VLS_functionalComponentArgsRest(__VLS_81));
-let __VLS_85;
-const __VLS_86 = {
-    /** @type {typeof __VLS_85.toggleCurrent} */
+}, ...__VLS_functionalComponentArgsRest(__VLS_83));
+let __VLS_87;
+const __VLS_88 = {
+    /** @type {typeof __VLS_87.toggleCurrent} */
     onToggleCurrent: (__VLS_ctx.toggleCurrentBookmark),
 };
-const __VLS_87 = {
-    /** @type {typeof __VLS_85.jump} */
+const __VLS_89 = {
+    /** @type {typeof __VLS_87.jump} */
     onJump: (__VLS_ctx.jumpToBookmark),
 };
-const __VLS_88 = {
-    /** @type {typeof __VLS_85.delete} */
+const __VLS_90 = {
+    /** @type {typeof __VLS_87.delete} */
     onDelete: (__VLS_ctx.removeBookmarkFromDrawer),
 };
-var __VLS_83;
-var __VLS_84;
+const __VLS_91 = {
+    /** @type {typeof __VLS_87.highlightJump} */
+    onHighlightJump: (__VLS_ctx.jumpToHighlight),
+};
+const __VLS_92 = {
+    /** @type {typeof __VLS_87.highlightEdit} */
+    onHighlightEdit: (__VLS_ctx.openHighlightEditor),
+};
+const __VLS_93 = {
+    /** @type {typeof __VLS_87.highlightDelete} */
+    onHighlightDelete: (__VLS_ctx.removeHighlight),
+};
+var __VLS_85;
+var __VLS_86;
+if (__VLS_ctx.selectionSnapshot) {
+    const __VLS_94 = ReaderSelectionMenu;
+    // @ts-ignore
+    const __VLS_95 = __VLS_asFunctionalComponent1(__VLS_94, new __VLS_94({
+        ...{ 'onReplace': {} },
+        ...{ 'onCopy': {} },
+        ...{ 'onBookmark': {} },
+        ...{ 'onHighlight': {} },
+        ...{ 'onBrowser': {} },
+        ...{ class: "reader-selection-menu" },
+        left: (__VLS_ctx.selectionMenuPosition.left),
+        top: (__VLS_ctx.selectionMenuPosition.top),
+        placement: (__VLS_ctx.selectionMenuPosition.placement),
+        selectedStyle: (__VLS_ctx.appSettings.lastHighlightStyle),
+        anchoredActionsDisabled: (!__VLS_ctx.selectionSnapshot.anchor),
+    }));
+    const __VLS_96 = __VLS_95({
+        ...{ 'onReplace': {} },
+        ...{ 'onCopy': {} },
+        ...{ 'onBookmark': {} },
+        ...{ 'onHighlight': {} },
+        ...{ 'onBrowser': {} },
+        ...{ class: "reader-selection-menu" },
+        left: (__VLS_ctx.selectionMenuPosition.left),
+        top: (__VLS_ctx.selectionMenuPosition.top),
+        placement: (__VLS_ctx.selectionMenuPosition.placement),
+        selectedStyle: (__VLS_ctx.appSettings.lastHighlightStyle),
+        anchoredActionsDisabled: (!__VLS_ctx.selectionSnapshot.anchor),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_95));
+    let __VLS_99;
+    const __VLS_100 = {
+        /** @type {typeof __VLS_99.replace} */
+        onReplace: (__VLS_ctx.openReplaceDialog),
+    };
+    const __VLS_101 = {
+        /** @type {typeof __VLS_99.copy} */
+        onCopy: (__VLS_ctx.copySelection),
+    };
+    const __VLS_102 = {
+        /** @type {typeof __VLS_99.bookmark} */
+        onBookmark: (__VLS_ctx.bookmarkSelection),
+    };
+    const __VLS_103 = {
+        /** @type {typeof __VLS_99.highlight} */
+        onHighlight: (__VLS_ctx.highlightSelection),
+    };
+    const __VLS_104 = {
+        /** @type {typeof __VLS_99.browser} */
+        onBrowser: (__VLS_ctx.searchSelection),
+    };
+    /** @type {__VLS_StyleScopedClasses['reader-selection-menu']} */ ;
+    var __VLS_97;
+    var __VLS_98;
+}
+const __VLS_105 = ReplaceRuleDialog;
 // @ts-ignore
-[downloadDialogVisible, currentBook, isCurrentPositionBookmarked, infiniteLoading, chapters, bookmarkDrawerVisible, currentBookBookmarks, bookmarksLoading, bookmarkSaving, toggleCurrentBookmark, jumpToBookmark, removeBookmarkFromDrawer,];
+const __VLS_106 = __VLS_asFunctionalComponent1(__VLS_105, new __VLS_105({
+    ...{ 'onSaved': {} },
+    modelValue: (__VLS_ctx.replaceDialogVisible),
+    selectionText: (__VLS_ctx.pendingSelectionText),
+    bookName: (__VLS_ctx.currentBook?.name),
+    sourceUrl: (__VLS_ctx.currentBook?.sourceUrl),
+}));
+const __VLS_107 = __VLS_106({
+    ...{ 'onSaved': {} },
+    modelValue: (__VLS_ctx.replaceDialogVisible),
+    selectionText: (__VLS_ctx.pendingSelectionText),
+    bookName: (__VLS_ctx.currentBook?.name),
+    sourceUrl: (__VLS_ctx.currentBook?.sourceUrl),
+}, ...__VLS_functionalComponentArgsRest(__VLS_106));
+let __VLS_110;
+const __VLS_111 = {
+    /** @type {typeof __VLS_110.saved} */
+    onSaved: (__VLS_ctx.handleReplaceRuleSaved),
+};
+var __VLS_108;
+var __VLS_109;
+const __VLS_112 = HighlightEditDialog;
+// @ts-ignore
+const __VLS_113 = __VLS_asFunctionalComponent1(__VLS_112, new __VLS_112({
+    ...{ 'onSave': {} },
+    ...{ 'onDelete': {} },
+    modelValue: (__VLS_ctx.highlightEditVisible),
+    highlight: (__VLS_ctx.editingHighlight),
+}));
+const __VLS_114 = __VLS_113({
+    ...{ 'onSave': {} },
+    ...{ 'onDelete': {} },
+    modelValue: (__VLS_ctx.highlightEditVisible),
+    highlight: (__VLS_ctx.editingHighlight),
+}, ...__VLS_functionalComponentArgsRest(__VLS_113));
+let __VLS_117;
+const __VLS_118 = {
+    /** @type {typeof __VLS_117.save} */
+    onSave: (__VLS_ctx.saveHighlightEdit),
+};
+const __VLS_119 = {
+    /** @type {typeof __VLS_117.delete} */
+    onDelete: (...[$event]) => {
+        return (__VLS_ctx.editingHighlight && __VLS_ctx.removeHighlight(__VLS_ctx.editingHighlight));
+        // @ts-ignore
+        [downloadDialogVisible, currentBook, currentBook, currentBook, isCurrentPositionBookmarked, openHighlightEditor, infiniteLoading, chapters, bookmarkDrawerVisible, currentBookBookmarks, currentBookHighlights, bookmarksLoading, bookmarkSaving, toggleCurrentBookmark, jumpToBookmark, removeBookmarkFromDrawer, jumpToHighlight, removeHighlight, removeHighlight, selectionSnapshot, selectionSnapshot, selectionMenuPosition, selectionMenuPosition, selectionMenuPosition, appSettings, openReplaceDialog, copySelection, bookmarkSelection, highlightSelection, searchSelection, replaceDialogVisible, pendingSelectionText, handleReplaceRuleSaved, highlightEditVisible, editingHighlight, editingHighlight, editingHighlight, saveHighlightEdit,];
+    },
+};
+var __VLS_115;
+var __VLS_116;
+// @ts-ignore
+[];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

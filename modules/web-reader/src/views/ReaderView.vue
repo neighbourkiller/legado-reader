@@ -144,6 +144,7 @@
           :data-chapter-index="data.index"
         >
           <ChapterContent
+            :key="`${data.index}:${renderRevision}`"
             :contents="data.content"
             :title="data.title"
             :format="data.format"
@@ -151,6 +152,8 @@
             :fontSize="fontSizeStr"
             :fontFamily="fontFamilyStr"
             :chapterIndex="data.index"
+            :highlights="highlightsForChapter(data.index)"
+            @highlight-click="openHighlightEditor"
           />
         </div>
 
@@ -169,12 +172,46 @@
     <ReaderBookmarksDrawer
       v-model="bookmarkDrawerVisible"
       :bookmarks="currentBookBookmarks"
+      :highlights="currentBookHighlights"
       :loading="bookmarksLoading"
       :saving="bookmarkSaving"
       :current-position-bookmarked="isCurrentPositionBookmarked"
       @toggle-current="toggleCurrentBookmark"
       @jump="jumpToBookmark"
       @delete="removeBookmarkFromDrawer"
+      @highlight-jump="jumpToHighlight"
+      @highlight-edit="openHighlightEditor"
+      @highlight-delete="removeHighlight"
+    />
+
+    <ReaderSelectionMenu
+      v-if="selectionSnapshot"
+      class="reader-selection-menu"
+      :left="selectionMenuPosition.left"
+      :top="selectionMenuPosition.top"
+      :placement="selectionMenuPosition.placement"
+      :selected-style="appSettings.lastHighlightStyle"
+      :anchored-actions-disabled="!selectionSnapshot.anchor"
+      @replace="openReplaceDialog"
+      @copy="copySelection"
+      @bookmark="bookmarkSelection"
+      @highlight="highlightSelection"
+      @browser="searchSelection"
+    />
+
+    <ReplaceRuleDialog
+      v-model="replaceDialogVisible"
+      :selection-text="pendingSelectionText"
+      :book-name="currentBook?.name"
+      :source-url="currentBook?.sourceUrl"
+      @saved="handleReplaceRuleSaved"
+    />
+
+    <HighlightEditDialog
+      v-model="highlightEditVisible"
+      :highlight="editingHighlight"
+      @save="saveHighlightEdit"
+      @delete="editingHighlight && removeHighlight(editingHighlight)"
     />
   </div>
 </template>
@@ -197,6 +234,9 @@ import ReadSettings from '@/components/ReadSettings.vue'
 import ChapterContent from '@/components/ChapterContent.vue'
 import NovelDownloadDialog from '@/components/NovelDownloadDialog.vue'
 import ReaderBookmarksDrawer from '@/components/ReaderBookmarksDrawer.vue'
+import ReaderSelectionMenu from '@/components/ReaderSelectionMenu.vue'
+import ReplaceRuleDialog from '@/components/ReplaceRuleDialog.vue'
+import HighlightEditDialog from '@/components/HighlightEditDialog.vue'
 import themeConfig from '@/config/themeConfig'
 import jump from '@/plugins/jump'
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
@@ -205,15 +245,31 @@ import {
   deleteBookmark,
   getBookmarksByBookId,
   getBookmarkAt,
+  getAllReplaceRules,
+  getHighlightsByBookId,
   saveBookmark,
+  saveHighlight,
+  saveReplaceRule,
+  deleteHighlight,
 } from '@/storage/db'
-import type { BookmarkRecord } from '@/storage/db'
+import type {
+  BookmarkRecord,
+  HighlightRecord,
+  HighlightStyleRecord,
+  ReplaceRuleRecord,
+} from '@/storage/db'
 import { characterOffsetToParagraphIndex } from '@/backup/compat'
+import { useAppSettingsStore } from '@/stores/appSettings'
+import { captureReaderSelection, findTextRange, resolveTextAnchor } from '@/utils/textSelection'
+import type { ReaderSelectionSnapshot } from '@/utils/textSelection'
+import { applyRulesToChapter, ReplacementTimeoutError } from '@/utils/replaceRules'
+import { openExternalUrl } from '@/platform/externalBrowser'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
 const router = useRouter()
 const store = useReadingStore()
+const appSettings = useAppSettingsStore()
 const { isFullscreen, toggleFullscreen } = useFullscreen()
 
 const {
@@ -226,6 +282,7 @@ const {
 } = storeToRefs(store)
 
 const chapterData = ref<ChapterPayload[]>([])
+const rawChapterData = ref<ChapterPayload[]>([])
 const chapterLoading = ref(false)
 const showToolBar = ref(false)
 const downloadDialogVisible = ref(false)
@@ -233,6 +290,19 @@ const bookmarkDrawerVisible = ref(false)
 const bookmarkSaving = ref(false)
 const bookmarksLoading = ref(false)
 const currentBookBookmarks = ref<BookmarkRecord[]>([])
+const currentBookHighlights = ref<HighlightRecord[]>([])
+const replaceRules = ref<ReplaceRuleRecord[]>([])
+const renderRevision = ref(0)
+const selectionSnapshot = ref<ReaderSelectionSnapshot | null>(null)
+const selectionMenuPosition = ref<{ left: number; top: number; placement: 'above' | 'below' }>({
+  left: 0,
+  top: 0,
+  placement: 'above',
+})
+const replaceDialogVisible = ref(false)
+const pendingSelectionText = ref('')
+const highlightEditVisible = ref(false)
+const editingHighlight = ref<HighlightRecord | null>(null)
 const bookmarkDrawerPosition = ref<ReadingPosition | null>(null)
 const currentPositionKey = ref('')
 const bookmarkedPositionKey = ref('')
@@ -439,12 +509,27 @@ const loadCurrentBookBookmarks = async () => {
   }
 }
 
+const loadCurrentBookHighlights = async () => {
+  if (!currentBook.value) return
+  try {
+    currentBookHighlights.value = await getHighlightsByBookId(currentBook.value.id)
+    renderRevision.value += 1
+  } catch (error) {
+    console.error('读取本书标注失败', error)
+    ElMessage.error('读取本书标注失败')
+  }
+}
+
+const highlightsForChapter = (chapterIndex: number) =>
+  currentBookHighlights.value.filter(item => item.chapterIndex === chapterIndex)
+
 const openBookmarksDrawer = async () => {
   const position = findReadingPosition()
   bookmarkDrawerPosition.value = position
   bookmarkDrawerVisible.value = true
   if (position) await syncBookmarkState(position)
   await loadCurrentBookBookmarks()
+  await loadCurrentBookHighlights()
 }
 
 const toggleBookmark = async (position: ReadingPosition | null) => {
@@ -479,6 +564,8 @@ const toggleBookmark = async (position: ReadingPosition | null) => {
         chapterPos: position.chapterPos,
         chapterTitle,
         content: position.content || chapterTitle,
+        startOffset: 0,
+        endOffset: 0,
         createdAt: Date.now(),
       })
       bookmarkedPositionKey.value = key
@@ -528,7 +615,22 @@ const jumpToBookmark = async (bookmark: BookmarkRecord) => {
     ElMessage.warning('暂时无法定位到该书签')
     return
   }
-  jump(target, { duration: 0 })
+  const body = document.querySelector<HTMLElement>(
+    `[data-chapter-index="${bookmark.chapterIndex}"] [data-reader-body]`,
+  )
+  const hasPreciseAnchor = (bookmark.endOffset || 0) > (bookmark.startOffset || 0)
+  const resolvedAnchor = body && hasPreciseAnchor
+    ? resolveTextAnchor(body.textContent || '', bookmark.content, bookmark.startOffset || 0)
+    : null
+  if (hasPreciseAnchor && !resolvedAnchor) {
+    ElMessage.warning('该书签受正文替换影响，当前无法定位')
+    return
+  }
+  const exactRange = body && resolvedAnchor
+    ? findTextRange(body, resolvedAnchor.startOffset, resolvedAnchor.endOffset)
+    : null
+  const exactTarget = exactRange?.startContainer.parentElement || target
+  jump(exactTarget, { duration: 0 })
   await store.saveProgress(bookmark.chapterIndex, bookmark.chapterPos).catch(console.error)
   currentPositionKey.value = bookmark.id
   bookmarkedPositionKey.value = bookmark.id
@@ -545,6 +647,205 @@ const jumpToBookmark = async (bookmark: BookmarkRecord) => {
       pos: String(bookmark.chapterPos),
     },
   }).catch(console.error)
+}
+
+const chapterBody = (chapterIndex: number) => document.querySelector<HTMLElement>(
+  `[data-chapter-index="${chapterIndex}"] [data-reader-body]`,
+)
+
+const resolvedHighlightRange = (highlight: HighlightRecord): Range | null => {
+  const body = chapterBody(highlight.chapterIndex)
+  if (!body) return null
+  const fullText = body.textContent || ''
+  const resolved = resolveTextAnchor(fullText, highlight.text, highlight.startOffset)
+  return resolved ? findTextRange(body, resolved.startOffset, resolved.endOffset) : null
+}
+
+const jumpToHighlight = async (highlight: HighlightRecord) => {
+  bookmarkDrawerVisible.value = false
+  if (!chapterData.value.some(chapter => chapter.index === highlight.chapterIndex)) {
+    const loaded = await getContent(highlight.chapterIndex, true)
+    if (!loaded) return
+  }
+  await nextTick()
+  const range = resolvedHighlightRange(highlight)
+  if (!range) {
+    ElMessage.warning('该标注受正文替换影响，当前无法定位')
+    return
+  }
+  const target = range.startContainer.parentElement
+  if (target) jump(target, { duration: 0 })
+  await store.saveProgress(highlight.chapterIndex, highlight.startParagraph).catch(console.error)
+}
+
+const openHighlightEditor = (highlight: HighlightRecord) => {
+  editingHighlight.value = highlight
+  highlightEditVisible.value = true
+}
+
+const saveHighlightEdit = async (style: HighlightStyleRecord, note: string) => {
+  if (!editingHighlight.value) return
+  const updated = { ...editingHighlight.value, style, note }
+  await saveHighlight(updated)
+  currentBookHighlights.value = currentBookHighlights.value.map(item =>
+    item.id === updated.id ? updated : item,
+  )
+  appSettings.setLastHighlightStyle(style)
+  highlightEditVisible.value = false
+  editingHighlight.value = null
+  renderRevision.value += 1
+  ElMessage.success('标注已更新')
+}
+
+const removeHighlight = async (highlight: HighlightRecord) => {
+  try {
+    await ElMessageBox.confirm('确定删除这条标注吗？', '删除标注', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await deleteHighlight(highlight.id)
+    currentBookHighlights.value = currentBookHighlights.value.filter(item => item.id !== highlight.id)
+    highlightEditVisible.value = false
+    editingHighlight.value = null
+    renderRevision.value += 1
+    ElMessage.success('标注已删除')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      console.error('删除标注失败', error)
+      ElMessage.error('删除标注失败')
+    }
+  }
+}
+
+const clearSelectionMenu = (clearNativeSelection = true) => {
+  selectionSnapshot.value = null
+  if (clearNativeSelection) window.getSelection()?.removeAllRanges()
+}
+
+const showSelectionMenu = () => {
+  if (!supportsBookDetail || replaceDialogVisible.value || highlightEditVisible.value) return
+  const snapshot = captureReaderSelection(window.getSelection())
+  if (!snapshot) {
+    selectionSnapshot.value = null
+    return
+  }
+  const menuWidth = 322
+  const left = Math.min(window.innerWidth - menuWidth / 2 - 8, Math.max(menuWidth / 2 + 8, snapshot.rect.left + snapshot.rect.width / 2))
+  const showAbove = snapshot.rect.top >= 58
+  selectionMenuPosition.value = {
+    left,
+    top: showAbove ? snapshot.rect.top - 8 : snapshot.rect.bottom + 8,
+    placement: showAbove ? 'above' : 'below',
+  }
+  selectionSnapshot.value = snapshot
+}
+
+const onSelectionPointerUp = (event: PointerEvent) => {
+  if ((event.target as Element | null)?.closest('.reader-selection-menu')) return
+  window.setTimeout(showSelectionMenu, 0)
+}
+
+const copySelection = async () => {
+  const text = selectionSnapshot.value?.text
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    clearSelectionMenu()
+    ElMessage.success('已复制')
+  } catch (error) {
+    console.error('复制失败', error)
+    ElMessage.error('复制失败，请检查系统剪贴板权限')
+  }
+}
+
+const openReplaceDialog = () => {
+  const snapshot = selectionSnapshot.value
+  if (!snapshot?.anchor) return
+  pendingSelectionText.value = snapshot.text
+  replaceDialogVisible.value = true
+  clearSelectionMenu()
+}
+
+const bookmarkSelection = async () => {
+  const anchor = selectionSnapshot.value?.anchor
+  if (!anchor || !currentBook.value) return
+  const id = `${currentBook.value.id}:${anchor.chapterIndex}:${anchor.startParagraph}:${anchor.startOffset}`
+  const chapterTitle = chapters.value[anchor.chapterIndex]?.title || `第${anchor.chapterIndex + 1}章`
+  try {
+    await saveBookmark({
+      id,
+      bookId: currentBook.value.id,
+      bookName: currentBook.value.name,
+      bookAuthor: currentBook.value.author,
+      chapterIndex: anchor.chapterIndex,
+      chapterPos: anchor.startParagraph,
+      startOffset: anchor.startOffset,
+      endOffset: anchor.endOffset,
+      chapterTitle,
+      content: anchor.text,
+      createdAt: Date.now(),
+    })
+    await loadCurrentBookBookmarks()
+    clearSelectionMenu()
+    ElMessage.success('书签已添加')
+  } catch (error) {
+    console.error('添加精确书签失败', error)
+    ElMessage.error('书签添加失败')
+  }
+}
+
+const highlightSelection = async (style: HighlightStyleRecord) => {
+  const anchor = selectionSnapshot.value?.anchor
+  if (!anchor || !currentBook.value) return
+  const chapter = chapters.value[anchor.chapterIndex]
+  const record: HighlightRecord = {
+    id: `${currentBook.value.id}:${anchor.chapterIndex}:${anchor.startOffset}:${Date.now()}`,
+    bookId: currentBook.value.id,
+    bookName: currentBook.value.name,
+    bookAuthor: currentBook.value.author,
+    bookUrl: currentBook.value.bookUrl,
+    chapterUrl: chapter?.href,
+    chapterIndex: anchor.chapterIndex,
+    chapterTitle: chapter?.title || `第${anchor.chapterIndex + 1}章`,
+    startOffset: anchor.startOffset,
+    endOffset: anchor.endOffset,
+    startParagraph: anchor.startParagraph,
+    endParagraph: anchor.endParagraph,
+    text: anchor.text,
+    style,
+    createdAt: Date.now(),
+  }
+  try {
+    await saveHighlight(record)
+    currentBookHighlights.value.push(record)
+    appSettings.setLastHighlightStyle(style)
+    clearSelectionMenu()
+    renderRevision.value += 1
+    ElMessage.success('已添加高亮')
+  } catch (error) {
+    console.error('添加高亮失败', error)
+    ElMessage.error('高亮保存失败')
+  }
+}
+
+const searchSelection = async () => {
+  const text = selectionSnapshot.value?.text.trim()
+  if (!text) return
+  const directUrl = /^https?:\/\/\S+$/i.test(text) ? text : null
+  const templates = {
+    bing: 'https://www.bing.com/search?q=',
+    baidu: 'https://www.baidu.com/s?wd=',
+    google: 'https://www.google.com/search?q=',
+  }
+  const url = directUrl || `${templates[appSettings.searchEngine]}${encodeURIComponent(text)}`
+  try {
+    await openExternalUrl(url)
+    clearSelectionMenu()
+  } catch (error) {
+    console.error('打开系统浏览器失败', error)
+    ElMessage.error('无法打开系统默认浏览器，选区已保留')
+  }
 }
 
 const flushReadingSession = async (
@@ -565,6 +866,44 @@ const handleWrapperClick = () => {
   }
 }
 
+const replaceContext = () => ({
+  bookName: currentBook.value?.name || '',
+  sourceUrl: currentBook.value?.sourceUrl,
+})
+
+const processChapterPayload = async (payload: ChapterPayload): Promise<ChapterPayload> => {
+  try {
+    return await applyRulesToChapter(payload, replaceRules.value, replaceContext())
+  } catch (error) {
+    if (error instanceof ReplacementTimeoutError) {
+      const disabled = { ...error.rule, isEnabled: false }
+      await saveReplaceRule(disabled).catch(console.error)
+      replaceRules.value = replaceRules.value.map(rule => rule.id === disabled.id ? disabled : rule)
+      ElMessage.error(`替换规则“${disabled.name}”执行超时，已自动停用`)
+      return applyRulesToChapter(payload, replaceRules.value, replaceContext())
+    }
+    throw error
+  }
+}
+
+const reprocessLoadedChapters = async () => {
+  const generation = contentGeneration
+  const processed = await Promise.all(rawChapterData.value.map(processChapterPayload))
+  if (generation !== contentGeneration) return
+  chapterData.value = processed
+  renderRevision.value += 1
+}
+
+const handleReplaceRuleSaved = async () => {
+  replaceRules.value = await getAllReplaceRules()
+  try {
+    await reprocessLoadedChapters()
+  } catch (error) {
+    console.error('重新处理已加载正文失败', error)
+    ElMessage.error(error instanceof Error ? error.message : '正文重新处理失败')
+  }
+}
+
 // 获取章节内容
 const getContent = async (
   index: number,
@@ -579,9 +918,11 @@ const getContent = async (
   if (reloadChapter && !forceRefresh) {
     window.scrollTo(0, 0)
     chapterData.value = []
+    rawChapterData.value = []
     await store.saveProgress(index).catch(console.error)
   } else if (!reloadChapter) {
     chapterData.value = trimChapterWindowBeforeAppend(chapterData.value)
+    rawChapterData.value = trimChapterWindowBeforeAppend(rawChapterData.value)
   }
 
   try {
@@ -589,10 +930,13 @@ const getContent = async (
     if (generation !== contentGeneration) return false
 
     if (payload) {
+      const processedPayload = await processChapterPayload(payload)
       if (forceRefresh) {
-        chapterData.value = [payload]
+        rawChapterData.value = [payload]
+        chapterData.value = [processedPayload]
       } else {
-        chapterData.value.push(payload)
+        rawChapterData.value.push(payload)
+        chapterData.value.push(processedPayload)
       }
       if (reloadChapter && store.currentBook) {
         store.currentBook.currentChapter = index
@@ -701,6 +1045,11 @@ const toNextChapter = async () => {
 // 键盘事件
 let canJump = true
 const handleKeyPress = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && selectionSnapshot.value) {
+    event.stopPropagation()
+    clearSelectionMenu()
+    return
+  }
   if (!canJump) return
   switch (event.key) {
     case 'ArrowLeft':
@@ -769,6 +1118,7 @@ const updateReadingProgress = () => {
 }
 
 const onScroll = () => {
+  if (selectionSnapshot.value) clearSelectionMenu()
   if (progressFrame === null) {
     progressFrame = window.requestAnimationFrame(updateReadingProgress)
   }
@@ -776,6 +1126,7 @@ const onScroll = () => {
 
 // 窗口尺寸变化
 const onResize = () => {
+  if (selectionSnapshot.value) clearSelectionMenu()
   store.setMiniInterface(window.innerWidth < 776)
   if (!store.miniInterface) {
     if (settings.value.readWidth < 640) settings.value.readWidth = 640
@@ -814,6 +1165,8 @@ onMounted(async () => {
   try {
     await store.loadBook(bookId)
     if (supportsBookDetail) {
+      replaceRules.value = await getAllReplaceRules().catch(() => [])
+      await loadCurrentBookHighlights()
       await addReadingTime(currentBook.value!, 0).catch(console.error)
       readingSessionStartedAt = Date.now()
     }
@@ -877,6 +1230,7 @@ onMounted(async () => {
     window.addEventListener('keyup', handleKeyPress)
     window.addEventListener('keydown', ignoreKeyPress)
     window.addEventListener('scroll', onScroll, { passive: true })
+    document.addEventListener('pointerup', onSelectionPointerUp)
     document.addEventListener('visibilitychange', onVisibilityChange)
 
     scrollObserver = new IntersectionObserver(onReachBottom, {
@@ -900,6 +1254,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', ignoreKeyPress)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('scroll', onScroll)
+  document.removeEventListener('pointerup', onSelectionPointerUp)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (progressFrame !== null) window.cancelAnimationFrame(progressFrame)
   popCataVisible.value = false
@@ -911,6 +1266,7 @@ onUnmounted(() => {
 
 onBeforeRouteLeave(() => {
   window.removeEventListener('keyup', handleKeyPress)
+  document.removeEventListener('pointerup', onSelectionPointerUp)
   if (currentBook.value) {
     store.saveProgress().catch(console.error)
     flushReadingSession(false).catch(console.error)

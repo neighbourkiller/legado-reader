@@ -4,9 +4,11 @@ import type { ReadingRecord, StoredChapterContent } from '@/storage/db'
 import {
   characterOffsetToParagraphIndex,
   fromAndroidBook,
+  fromAndroidHighlight,
   fromAndroidReadRecords,
   paragraphIndexToCharacterOffset,
   toAndroidBook,
+  toAndroidHighlight,
   toAndroidReadRecords,
 } from './compat'
 
@@ -79,6 +81,36 @@ describe('Android 字段与位置互通', () => {
     expect(characterOffsetToParagraphIndex(content, 0, '目标摘录')).toBe(1)
     const offset = paragraphIndexToCharacterOffset(content, 2)
     expect(characterOffsetToParagraphIndex(content, offset)).toBe(2)
+  })
+
+  it('高亮样式和精确位置可按 Android BookHighlight 往返', () => {
+    const android = toAndroidHighlight({
+      id: 'highlight-1',
+      bookId: onlineBook.meta.id,
+      bookName: onlineBook.meta.name,
+      bookAuthor: onlineBook.meta.author,
+      bookUrl: onlineBook.meta.bookUrl,
+      chapterUrl: onlineBook.chapters[1]?.href,
+      chapterIndex: 1,
+      chapterTitle: '第二章',
+      startOffset: 6,
+      endOffset: 10,
+      startParagraph: 1,
+      endParagraph: 1,
+      text: '第二段正',
+      style: { kind: 'underline', color: '#e53935', lineStyle: 'wavy' },
+      note: '备注',
+      createdAt: 99,
+    })
+    expect(JSON.parse(android.style)).toMatchObject({ underline: { kind: 'WAVY' } })
+    const restored = fromAndroidHighlight(android, [onlineBook], [cache])
+    expect(restored).toMatchObject({
+      startOffset: 6,
+      endOffset: 10,
+      startParagraph: 1,
+      style: { kind: 'underline', lineStyle: 'wavy' },
+      note: '备注',
+    })
   })
 })
 

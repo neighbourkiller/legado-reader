@@ -116,6 +116,8 @@
           <el-descriptions-item label="书签">{{ pendingBackup.preview.counts.bookmarks }}</el-descriptions-item>
           <el-descriptions-item label="阅读记录">{{ pendingBackup.preview.counts.readingRecords }}</el-descriptions-item>
           <el-descriptions-item label="章节缓存">{{ pendingBackup.preview.counts.chapterContents }}</el-descriptions-item>
+          <el-descriptions-item label="标注">{{ pendingBackup.preview.counts.highlights }}</el-descriptions-item>
+          <el-descriptions-item label="替换规则">{{ pendingBackup.preview.counts.replaceRules }}</el-descriptions-item>
         </el-descriptions>
 
         <el-alert
@@ -278,7 +280,7 @@ async function confirmRestore(): Promise<void> {
         ? `；跳过 ${report.skippedLocalAndroidBooks} 本无法移植正文的安卓本地书`
         : ''
       setStatus(
-        `恢复完成：${report.restored.onlineBooks} 本网络书、${report.restored.bookmarks} 个书签、${report.restored.readingRecords} 条阅读记录${skipped}。应用即将刷新。`,
+        `恢复完成：${report.restored.onlineBooks} 本网络书、${report.restored.bookmarks} 个书签、${report.restored.highlights} 条标注、${report.restored.replaceRules} 条替换规则、${report.restored.readingRecords} 条阅读记录${skipped}。应用即将刷新。`,
         report.warnings.length ? 'warning' : 'success',
       )
       ElMessage.success('恢复完成，正在重新加载应用')

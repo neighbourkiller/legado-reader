@@ -10,16 +10,20 @@ import {
   type DatabaseSnapshot,
   type DatabaseStoreName,
   type ReadingRecord,
+  type HighlightRecord,
+  type ReplaceRuleRecord,
   type StoredChapterContent,
 } from '@/storage/db'
 import {
   createAndroidBackupData,
   fromAndroidBook,
   fromAndroidBookmark,
+  fromAndroidHighlight,
   fromAndroidReadRecords,
 } from './compat'
 import {
   ANDROID_BACKUP_FILES,
+  ANDROID_OPTIONAL_BACKUP_FILES,
   BACKUP_FORMAT,
   BACKUP_FORMAT_VERSION,
   MAX_BACKUP_ENTRIES,
@@ -29,6 +33,8 @@ import {
   type AndroidBackupData,
   type AndroidBook,
   type AndroidBookmark,
+  type AndroidBookHighlight,
+  type AndroidReplaceRule,
   type AndroidReadRecord,
   type BackupManifestV1,
   type BackupPreview,
@@ -48,6 +54,7 @@ export const BACKED_UP_LOCAL_STORAGE_KEYS = [
 
 const CRITICAL_FILES = new Set<string>([
   ...ANDROID_BACKUP_FILES,
+  ...ANDROID_OPTIONAL_BACKUP_FILES,
   TAURI_MANIFEST_FILE,
   TAURI_DATA_FILE,
 ].map(item => item.toLowerCase()))
@@ -180,6 +187,8 @@ function countSnapshot(snapshot: DatabaseSnapshot): BackupManifestV1['counts'] {
     bookmarks: storeRecords(snapshot, 'bookmarks').length,
     readingRecords: storeRecords(snapshot, 'readingRecords').length,
     chapterContents: storeRecords(snapshot, 'chapterContents').length,
+    highlights: storeRecords(snapshot, 'highlights').length,
+    replaceRules: storeRecords(snapshot, 'replaceRules').length,
   }
 }
 
@@ -204,7 +213,16 @@ export async function createBackupArchive(appVersion = '1.0.0'): Promise<{
   const chapterContents = storeRecords<StoredChapterContent>(snapshot, 'chapterContents')
   const bookmarks = storeRecords<BookmarkRecord>(snapshot, 'bookmarks')
   const readingRecords = storeRecords<ReadingRecord>(snapshot, 'readingRecords')
-  const converted = createAndroidBackupData({ books, chapterContents, bookmarks, readingRecords })
+  const highlights = storeRecords<HighlightRecord>(snapshot, 'highlights')
+  const replaceRules = storeRecords<ReplaceRuleRecord>(snapshot, 'replaceRules')
+  const converted = createAndroidBackupData({
+    books,
+    chapterContents,
+    bookmarks,
+    readingRecords,
+    highlights,
+    replaceRules,
+  })
   converted.data.bookSources = storeRecords<Record<string, unknown>>(snapshot, 'bookSources')
 
   const zip = new JSZip()
@@ -218,6 +236,8 @@ export async function createBackupArchive(appVersion = '1.0.0'): Promise<{
   await addChecked('bookshelf.json', jsonBytes(converted.data.books))
   await addChecked('bookmark.json', jsonBytes(converted.data.bookmarks))
   await addChecked('readRecord.json', jsonBytes(converted.data.readingRecords))
+  await addChecked('highlight.json', jsonBytes(converted.data.highlights))
+  await addChecked('replaceRule.json', jsonBytes(converted.data.replaceRules))
 
   const backupBooks: TauriBackupBook[] = []
   for (let index = 0; index < books.length; index += 1) {
@@ -260,6 +280,8 @@ export async function createBackupArchive(appVersion = '1.0.0'): Promise<{
       'bookmarks',
       'readingRecords',
       'chapterContents',
+      'highlights',
+      'replaceRules',
       'desktopSettings',
       'localBookFiles',
     ],
@@ -294,6 +316,14 @@ async function parseAndroidData(zip: JSZip): Promise<AndroidBackupData> {
       await readZipText(zip, 'readRecord.json'),
       'readRecord.json',
     ),
+    highlights: parseJsonArray<AndroidBookHighlight>(
+      await readZipText(zip, 'highlight.json'),
+      'highlight.json',
+    ),
+    replaceRules: parseJsonArray<AndroidReplaceRule>(
+      await readZipText(zip, 'replaceRule.json'),
+      'replaceRule.json',
+    ),
   }
   for (const [index, source] of data.bookSources.entries()) {
     if (!source || typeof source !== 'object' || typeof source.bookSourceUrl !== 'string') {
@@ -319,6 +349,16 @@ async function parseAndroidData(zip: JSZip): Promise<AndroidBackupData> {
   for (const [index, record] of data.readingRecords.entries()) {
     if (!record || typeof record !== 'object' || typeof record.deviceId !== 'string' || typeof record.bookName !== 'string') {
       throw new Error(`readRecord.json 第 ${index + 1} 条阅读记录结构无效`)
+    }
+  }
+  for (const [index, highlight] of data.highlights.entries()) {
+    if (!highlight || typeof highlight !== 'object' || !Number.isFinite(highlight.time) || typeof highlight.bookName !== 'string') {
+      throw new Error(`highlight.json 第 ${index + 1} 条标注结构无效`)
+    }
+  }
+  for (const [index, rule] of data.replaceRules.entries()) {
+    if (!rule || typeof rule !== 'object' || !Number.isFinite(rule.id) || typeof rule.pattern !== 'string') {
+      throw new Error(`replaceRule.json 第 ${index + 1} 条替换规则结构无效`)
     }
   }
   return data
@@ -357,6 +397,8 @@ function androidCounts(data: AndroidBackupData): BackupManifestV1['counts'] {
     bookmarks: data.bookmarks.length,
     readingRecords: data.readingRecords.length,
     chapterContents: 0,
+    highlights: data.highlights.length,
+    replaceRules: data.replaceRules.length,
   }
 }
 
@@ -437,7 +479,9 @@ export async function parseBackupArchive(input: Uint8Array | ArrayBuffer): Promi
     version: manifest?.version || (manifestRaw ? Number((JSON.parse(manifestRaw) as any).version) : undefined),
     appVersion: manifest?.appVersion,
     createdAt: manifest?.createdAt,
-    counts: manifest?.counts || androidCounts(androidData),
+    counts: manifest?.counts
+      ? Object.assign({ highlights: 0, replaceRules: 0 }, manifest.counts)
+      : androidCounts(androidData),
     warnings,
     canRestoreTauriData: kind === 'tauri',
     androidData,
@@ -463,6 +507,8 @@ function mergeSnapshots(current: DatabaseSnapshot, incoming: DatabaseSnapshot): 
     chapterContents: record => String(record.key),
     bookmarks: record => `${record.createdAt}:${record.bookName}:${record.bookAuthor}`,
     readingRecords: record => String(record.bookId),
+    highlights: record => String(record.id),
+    replaceRules: record => String(record.id),
   }
   const merged = Object.fromEntries(DATABASE_STORE_NAMES.map(storeName => [
     storeName,
@@ -501,6 +547,11 @@ function hydrateTauriSnapshot(parsed: ParsedBackup): DatabaseSnapshot {
       fileData: fileEntry ? parsed.localBookFiles.get(fileEntry) || null : null,
     } satisfies StoredBook
   })
+  database.bookmarks = storeRecords<BookmarkRecord>(database, 'bookmarks').map(bookmark => ({
+    ...bookmark,
+    startOffset: Math.max(0, bookmark.startOffset || 0),
+    endOffset: Math.max(bookmark.startOffset || 0, bookmark.endOffset || bookmark.startOffset || 0),
+  }))
   return database
 }
 
@@ -508,7 +559,12 @@ function buildAndroidSnapshot(
   data: AndroidBackupData,
   current: DatabaseSnapshot,
   mode: RestoreMode,
-): { snapshot: DatabaseSnapshot; clearStores: DatabaseStoreName[]; skippedLocal: number } {
+): {
+  snapshot: DatabaseSnapshot
+  clearStores: DatabaseStoreName[]
+  skippedLocal: number
+  skippedHighlights: number
+} {
   const currentBooks = storeRecords<StoredBook>(current, 'books')
   const localBooks = currentBooks.filter(book => book.meta?.format !== 'online')
   const onlineByUrl = new Map(
@@ -552,10 +608,41 @@ function buildAndroidSnapshot(
     )
     : data.bookSources
 
+  const currentHighlights = storeRecords<HighlightRecord>(current, 'highlights')
+  const convertedHighlights = data.highlights.map(item =>
+    fromAndroidHighlight(item, finalBooks, currentContents),
+  )
+  const importedHighlights = convertedHighlights.filter(
+    (item): item is HighlightRecord => Boolean(item),
+  )
+  const preservedHighlights = mode === 'overwrite'
+    ? currentHighlights.filter(highlight => localBooks.some(book => book.meta.id === highlight.bookId))
+    : currentHighlights
+  const highlights = mergeByKey(preservedHighlights, importedHighlights, item => item.id)
+  const currentReplaceRules = storeRecords<ReplaceRuleRecord>(current, 'replaceRules')
+  const replaceRules = mode === 'merge'
+    ? mergeByKey(currentReplaceRules, data.replaceRules, rule => String(rule.id))
+    : data.replaceRules
+
   return {
-    snapshot: { books: finalBooks, bookmarks, readingRecords, bookSources },
-    clearStores: ['books', 'bookmarks', 'readingRecords', 'bookSources'],
+    snapshot: {
+      books: finalBooks,
+      bookmarks,
+      readingRecords,
+      bookSources,
+      highlights,
+      replaceRules,
+    },
+    clearStores: [
+      'books',
+      'bookmarks',
+      'readingRecords',
+      'bookSources',
+      'highlights',
+      'replaceRules',
+    ],
     skippedLocal: data.books.length - importedBooks.length,
+    skippedHighlights: data.highlights.length - importedHighlights.length,
   }
 }
 
@@ -581,6 +668,7 @@ export async function restoreParsedBackup(
   let target: DatabaseSnapshot
   let clearStores: DatabaseStoreName[]
   let skippedLocalAndroidBooks = 0
+  let skippedAndroidHighlights = 0
   let targetLocalStorage: Record<string, string | null> | undefined
 
   if (parsed.preview.canRestoreTauriData && parsed.tauriData) {
@@ -593,6 +681,7 @@ export async function restoreParsedBackup(
     target = android.snapshot
     clearStores = android.clearStores
     skippedLocalAndroidBooks = android.skippedLocal
+    skippedAndroidHighlights = android.skippedHighlights
   }
 
   try {
@@ -617,6 +706,9 @@ export async function restoreParsedBackup(
       ...parsed.preview.warnings,
       ...(skippedLocalAndroidBooks > 0
         ? [`安卓备份中的 ${skippedLocalAndroidBooks} 本本地书籍没有可移植正文，已跳过。`]
+        : []),
+      ...(skippedAndroidHighlights > 0
+        ? [`安卓备份中的 ${skippedAndroidHighlights} 条标注无法匹配书籍，已跳过。`]
         : []),
     ],
   }

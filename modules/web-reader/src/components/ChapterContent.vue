@@ -4,33 +4,37 @@
       <span class="title-text">{{ title }}</span>
     </div>
 
-    <!-- TXT 格式分段渲染 -->
-    <template v-if="format === 'txt' && Array.isArray(contents)">
-      <div
-        v-for="(para, index) in contents"
-        :key="index"
-        class="paragraph"
-        ref="paragraphRef"
-        :data-chapterpos="index"
-      >
-        <p :style="{ fontFamily, fontSize }">{{ para }}</p>
-      </div>
-    </template>
+    <div ref="bodyRef" data-reader-body @click="handleBodyClick">
+      <!-- TXT 格式分段渲染 -->
+      <template v-if="format === 'txt' && Array.isArray(contents)">
+        <div
+          v-for="(para, index) in contents"
+          :key="index"
+          class="paragraph"
+          ref="paragraphRef"
+          :data-chapterpos="index"
+        >
+          <p :style="{ fontFamily, fontSize }">{{ para }}</p>
+        </div>
+      </template>
 
-    <!-- EPUB 富文本 HTML 渲染 -->
-    <template v-else>
-      <div
-        class="epub-html-content"
-        :style="{ fontFamily, fontSize }"
-        v-html="epubHtml"
-      ></div>
-    </template>
+      <!-- EPUB 富文本 HTML 渲染 -->
+      <template v-else>
+        <div
+          class="epub-html-content"
+          :style="{ fontFamily, fontSize }"
+          v-html="epubHtml"
+        ></div>
+      </template>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue'
+import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import type { SpacingConfig } from '@/parsers/types'
+import type { HighlightRecord } from '@/storage/db'
+import { resolveTextAnchor } from '@/utils/textSelection'
 import jump from '@/plugins/jump'
 
 const props = defineProps<{
@@ -41,6 +45,11 @@ const props = defineProps<{
   fontFamily: string
   fontSize: string
   chapterIndex: number
+  highlights?: HighlightRecord[]
+}>()
+
+const emit = defineEmits<{
+  highlightClick: [highlight: HighlightRecord]
 }>()
 
 const epubHtml = computed(() => {
@@ -48,6 +57,99 @@ const epubHtml = computed(() => {
 })
 
 const paragraphRef = ref<HTMLElement[]>()
+const bodyRef = ref<HTMLElement>()
+
+const clearHighlightMarks = () => {
+  if (!bodyRef.value) return
+  bodyRef.value.querySelectorAll<HTMLElement>('mark[data-reader-highlight]').forEach(mark => {
+    mark.replaceWith(document.createTextNode(mark.textContent || ''))
+  })
+  bodyRef.value.normalize()
+}
+
+const annotateEpubParagraphs = () => {
+  if (!bodyRef.value || props.format !== 'epub') return
+  const blocks = bodyRef.value.querySelectorAll<HTMLElement>(
+    '.epub-html-content p, .epub-html-content li, .epub-html-content blockquote, .epub-html-content h1, .epub-html-content h2, .epub-html-content h3, .epub-html-content h4, .epub-html-content h5, .epub-html-content h6',
+  )
+  blocks.forEach((block, index) => { block.dataset.chapterpos = String(index) })
+}
+
+const applyHighlights = () => {
+  const root = bodyRef.value
+  if (!root) return
+  clearHighlightMarks()
+  annotateEpubParagraphs()
+  const fullText = root.textContent || ''
+  const highlights = (props.highlights || []).flatMap(item => {
+    const resolved = resolveTextAnchor(fullText, item.text, item.startOffset)
+    return resolved ? [{ ...item, ...resolved }] : []
+  }).filter(item => item.endOffset > item.startOffset)
+  if (highlights.length === 0) return
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const nodes: Array<{ node: Text; start: number; end: number }> = []
+  let offset = 0
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text
+    const start = offset
+    offset += node.data.length
+    nodes.push({ node, start, end: offset })
+  }
+
+  for (const { node, start, end } of nodes) {
+    const boundaries = new Set<number>([0, node.data.length])
+    const overlapping = highlights.filter(item => item.startOffset < end && item.endOffset > start)
+    if (overlapping.length === 0) continue
+    for (const item of overlapping) {
+      boundaries.add(Math.max(0, item.startOffset - start))
+      boundaries.add(Math.min(node.data.length, item.endOffset - start))
+    }
+    const sorted = [...boundaries].sort((a, b) => a - b)
+    const fragment = document.createDocumentFragment()
+    for (let index = 0; index < sorted.length - 1; index += 1) {
+      const localStart = sorted[index]!
+      const localEnd = sorted[index + 1]!
+      const text = node.data.slice(localStart, localEnd)
+      const absoluteMiddle = start + localStart + (localEnd - localStart) / 2
+      const highlight = [...overlapping]
+        .reverse()
+        .find(item => absoluteMiddle >= item.startOffset && absoluteMiddle < item.endOffset)
+      if (!highlight) {
+        fragment.append(text)
+        continue
+      }
+      const mark = document.createElement('mark')
+      mark.dataset.readerHighlight = highlight.id
+      mark.className = `reader-highlight reader-highlight--${highlight.style.kind}`
+      if (highlight.style.kind === 'background') {
+        mark.style.backgroundColor = highlight.style.color
+      } else {
+        mark.style.textDecoration = `underline ${highlight.style.lineStyle || 'solid'} ${highlight.style.color} 2px`
+      }
+      mark.textContent = text
+      fragment.append(mark)
+    }
+    node.replaceWith(fragment)
+  }
+}
+
+const handleBodyClick = (event: MouseEvent) => {
+  const mark = (event.target as Element | null)?.closest<HTMLElement>('mark[data-reader-highlight]')
+  const highlight = props.highlights?.find(item => item.id === mark?.dataset.readerHighlight)
+  if (highlight) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('highlightClick', highlight)
+  }
+}
+
+onMounted(() => nextTick(applyHighlights))
+watch(
+  () => [props.contents, props.highlights],
+  () => nextTick(applyHighlights),
+  { deep: true },
+)
 
 const scrollToParagraph = (index: number) => {
   if (!paragraphRef.value || !paragraphRef.value[index]) return
@@ -90,6 +192,13 @@ defineExpose({
 
 .paragraph {
   position: relative;
+}
+
+:deep(mark.reader-highlight) {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
 }
 
 p {

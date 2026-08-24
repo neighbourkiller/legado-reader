@@ -2,7 +2,7 @@ import type { BookMeta, ReadSettings, StoredBook } from '@/parsers/types'
 import { DEFAULT_READ_SETTINGS } from '@/parsers/types'
 
 const DB_NAME = 'legado-web-reader'
-const DB_VERSION = 5
+const DB_VERSION = 6
 
 const STORE_BOOKS = 'books'
 const STORE_SETTINGS = 'settings'
@@ -11,6 +11,8 @@ const STORE_REMOTE_BOOKS = 'remoteBooks'
 const STORE_CHAPTER_CONTENTS = 'chapterContents'
 const STORE_BOOKMARKS = 'bookmarks'
 const STORE_READING_RECORDS = 'readingRecords'
+const STORE_HIGHLIGHTS = 'highlights'
+const STORE_REPLACE_RULES = 'replaceRules'
 
 export const DATABASE_STORE_NAMES = [
   STORE_BOOKS,
@@ -20,6 +22,8 @@ export const DATABASE_STORE_NAMES = [
   STORE_CHAPTER_CONTENTS,
   STORE_BOOKMARKS,
   STORE_READING_RECORDS,
+  STORE_HIGHLIGHTS,
+  STORE_REPLACE_RULES,
 ] as const
 
 export type DatabaseStoreName = (typeof DATABASE_STORE_NAMES)[number]
@@ -45,6 +49,10 @@ export interface BookmarkRecord {
   bookAuthor: string
   chapterIndex: number
   chapterPos: number
+  /** 当前显示正文内的精确字符起点；旧书签迁移为 0。 */
+  startOffset?: number
+  /** 选中文字的精确字符终点。 */
+  endOffset?: number
   chapterTitle: string
   content: string
   /** Android 书签备注；正文摘录仍保存在 content。 */
@@ -52,6 +60,50 @@ export interface BookmarkRecord {
   /** Android 的原始章节字符位置，正文加载后再换算为段落索引。 */
   androidChapterPos?: number
   createdAt: number
+}
+
+export type HighlightStyleKind = 'background' | 'underline'
+
+export interface HighlightStyleRecord {
+  kind: HighlightStyleKind
+  color: string
+  lineStyle?: 'solid' | 'wavy'
+}
+
+export interface HighlightRecord {
+  id: string
+  bookId: string
+  bookName: string
+  bookAuthor: string
+  bookUrl?: string
+  chapterUrl?: string
+  chapterIndex: number
+  chapterTitle: string
+  startOffset: number
+  endOffset: number
+  startParagraph: number
+  endParagraph: number
+  text: string
+  style: HighlightStyleRecord
+  note?: string
+  createdAt: number
+}
+
+export interface ReplaceRuleRecord {
+  id: number
+  name: string
+  group?: string
+  pattern: string
+  replacement: string
+  scope?: string
+  scopeTitle: boolean
+  scopeSource: boolean
+  scopeContent: boolean
+  excludeScope?: string
+  isEnabled: boolean
+  isRegex: boolean
+  timeoutMillisecond: number
+  order: number
 }
 
 export interface ReadingDeviceContribution {
@@ -178,6 +230,41 @@ function openDB(): Promise<IDBDatabase> {
             }
             cursor.continue()
           }
+        }
+      }
+
+      // v5 -> v6: 精确书签、手动高亮与应用级替换规则。
+      if (oldVersion < 6) {
+        if (db.objectStoreNames.contains(STORE_BOOKMARKS)) {
+          const store = request.transaction?.objectStore(STORE_BOOKMARKS)
+          if (store) {
+            if (store.indexNames.contains('location')) store.deleteIndex('location')
+            store.createIndex('location', ['bookId', 'chapterIndex', 'chapterPos'], { unique: false })
+            store.createIndex(
+              'anchor',
+              ['bookId', 'chapterIndex', 'chapterPos', 'startOffset'],
+              { unique: true },
+            )
+            const cursorRequest = store.openCursor()
+            cursorRequest.onsuccess = () => {
+              const cursor = cursorRequest.result
+              if (!cursor) return
+              const bookmark = cursor.value as BookmarkRecord
+              bookmark.startOffset = Math.max(0, bookmark.startOffset || 0)
+              bookmark.endOffset = Math.max(bookmark.startOffset, bookmark.endOffset || bookmark.startOffset)
+              cursor.update(bookmark)
+              cursor.continue()
+            }
+          }
+        }
+        if (!db.objectStoreNames.contains(STORE_HIGHLIGHTS)) {
+          const store = db.createObjectStore(STORE_HIGHLIGHTS, { keyPath: 'id' })
+          store.createIndex('bookId', 'bookId', { unique: false })
+          store.createIndex('bookChapter', ['bookId', 'chapterIndex'], { unique: false })
+        }
+        if (!db.objectStoreNames.contains(STORE_REPLACE_RULES)) {
+          const store = db.createObjectStore(STORE_REPLACE_RULES, { keyPath: 'id' })
+          store.createIndex('order', 'order', { unique: false })
         }
       }
     }
@@ -326,7 +413,11 @@ export async function getAllStoredBookFiles(): Promise<StoredBookFileInfo[]> {
 
 export async function saveBookmark(bookmark: BookmarkRecord): Promise<void> {
   const db = await openDB()
-  const record = JSON.parse(JSON.stringify(bookmark)) as BookmarkRecord
+  const record = JSON.parse(JSON.stringify({
+    ...bookmark,
+    startOffset: Math.max(0, bookmark.startOffset || 0),
+    endOffset: Math.max(bookmark.startOffset || 0, bookmark.endOffset || bookmark.startOffset || 0),
+  })) as BookmarkRecord
   return new Promise((resolve, reject) => {
     try {
       const tx = db.transaction(STORE_BOOKMARKS, 'readwrite')
@@ -345,15 +436,17 @@ export async function getBookmarkAt(
   bookId: string,
   chapterIndex: number,
   chapterPos: number,
+  startOffset = 0,
 ): Promise<BookmarkRecord | undefined> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     try {
       const tx = db.transaction(STORE_BOOKMARKS, 'readonly')
-      const request = tx.objectStore(STORE_BOOKMARKS).index('location').get([
+      const request = tx.objectStore(STORE_BOOKMARKS).index('anchor').get([
         bookId,
         chapterIndex,
         chapterPos,
+        Math.max(0, startOffset),
       ])
       request.onsuccess = () => resolve(request.result ?? undefined)
       request.onerror = () => reject(request.error)
@@ -392,7 +485,9 @@ export async function getBookmarksByBookId(bookId: string): Promise<BookmarkReco
       request.onsuccess = () => {
         const bookmarks = (request.result || []) as BookmarkRecord[]
         bookmarks.sort(
-          (a, b) => a.chapterIndex - b.chapterIndex || a.chapterPos - b.chapterPos,
+          (a, b) => a.chapterIndex - b.chapterIndex ||
+            a.chapterPos - b.chapterPos ||
+            (a.startOffset || 0) - (b.startOffset || 0),
         )
         resolve(bookmarks)
       }
@@ -410,6 +505,139 @@ export async function deleteBookmark(id: string): Promise<void> {
     try {
       const tx = db.transaction(STORE_BOOKMARKS, 'readwrite')
       tx.objectStore(STORE_BOOKMARKS).delete(id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+// --- Highlight Storage ---
+
+export async function saveHighlight(highlight: HighlightRecord): Promise<void> {
+  const db = await openDB()
+  const record = JSON.parse(JSON.stringify(highlight)) as HighlightRecord
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_HIGHLIGHTS, 'readwrite')
+      tx.objectStore(STORE_HIGHLIGHTS).put(record)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function getHighlightsByBookId(bookId: string): Promise<HighlightRecord[]> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_HIGHLIGHTS, 'readonly')
+      const request = tx.objectStore(STORE_HIGHLIGHTS).index('bookId').getAll(bookId)
+      request.onsuccess = () => {
+        const records = (request.result || []) as HighlightRecord[]
+        records.sort((a, b) => a.chapterIndex - b.chapterIndex || a.startOffset - b.startOffset)
+        resolve(records)
+      }
+      request.onerror = () => reject(request.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function getHighlightsByChapter(
+  bookId: string,
+  chapterIndex: number,
+): Promise<HighlightRecord[]> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_HIGHLIGHTS, 'readonly')
+      const request = tx.objectStore(STORE_HIGHLIGHTS).index('bookChapter').getAll([
+        bookId,
+        chapterIndex,
+      ])
+      request.onsuccess = () => {
+        const records = (request.result || []) as HighlightRecord[]
+        records.sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt)
+        resolve(records)
+      }
+      request.onerror = () => reject(request.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function deleteHighlight(id: string): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_HIGHLIGHTS, 'readwrite')
+      tx.objectStore(STORE_HIGHLIGHTS).delete(id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+// --- Replace Rule Storage ---
+
+export async function saveReplaceRule(rule: ReplaceRuleRecord): Promise<void> {
+  const db = await openDB()
+  const record = JSON.parse(JSON.stringify(rule)) as ReplaceRuleRecord
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_REPLACE_RULES, 'readwrite')
+      tx.objectStore(STORE_REPLACE_RULES).put(record)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function getAllReplaceRules(): Promise<ReplaceRuleRecord[]> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_REPLACE_RULES, 'readonly')
+      const request = tx.objectStore(STORE_REPLACE_RULES).getAll()
+      request.onsuccess = () => {
+        const records = (request.result || []) as ReplaceRuleRecord[]
+        records.sort((a, b) => a.order - b.order || a.id - b.id)
+        resolve(records)
+      }
+      request.onerror = () => reject(request.error)
+    } catch (err) {
+      cachedDb = null
+      reject(err)
+    }
+  })
+}
+
+export async function deleteReplaceRule(id: number): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORE_REPLACE_RULES, 'readwrite')
+      tx.objectStore(STORE_REPLACE_RULES).delete(id)
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
       tx.onabort = () => reject(tx.error)

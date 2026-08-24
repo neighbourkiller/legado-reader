@@ -241,6 +241,16 @@
             </div>
           </el-tab-pane>
         </el-tabs>
+        <el-checkbox v-model="useSourceReplacement">
+          导入前应用已启用的“作用于书源”替换规则
+        </el-checkbox>
+        <el-alert
+          v-if="importPreviewSummary"
+          class="replacement-summary"
+          :type="importPreviewSummary.errors ? 'warning' : 'info'"
+          :closable="false"
+          :title="`替换预览：改变 ${importPreviewSummary.changed} 条，失败 ${importPreviewSummary.errors} 条`"
+        />
       </div>
 
       <template #footer>
@@ -280,6 +290,7 @@ import {
   ArrowDown,
 } from '@element-plus/icons-vue'
 import { useBookSourceStore } from '@/stores/bookSource'
+import type { SourceImportPreview, SourceImportResult } from '@/stores/bookSource'
 import type { BookSource } from '@/source/types/BookSource'
 import SourceEditDialog from '@/components/SourceEditDialog.vue'
 import SourceDebugDialog from '@/components/SourceDebugDialog.vue'
@@ -293,6 +304,8 @@ const activeImportTab = ref<'url' | 'text'>('url')
 const importUrl = ref('')
 const importJson = ref('')
 const isImporting = ref(false)
+const useSourceReplacement = ref(true)
+const importPreviewSummary = ref<{ changed: number; errors: number } | null>(null)
 const searchKeyword = ref('')
 type SourceSort = 'default' | 'name' | 'group' | 'enabled'
 const sourceSort = ref<SourceSort>('default')
@@ -457,24 +470,46 @@ const handleImport = async () => {
   isImporting.value = true
 
   try {
-    let result: { total: number; unique: number; duplicates: number }
+    let preview: SourceImportPreview
     if (activeImportTab.value === 'url') {
-      result = await bookSourceStore.importSourcesFromUrl(importUrl.value)
+      preview = await bookSourceStore.previewSourceImportFromUrl(importUrl.value)
     } else {
-      result = await bookSourceStore.importSources(importJson.value)
+      preview = await bookSourceStore.previewSourceImport(importJson.value)
     }
+    importPreviewSummary.value = { changed: preview.changed, errors: preview.errors.length }
+
+    if (useSourceReplacement.value && preview.errors.length > 0) {
+      ElMessage.warning(`有 ${preview.errors.length} 条书源替换失败；可取消勾选后导入原始书源`)
+      return
+    }
+    if (useSourceReplacement.value && preview.changed > 0) {
+      await ElMessageBox.confirm(
+        `${preview.changed} 条书源将使用替换后的结果，是否继续导入？`,
+        '确认书源替换结果',
+        { confirmButtonText: '使用替换结果', cancelButtonText: '取消', type: 'warning' },
+      )
+    }
+    const result: SourceImportResult = await bookSourceStore.importPreparedSources(
+      preview,
+      useSourceReplacement.value,
+    )
 
     if (result.duplicates > 0) {
       ElMessage.success(
         `共读取 ${result.total} 条书源，成功生效 ${result.unique} 个（自动合并 ${result.duplicates} 个同 URL 记录）`
       )
     } else {
-      ElMessage.success(`成功导入 ${result.unique} 个书源`)
+      ElMessage.success(
+        `成功导入 ${result.unique} 个书源${result.changed ? `，其中 ${result.changed} 条使用了替换结果` : ''}`,
+      )
     }
     showImportDialog.value = false
     importJson.value = ''
+    importPreviewSummary.value = null
   } catch (err: any) {
-    ElMessage.error(err?.message || '导入失败，请检查链接或格式')
+    if (err !== 'cancel' && err !== 'close') {
+      ElMessage.error(err?.message || '导入失败，请检查链接或格式')
+    }
   } finally {
     isImporting.value = false
   }
@@ -535,6 +570,10 @@ const handleClearAll = async () => {
 </script>
 
 <style scoped>
+.replacement-summary {
+  margin-top: 12px;
+}
+
 .book-sources-view {
   min-height: 100vh;
   background-color: var(--el-bg-color);

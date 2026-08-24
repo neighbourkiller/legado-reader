@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { DATABASE_STORE_NAMES, aggregateReadingDevices, exportDatabaseSnapshot, importDatabaseSnapshot, normalizeReadingRecord, } from '@/storage/db';
-import { createAndroidBackupData, fromAndroidBook, fromAndroidBookmark, fromAndroidReadRecords, } from './compat';
-import { ANDROID_BACKUP_FILES, BACKUP_FORMAT, BACKUP_FORMAT_VERSION, MAX_BACKUP_ENTRIES, MAX_BACKUP_UNCOMPRESSED_BYTES, TAURI_DATA_FILE, TAURI_MANIFEST_FILE, } from './types';
+import { createAndroidBackupData, fromAndroidBook, fromAndroidBookmark, fromAndroidHighlight, fromAndroidReadRecords, } from './compat';
+import { ANDROID_BACKUP_FILES, ANDROID_OPTIONAL_BACKUP_FILES, BACKUP_FORMAT, BACKUP_FORMAT_VERSION, MAX_BACKUP_ENTRIES, MAX_BACKUP_UNCOMPRESSED_BYTES, TAURI_DATA_FILE, TAURI_MANIFEST_FILE, } from './types';
 export const BACKED_UP_LOCAL_STORAGE_KEYS = [
     'legado_app_settings',
     'legado_web_reader_settings',
@@ -10,6 +10,7 @@ export const BACKED_UP_LOCAL_STORAGE_KEYS = [
 ];
 const CRITICAL_FILES = new Set([
     ...ANDROID_BACKUP_FILES,
+    ...ANDROID_OPTIONAL_BACKUP_FILES,
     TAURI_MANIFEST_FILE,
     TAURI_DATA_FILE,
 ].map(item => item.toLowerCase()));
@@ -126,6 +127,8 @@ function countSnapshot(snapshot) {
         bookmarks: storeRecords(snapshot, 'bookmarks').length,
         readingRecords: storeRecords(snapshot, 'readingRecords').length,
         chapterContents: storeRecords(snapshot, 'chapterContents').length,
+        highlights: storeRecords(snapshot, 'highlights').length,
+        replaceRules: storeRecords(snapshot, 'replaceRules').length,
     };
 }
 export function makeBackupFilename(deviceName = '') {
@@ -144,7 +147,16 @@ export async function createBackupArchive(appVersion = '1.0.0') {
     const chapterContents = storeRecords(snapshot, 'chapterContents');
     const bookmarks = storeRecords(snapshot, 'bookmarks');
     const readingRecords = storeRecords(snapshot, 'readingRecords');
-    const converted = createAndroidBackupData({ books, chapterContents, bookmarks, readingRecords });
+    const highlights = storeRecords(snapshot, 'highlights');
+    const replaceRules = storeRecords(snapshot, 'replaceRules');
+    const converted = createAndroidBackupData({
+        books,
+        chapterContents,
+        bookmarks,
+        readingRecords,
+        highlights,
+        replaceRules,
+    });
     converted.data.bookSources = storeRecords(snapshot, 'bookSources');
     const zip = new JSZip();
     const checksums = {};
@@ -156,6 +168,8 @@ export async function createBackupArchive(appVersion = '1.0.0') {
     await addChecked('bookshelf.json', jsonBytes(converted.data.books));
     await addChecked('bookmark.json', jsonBytes(converted.data.bookmarks));
     await addChecked('readRecord.json', jsonBytes(converted.data.readingRecords));
+    await addChecked('highlight.json', jsonBytes(converted.data.highlights));
+    await addChecked('replaceRule.json', jsonBytes(converted.data.replaceRules));
     const backupBooks = [];
     for (let index = 0; index < books.length; index += 1) {
         const book = books[index];
@@ -193,6 +207,8 @@ export async function createBackupArchive(appVersion = '1.0.0') {
             'bookmarks',
             'readingRecords',
             'chapterContents',
+            'highlights',
+            'replaceRules',
             'desktopSettings',
             'localBookFiles',
         ],
@@ -215,6 +231,8 @@ async function parseAndroidData(zip) {
         books: parseJsonArray(await readZipText(zip, 'bookshelf.json'), 'bookshelf.json'),
         bookmarks: parseJsonArray(await readZipText(zip, 'bookmark.json'), 'bookmark.json'),
         readingRecords: parseJsonArray(await readZipText(zip, 'readRecord.json'), 'readRecord.json'),
+        highlights: parseJsonArray(await readZipText(zip, 'highlight.json'), 'highlight.json'),
+        replaceRules: parseJsonArray(await readZipText(zip, 'replaceRule.json'), 'replaceRule.json'),
     };
     for (const [index, source] of data.bookSources.entries()) {
         if (!source || typeof source !== 'object' || typeof source.bookSourceUrl !== 'string') {
@@ -238,6 +256,16 @@ async function parseAndroidData(zip) {
     for (const [index, record] of data.readingRecords.entries()) {
         if (!record || typeof record !== 'object' || typeof record.deviceId !== 'string' || typeof record.bookName !== 'string') {
             throw new Error(`readRecord.json 第 ${index + 1} 条阅读记录结构无效`);
+        }
+    }
+    for (const [index, highlight] of data.highlights.entries()) {
+        if (!highlight || typeof highlight !== 'object' || !Number.isFinite(highlight.time) || typeof highlight.bookName !== 'string') {
+            throw new Error(`highlight.json 第 ${index + 1} 条标注结构无效`);
+        }
+    }
+    for (const [index, rule] of data.replaceRules.entries()) {
+        if (!rule || typeof rule !== 'object' || !Number.isFinite(rule.id) || typeof rule.pattern !== 'string') {
+            throw new Error(`replaceRule.json 第 ${index + 1} 条替换规则结构无效`);
         }
     }
     return data;
@@ -274,6 +302,8 @@ function androidCounts(data) {
         bookmarks: data.bookmarks.length,
         readingRecords: data.readingRecords.length,
         chapterContents: 0,
+        highlights: data.highlights.length,
+        replaceRules: data.replaceRules.length,
     };
 }
 export async function parseBackupArchive(input) {
@@ -359,7 +389,9 @@ export async function parseBackupArchive(input) {
         version: manifest?.version || (manifestRaw ? Number(JSON.parse(manifestRaw).version) : undefined),
         appVersion: manifest?.appVersion,
         createdAt: manifest?.createdAt,
-        counts: manifest?.counts || androidCounts(androidData),
+        counts: manifest?.counts
+            ? Object.assign({ highlights: 0, replaceRules: 0 }, manifest.counts)
+            : androidCounts(androidData),
         warnings,
         canRestoreTauriData: kind === 'tauri',
         androidData,
@@ -385,6 +417,8 @@ function mergeSnapshots(current, incoming) {
         chapterContents: record => String(record.key),
         bookmarks: record => `${record.createdAt}:${record.bookName}:${record.bookAuthor}`,
         readingRecords: record => String(record.bookId),
+        highlights: record => String(record.id),
+        replaceRules: record => String(record.id),
     };
     const merged = Object.fromEntries(DATABASE_STORE_NAMES.map(storeName => [
         storeName,
@@ -421,6 +455,11 @@ function hydrateTauriSnapshot(parsed) {
             fileData: fileEntry ? parsed.localBookFiles.get(fileEntry) || null : null,
         };
     });
+    database.bookmarks = storeRecords(database, 'bookmarks').map(bookmark => ({
+        ...bookmark,
+        startOffset: Math.max(0, bookmark.startOffset || 0),
+        endOffset: Math.max(bookmark.startOffset || 0, bookmark.endOffset || bookmark.startOffset || 0),
+    }));
     return database;
 }
 function buildAndroidSnapshot(data, current, mode) {
@@ -452,10 +491,36 @@ function buildAndroidSnapshot(data, current, mode) {
     const bookSources = mode === 'merge'
         ? mergeByKey(storeRecords(current, 'bookSources'), data.bookSources, source => String(source.bookSourceUrl || ''))
         : data.bookSources;
+    const currentHighlights = storeRecords(current, 'highlights');
+    const convertedHighlights = data.highlights.map(item => fromAndroidHighlight(item, finalBooks, currentContents));
+    const importedHighlights = convertedHighlights.filter((item) => Boolean(item));
+    const preservedHighlights = mode === 'overwrite'
+        ? currentHighlights.filter(highlight => localBooks.some(book => book.meta.id === highlight.bookId))
+        : currentHighlights;
+    const highlights = mergeByKey(preservedHighlights, importedHighlights, item => item.id);
+    const currentReplaceRules = storeRecords(current, 'replaceRules');
+    const replaceRules = mode === 'merge'
+        ? mergeByKey(currentReplaceRules, data.replaceRules, rule => String(rule.id))
+        : data.replaceRules;
     return {
-        snapshot: { books: finalBooks, bookmarks, readingRecords, bookSources },
-        clearStores: ['books', 'bookmarks', 'readingRecords', 'bookSources'],
+        snapshot: {
+            books: finalBooks,
+            bookmarks,
+            readingRecords,
+            bookSources,
+            highlights,
+            replaceRules,
+        },
+        clearStores: [
+            'books',
+            'bookmarks',
+            'readingRecords',
+            'bookSources',
+            'highlights',
+            'replaceRules',
+        ],
         skippedLocal: data.books.length - importedBooks.length,
+        skippedHighlights: data.highlights.length - importedHighlights.length,
     };
 }
 function captureLocalStorage() {
@@ -478,6 +543,7 @@ export async function restoreParsedBackup(parsed, mode) {
     let target;
     let clearStores;
     let skippedLocalAndroidBooks = 0;
+    let skippedAndroidHighlights = 0;
     let targetLocalStorage;
     if (parsed.preview.canRestoreTauriData && parsed.tauriData) {
         const restored = hydrateTauriSnapshot(parsed);
@@ -490,6 +556,7 @@ export async function restoreParsedBackup(parsed, mode) {
         target = android.snapshot;
         clearStores = android.clearStores;
         skippedLocalAndroidBooks = android.skippedLocal;
+        skippedAndroidHighlights = android.skippedHighlights;
     }
     try {
         await importDatabaseSnapshot(target, clearStores);
@@ -515,6 +582,9 @@ export async function restoreParsedBackup(parsed, mode) {
             ...parsed.preview.warnings,
             ...(skippedLocalAndroidBooks > 0
                 ? [`安卓备份中的 ${skippedLocalAndroidBooks} 本本地书籍没有可移植正文，已跳过。`]
+                : []),
+            ...(skippedAndroidHighlights > 0
+                ? [`安卓备份中的 ${skippedAndroidHighlights} 条标注无法匹配书籍，已跳过。`]
                 : []),
         ],
     };

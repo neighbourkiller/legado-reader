@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1787533200004,
+    "name": "Tauri 兼容替换规则",
+    "group": "跨端测试",
+    "pattern": "旧文本",
+    "replacement": "新文本",
+    "scope": "Tauri 兼容测试书;https://source.example.com",
+    "scopeTitle": false,
+    "scopeSource": false,
+    "scopeContent": true,
+    "excludeScope": "",
+    "isEnabled": true,
+    "isRegex": false,
+    "timeoutMillisecond": 3000,
+    "order": 1
+  }
+]

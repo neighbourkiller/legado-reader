@@ -68,6 +68,20 @@
           </div>
           <div class="preference-row">
             <div class="preference-copy">
+              <strong>浏览器搜索引擎</strong>
+              <small>阅读页选中文本后使用系统默认浏览器搜索</small>
+            </div>
+            <el-radio-group
+              :model-value="appSettingsStore.searchEngine"
+              @update:model-value="handleSearchEngineChange"
+            >
+              <el-radio-button value="bing">Bing</el-radio-button>
+              <el-radio-button value="baidu">百度</el-radio-button>
+              <el-radio-button value="google">Google</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="preference-row">
+            <div class="preference-copy">
               <strong>全局主题与阅读页</strong>
               <small>切换全局明暗主题时，选择是否同步修改阅读页</small>
             </div>
@@ -87,6 +101,7 @@
         <ReadingHistoryPanel v-else-if="selectedKey === 'history'" />
         <FileManagerPanel v-else-if="selectedKey === 'files'" />
         <BackupPanel v-else-if="selectedKey === 'backup'" />
+        <ReplaceRulesPanel v-else-if="selectedKey === 'replaceRules'" />
         <AboutPanel v-else-if="selectedKey === 'about'" />
         <el-empty v-else description="该功能暂未实现" />
       </section>
@@ -106,6 +121,7 @@ import {
   UploadFilled,
   Brush,
   Tools,
+  MagicStick,
   CollectionTag,
   Clock,
   Folder,
@@ -115,6 +131,7 @@ import { useAppSettingsStore } from '@/stores/appSettings'
 import type {
   BookshelfClickAction,
   ReaderThemeSyncPreference,
+  SearchEngine,
 } from '@/stores/appSettings'
 import ThemeSettingsPanel from '@/components/settings/ThemeSettingsPanel.vue'
 import BookmarksPanel from '@/components/settings/BookmarksPanel.vue'
@@ -122,12 +139,14 @@ import ReadingHistoryPanel from '@/components/settings/ReadingHistoryPanel.vue'
 import FileManagerPanel from '@/components/settings/FileManagerPanel.vue'
 import BackupPanel from '@/components/settings/BackupPanel.vue'
 import AboutPanel from '@/components/settings/AboutPanel.vue'
+import ReplaceRulesPanel from '@/components/settings/ReplaceRulesPanel.vue'
 
 type SettingKey =
   | 'preferences'
   | 'backup'
   | 'theme'
   | 'other'
+  | 'replaceRules'
   | 'bookmarks'
   | 'history'
   | 'files'
@@ -163,6 +182,7 @@ const groups: SettingGroup[] = [
     items: [
       { key: 'backup', title: '备份与恢复', description: '备份或恢复客户端数据', icon: UploadFilled },
       { key: 'theme', title: '主题设置', description: '调整界面主题与颜色', icon: Brush },
+      { key: 'replaceRules', title: '替换管理', description: '管理标题、正文与书源替换规则', icon: MagicStick },
       { key: 'other', title: '其他设置', description: '与客户端功能相关的设置', icon: Tools },
     ],
   },
@@ -227,6 +247,12 @@ const handleActionChange = (value: string | number | boolean | undefined) => {
 const handleThemeSyncPreferenceChange = (value: string | number | boolean | undefined) => {
   if (value === 'none' || value === 'sync' || value === 'independent') {
     appSettingsStore.setReaderThemeSyncPreference(value as ReaderThemeSyncPreference)
+  }
+}
+
+const handleSearchEngineChange = (value: string | number | boolean | undefined) => {
+  if (value === 'bing' || value === 'baidu' || value === 'google') {
+    appSettingsStore.setSearchEngine(value as SearchEngine)
   }
 }
 </script>

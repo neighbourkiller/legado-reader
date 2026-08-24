@@ -1,6 +1,60 @@
 import { generateBookId } from '@/source/engine/RuleParser';
 import { aggregateReadingDevices, normalizeReadingRecord } from '@/storage/db';
 const ANDROID_LOCAL_ORIGIN = 'LOCAL';
+function cssColorToAndroidArgb(color) {
+    const rgba = color.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/i);
+    const hex = color.match(/^#([\da-f]{6})([\da-f]{2})?$/i);
+    let red = 255;
+    let green = 241;
+    let blue = 118;
+    let alpha = 128;
+    if (rgba) {
+        red = Number(rgba[1]);
+        green = Number(rgba[2]);
+        blue = Number(rgba[3]);
+        alpha = rgba[4] === undefined ? 255 : Math.round(Number(rgba[4]) * 255);
+    }
+    else if (hex) {
+        red = Number.parseInt(hex[1].slice(0, 2), 16);
+        green = Number.parseInt(hex[1].slice(2, 4), 16);
+        blue = Number.parseInt(hex[1].slice(4, 6), 16);
+        alpha = hex[2] ? Number.parseInt(hex[2], 16) : 255;
+    }
+    return ((alpha << 24) | (red << 16) | (green << 8) | blue) | 0;
+}
+function androidArgbToCss(value, includeAlpha) {
+    const unsigned = value >>> 0;
+    const alpha = (unsigned >>> 24) & 0xff;
+    const red = (unsigned >>> 16) & 0xff;
+    const green = (unsigned >>> 8) & 0xff;
+    const blue = unsigned & 0xff;
+    return includeAlpha
+        ? `rgba(${red}, ${green}, ${blue}, ${Number((alpha / 255).toFixed(3))})`
+        : `#${[red, green, blue].map(item => item.toString(16).padStart(2, '0')).join('')}`;
+}
+function toAndroidHighlightStyle(style) {
+    return JSON.stringify(style.kind === 'background'
+        ? { fill: cssColorToAndroidArgb(style.color) }
+        : { underline: { kind: style.lineStyle === 'wavy' ? 'WAVY' : 'SOLID', color: cssColorToAndroidArgb(style.color) } });
+}
+function fromAndroidHighlightStyle(raw) {
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed.underline) {
+            return {
+                kind: 'underline',
+                color: androidArgbToCss(Number(parsed.underline.color || 0xffff0000), false),
+                lineStyle: parsed.underline.kind === 'WAVY' ? 'wavy' : 'solid',
+            };
+        }
+        if (parsed.fill)
+            return { kind: 'background', color: androidArgbToCss(parsed.fill, true) };
+    }
+    catch {
+        // 旧版样式损坏时回退为默认黄色，不让整份备份失败。
+    }
+    return { kind: 'background', color: 'rgba(255, 241, 118, 0.5)' };
+}
 function asText(value) {
     return typeof value === 'string' ? value : '';
 }
@@ -181,11 +235,65 @@ export function fromAndroidBookmark(bookmark, books, chapterContents) {
         bookAuthor: bookmark.bookAuthor || '',
         chapterIndex,
         chapterPos,
+        startOffset: clampInteger(bookmark.chapterPos),
+        endOffset: clampInteger(bookmark.chapterPos) + (bookmark.bookText || '').length,
         chapterTitle: bookmark.chapterName || '',
         content: bookmark.bookText || '',
         note: bookmark.content || undefined,
         androidChapterPos: clampInteger(bookmark.chapterPos),
         createdAt: clampInteger(bookmark.time) || Date.now(),
+    };
+}
+export function toAndroidHighlight(highlight) {
+    return {
+        time: highlight.createdAt,
+        bookUrl: highlight.bookUrl || '',
+        chapterUrl: highlight.chapterUrl || '',
+        bookName: highlight.bookName,
+        bookAuthor: highlight.bookAuthor,
+        chapterIndex: highlight.chapterIndex,
+        chapterPos: highlight.startOffset,
+        chapterPosEnd: highlight.endOffset,
+        layoutTitleLength: 0,
+        chapterName: highlight.chapterTitle,
+        bookText: highlight.text,
+        style: toAndroidHighlightStyle(highlight.style),
+        note: highlight.note || '',
+    };
+}
+export function fromAndroidHighlight(highlight, books, chapterContents = []) {
+    const book = books.find(item => (highlight.bookUrl && item.meta.bookUrl === highlight.bookUrl) ||
+        (item.meta.name === highlight.bookName &&
+            (!highlight.bookAuthor || item.meta.author === highlight.bookAuthor)));
+    if (!book)
+        return null;
+    const titleLength = clampInteger(highlight.layoutTitleLength, 0);
+    const startOffset = Math.max(0, clampInteger(highlight.chapterPos) - titleLength);
+    const endOffset = Math.max(startOffset, clampInteger(highlight.chapterPosEnd) - titleLength);
+    const content = contentWithoutRepeatedTitle(chapterContents.find(item => item.bookId === book.meta.id && item.chapterIndex === clampInteger(highlight.chapterIndex)));
+    const startParagraph = content
+        ? characterOffsetToParagraphIndex(content, startOffset, highlight.bookText)
+        : 0;
+    const endParagraph = content
+        ? characterOffsetToParagraphIndex(content, endOffset)
+        : startParagraph;
+    return {
+        id: `android-highlight-${clampInteger(highlight.time)}-${book.meta.id}`,
+        bookId: book.meta.id,
+        bookName: highlight.bookName || book.meta.name,
+        bookAuthor: highlight.bookAuthor || book.meta.author,
+        bookUrl: highlight.bookUrl || book.meta.bookUrl,
+        chapterUrl: highlight.chapterUrl || undefined,
+        chapterIndex: clampInteger(highlight.chapterIndex),
+        chapterTitle: highlight.chapterName || '',
+        startOffset,
+        endOffset,
+        startParagraph,
+        endParagraph,
+        text: highlight.bookText || '',
+        style: fromAndroidHighlightStyle(highlight.style),
+        note: highlight.note || undefined,
+        createdAt: clampInteger(highlight.time) || Date.now(),
     };
 }
 export function toAndroidReadRecords(records) {
@@ -280,6 +388,10 @@ export function createAndroidBackupData(context) {
                 .filter(bookmark => onlineBookIds.has(bookmark.bookId))
                 .map(bookmark => toAndroidBookmark(bookmark, context.chapterContents)),
             readingRecords: toAndroidReadRecords(context.readingRecords.filter(record => onlineBookIds.has(record.bookId))),
+            highlights: context.highlights
+                .filter(highlight => onlineBookIds.has(highlight.bookId))
+                .map(toAndroidHighlight),
+            replaceRules: context.replaceRules.map(rule => ({ ...rule })),
         },
     };
 }

@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { UploadFilled } from '@element-plus/icons-vue';
@@ -12,6 +12,13 @@ const showRssSourceModal = ref(false);
 const isDragging = ref(false);
 const fileInputRef = ref(null);
 let dragCounter = 0;
+const handleMenuKeydown = (event) => {
+    if (event.key === 'Escape' && showMenu.value) {
+        showMenu.value = false;
+    }
+};
+onMounted(() => window.addEventListener('keydown', handleMenuKeydown));
+onUnmounted(() => window.removeEventListener('keydown', handleMenuKeydown));
 const goToBookshelf = () => {
     router.push('/bookshelf');
 };
@@ -28,14 +35,6 @@ const openRssSourceDialog = () => {
 };
 const triggerBookUpload = () => {
     fileInputRef.value?.click();
-};
-const triggerBookUploadAndCloseMenu = () => {
-    showMenu.value = false;
-    triggerBookUpload();
-};
-const goTo = (path) => {
-    showMenu.value = false;
-    router.push(path);
 };
 const onDragOver = (e) => {
     e.preventDefault();
@@ -103,6 +102,10 @@ const __VLS_ctx = {
 let __VLS_components;
 let __VLS_intrinsics;
 let __VLS_directives;
+/** @type {__VLS_StyleScopedClasses['home-wrapper']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-page-content']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-wrapper']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-open']} */ ;
 /** @type {__VLS_StyleScopedClasses['menu-btn']} */ ;
 /** @type {__VLS_StyleScopedClasses['menu-btn']} */ ;
 /** @type {__VLS_StyleScopedClasses['menu-btn']} */ ;
@@ -112,9 +115,29 @@ let __VLS_directives;
 /** @type {__VLS_StyleScopedClasses['nav-button']} */ ;
 /** @type {__VLS_StyleScopedClasses['nav-button']} */ ;
 /** @type {__VLS_StyleScopedClasses['nav-button']} */ ;
-/** @type {__VLS_StyleScopedClasses['close-btn']} */ ;
-/** @type {__VLS_StyleScopedClasses['drawer-links']} */ ;
-/** @type {__VLS_StyleScopedClasses['drawer-links']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-links']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-links']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-links']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-links']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-links']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-menu-enter-active']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-menu-leave-active']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-menu-enter-from']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-menu-leave-to']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-menu-enter-from']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
+/** @type {__VLS_StyleScopedClasses['home-menu-leave-to']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
 /** @type {__VLS_StyleScopedClasses['dialog-desc']} */ ;
 /** @type {__VLS_StyleScopedClasses['dialog-link-btn']} */ ;
 /** @type {__VLS_StyleScopedClasses['banner-section']} */ ;
@@ -129,8 +152,14 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ onDragleave: (__VLS_ctx.onDragLeave) },
     ...{ onDrop: (__VLS_ctx.onDrop) },
     ...{ class: "home-wrapper" },
+    ...{ class: ({ 'menu-open': __VLS_ctx.showMenu }) },
 });
 /** @type {__VLS_StyleScopedClasses['home-wrapper']} */ ;
+/** @type {__VLS_StyleScopedClasses['menu-open']} */ ;
+__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+    ...{ class: "home-page-content" },
+});
+/** @type {__VLS_StyleScopedClasses['home-page-content']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "home-bg" },
 });
@@ -178,7 +207,7 @@ if (__VLS_ctx.isDragging) {
     const __VLS_13 = __VLS_asFunctionalComponent1(__VLS_12, new __VLS_12({}));
     const __VLS_14 = __VLS_13({}, ...__VLS_functionalComponentArgsRest(__VLS_13));
     // @ts-ignore
-    [onDragOver, onDragLeave, onDrop, isDragging,];
+    [onDragOver, onDragLeave, onDrop, showMenu, isDragging,];
     var __VLS_9;
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "drag-text" },
@@ -265,96 +294,72 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
 });
 /** @type {__VLS_StyleScopedClasses['hidden-file-input']} */ ;
 let __VLS_17;
-/** @ts-ignore @type { | typeof __VLS_components.elDrawer | typeof __VLS_components.ElDrawer | typeof __VLS_components['el-drawer'] | typeof __VLS_components.elDrawer | typeof __VLS_components.ElDrawer | typeof __VLS_components['el-drawer']} */
-elDrawer;
+/** @ts-ignore @type { | typeof __VLS_components.transition | typeof __VLS_components.Transition | typeof __VLS_components.transition | typeof __VLS_components.Transition} */
+transition;
 // @ts-ignore
 const __VLS_18 = __VLS_asFunctionalComponent1(__VLS_17, new __VLS_17({
-    modelValue: (__VLS_ctx.showMenu),
-    direction: "rtl",
-    size: "320px",
-    showClose: (false),
-    ...{ class: "forty-menu-drawer" },
-    withHeader: (false),
+    name: "home-menu",
 }));
 const __VLS_19 = __VLS_18({
-    modelValue: (__VLS_ctx.showMenu),
-    direction: "rtl",
-    size: "320px",
-    showClose: (false),
-    ...{ class: "forty-menu-drawer" },
-    withHeader: (false),
+    name: "home-menu",
 }, ...__VLS_functionalComponentArgsRest(__VLS_18));
-/** @type {__VLS_StyleScopedClasses['forty-menu-drawer']} */ ;
 const { default: __VLS_22 } = __VLS_20.slots;
-__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-    ...{ class: "drawer-content" },
-});
-/** @type {__VLS_StyleScopedClasses['drawer-content']} */ ;
-__VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-    ...{ class: "drawer-header" },
-});
-/** @type {__VLS_StyleScopedClasses['drawer-header']} */ ;
-__VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
-    ...{ onClick: (...[$event]) => {
-            return (__VLS_ctx.showMenu = false);
-            // @ts-ignore
-            [showMenu, showMenu, goToBookshelf, openBookSourceDialog, triggerBookUpload, openRssSourceDialog, handleFileSelect,];
-        } },
-    ...{ class: "close-btn" },
-    'aria-label': "Close menu",
-});
-/** @type {__VLS_StyleScopedClasses['close-btn']} */ ;
-__VLS_asFunctionalElement1(__VLS_intrinsics.ul, __VLS_intrinsics.ul)({
-    ...{ class: "drawer-links" },
-});
-/** @type {__VLS_StyleScopedClasses['drawer-links']} */ ;
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
-__VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
-    ...{ onClick: (...[$event]) => {
-            return (__VLS_ctx.goTo('/'));
-            // @ts-ignore
-            [goTo,];
-        } },
-    href: "javascript:void(0)",
-});
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
-__VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
-    ...{ onClick: (...[$event]) => {
-            return (__VLS_ctx.goTo('/bookshelf'));
-            // @ts-ignore
-            [goTo,];
-        } },
-    href: "javascript:void(0)",
-});
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
-__VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
-    ...{ onClick: (__VLS_ctx.triggerBookUploadAndCloseMenu) },
-    href: "javascript:void(0)",
-});
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({
-    ...{ class: "divider-li" },
-});
-/** @type {__VLS_StyleScopedClasses['divider-li']} */ ;
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
-__VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
-    href: "https://github.com/neighbourkiller/legado",
-    target: "_blank",
-    rel: "noopener noreferrer",
-});
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
-__VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
-    href: "https://github.com/zsakvo",
-    target: "_blank",
-    rel: "noopener noreferrer",
-});
-__VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
-__VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
-    href: "https://html5up.net",
-    target: "_blank",
-    rel: "noopener noreferrer",
-});
+if (__VLS_ctx.showMenu) {
+    __VLS_asFunctionalElement1(__VLS_intrinsics.nav, __VLS_intrinsics.nav)({
+        ...{ onClick: (...[$event]) => {
+                if (!(__VLS_ctx.showMenu))
+                    throw 0;
+                return (__VLS_ctx.showMenu = false);
+                // @ts-ignore
+                [showMenu, showMenu, goToBookshelf, openBookSourceDialog, triggerBookUpload, openRssSourceDialog, handleFileSelect,];
+            } },
+        id: "menu",
+        ...{ class: "home-menu" },
+        'aria-label': "主页菜单",
+    });
+    /** @type {__VLS_StyleScopedClasses['home-menu']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ class: "menu-inner" },
+    });
+    /** @type {__VLS_StyleScopedClasses['menu-inner']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.ul, __VLS_intrinsics.ul)({
+        ...{ class: "menu-links" },
+    });
+    /** @type {__VLS_StyleScopedClasses['menu-links']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
+        href: "https://github.com/LegadoTeam/legado",
+        target: "_blank",
+        rel: "noopener noreferrer",
+    });
+    __VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
+        href: "https://github.com/zsakvo",
+        target: "_blank",
+        rel: "noopener noreferrer",
+    });
+    __VLS_asFunctionalElement1(__VLS_intrinsics.li, __VLS_intrinsics.li)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
+        href: "https://html5up.net",
+        target: "_blank",
+        rel: "noopener noreferrer",
+    });
+    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+        ...{ onClick: (...[$event]) => {
+                if (!(__VLS_ctx.showMenu))
+                    throw 0;
+                return (__VLS_ctx.showMenu = false);
+                // @ts-ignore
+                [showMenu,];
+            } },
+        ...{ class: "menu-close" },
+        type: "button",
+        'aria-label': "关闭菜单",
+    });
+    /** @type {__VLS_StyleScopedClasses['menu-close']} */ ;
+}
 // @ts-ignore
-[triggerBookUploadAndCloseMenu,];
+[];
 var __VLS_20;
 let __VLS_23;
 /** @ts-ignore @type { | typeof __VLS_components.elDialog | typeof __VLS_components.ElDialog | typeof __VLS_components['el-dialog'] | typeof __VLS_components.elDialog | typeof __VLS_components.ElDialog | typeof __VLS_components['el-dialog']} */

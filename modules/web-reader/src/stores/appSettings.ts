@@ -1,14 +1,18 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import type { HighlightStyleRecord } from '@/storage/db'
 
 export type BookshelfClickAction = 'detail' | 'reader'
 export type ReaderThemeSyncPreference = 'none' | 'sync' | 'independent'
+export type SearchEngine = 'bing' | 'baidu' | 'google'
 
 const STORAGE_KEY = 'legado_app_settings'
 
 interface StoredAppSettings {
   bookshelfClickAction?: BookshelfClickAction
   readerThemeSyncPreference?: ReaderThemeSyncPreference
+  searchEngine?: SearchEngine
+  lastHighlightStyle?: HighlightStyleRecord
 }
 
 function loadStoredSettings(): StoredAppSettings {
@@ -33,6 +37,23 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
       ? stored.readerThemeSyncPreference
       : 'none',
   )
+  const searchEngine = ref<SearchEngine>(
+    stored.searchEngine === 'baidu' || stored.searchEngine === 'google'
+      ? stored.searchEngine
+      : 'bing',
+  )
+  const lastHighlightStyle = ref<HighlightStyleRecord>(
+    stored.lastHighlightStyle?.kind === 'underline'
+      ? {
+          kind: 'underline',
+          color: stored.lastHighlightStyle.color || '#e53935',
+          lineStyle: stored.lastHighlightStyle.lineStyle || 'wavy',
+        }
+      : {
+          kind: 'background',
+          color: stored.lastHighlightStyle?.color || 'rgba(255, 241, 118, 0.5)',
+        },
+  )
 
   const persistSettings = () => {
     localStorage.setItem(
@@ -40,6 +61,8 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
       JSON.stringify({
         bookshelfClickAction: bookshelfClickAction.value,
         readerThemeSyncPreference: readerThemeSyncPreference.value,
+        searchEngine: searchEngine.value,
+        lastHighlightStyle: { ...lastHighlightStyle.value },
       } satisfies StoredAppSettings),
     )
   }
@@ -54,10 +77,24 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     persistSettings()
   }
 
+  const setSearchEngine = (engine: SearchEngine) => {
+    searchEngine.value = engine
+    persistSettings()
+  }
+
+  const setLastHighlightStyle = (style: HighlightStyleRecord) => {
+    lastHighlightStyle.value = { ...style }
+    persistSettings()
+  }
+
   return {
     bookshelfClickAction,
     readerThemeSyncPreference,
+    searchEngine,
+    lastHighlightStyle,
     setBookshelfClickAction,
     setReaderThemeSyncPreference,
+    setSearchEngine,
+    setLastHighlightStyle,
   }
 })

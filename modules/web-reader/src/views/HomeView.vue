@@ -1,57 +1,60 @@
 <template>
   <div
     class="home-wrapper"
+    :class="{ 'menu-open': showMenu }"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
   >
-    <!-- Background and overlay -->
-    <div class="home-bg"></div>
-    <div class="home-overlay"></div>
+    <div class="home-page-content">
+      <!-- Background and overlay -->
+      <div class="home-bg"></div>
+      <div class="home-overlay"></div>
 
-    <!-- Drag overlay -->
-    <transition name="fade">
-      <div v-if="isDragging" class="drag-drop-overlay">
-        <div class="drag-drop-box">
-          <el-icon class="drag-icon"><UploadFilled /></el-icon>
-          <div class="drag-text">释放鼠标导入电子书 (支持 TXT / EPUB)</div>
+      <!-- Drag overlay -->
+      <transition name="fade">
+        <div v-if="isDragging" class="drag-drop-overlay">
+          <div class="drag-drop-box">
+            <el-icon class="drag-icon"><UploadFilled /></el-icon>
+            <div class="drag-text">释放鼠标导入电子书 (支持 TXT / EPUB)</div>
+          </div>
         </div>
-      </div>
-    </transition>
+      </transition>
 
-    <!-- Top Header -->
-    <header class="site-header">
-      <nav class="header-nav">
-        <a href="#menu" class="menu-btn" @click.prevent="showMenu = true">
-          <span>MENU</span>
-        </a>
-      </nav>
-    </header>
+      <!-- Top Header -->
+      <header class="site-header">
+        <nav class="header-nav">
+          <a href="#menu" class="menu-btn" @click.prevent="showMenu = true">
+            <span>MENU</span>
+          </a>
+        </nav>
+      </header>
 
-    <!-- Center Hero Banner -->
-    <main class="banner-section">
-      <div class="banner-inner">
-        <header class="banner-header">
-          <h1 class="banner-title">昨日邻家乞新火，晓窗分与读书灯</h1>
-          <div class="banner-divider"></div>
-        </header>
+      <!-- Center Hero Banner -->
+      <main class="banner-section">
+        <div class="banner-inner">
+          <header class="banner-header">
+            <h1 class="banner-title">昨日邻家乞新火，晓窗分与读书灯</h1>
+            <div class="banner-divider"></div>
+          </header>
 
-        <div class="banner-actions">
-          <button class="nav-button next" @click="goToBookshelf">
-            书架
-          </button>
-          <button class="nav-button next" @click="openBookSourceDialog">
-            书源
-          </button>
-          <button class="nav-button next" @click="triggerBookUpload">
-            传书
-          </button>
-          <button class="nav-button next" @click="openRssSourceDialog">
-            订阅源
-          </button>
+          <div class="banner-actions">
+            <button class="nav-button next" @click="goToBookshelf">
+              书架
+            </button>
+            <button class="nav-button next" @click="openBookSourceDialog">
+              书源
+            </button>
+            <button class="nav-button next" @click="triggerBookUpload">
+              传书
+            </button>
+            <button class="nav-button next" @click="openRssSourceDialog">
+              订阅源
+            </button>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
 
     <!-- Hidden file input for book upload -->
     <input
@@ -63,50 +66,37 @@
       @change="handleFileSelect"
     />
 
-    <!-- Slide-in Drawer Menu -->
-    <el-drawer
-      v-model="showMenu"
-      direction="rtl"
-      size="320px"
-      :show-close="false"
-      class="forty-menu-drawer"
-      :with-header="false"
-    >
-      <div class="drawer-content">
-        <div class="drawer-header">
-          <button class="close-btn" @click="showMenu = false" aria-label="Close menu">
-            &times;
-          </button>
+    <!-- Original Web full-screen menu -->
+    <transition name="home-menu">
+      <nav
+        v-if="showMenu"
+        id="menu"
+        class="home-menu"
+        aria-label="主页菜单"
+        @click.self="showMenu = false"
+      >
+        <div class="menu-inner">
+          <ul class="menu-links">
+            <li>
+              <a href="https://github.com/LegadoTeam/legado" target="_blank" rel="noopener noreferrer">
+                Github
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/zsakvo" target="_blank" rel="noopener noreferrer">
+                zsakvo
+              </a>
+            </li>
+            <li>
+              <a href="https://html5up.net" target="_blank" rel="noopener noreferrer">
+                Design: HTML5 UP
+              </a>
+            </li>
+          </ul>
         </div>
-        <ul class="drawer-links">
-          <li>
-            <a href="javascript:void(0)" @click="goTo('/')">首页</a>
-          </li>
-          <li>
-            <a href="javascript:void(0)" @click="goTo('/bookshelf')">书架</a>
-          </li>
-          <li>
-            <a href="javascript:void(0)" @click="triggerBookUploadAndCloseMenu">传书 / 导入书籍</a>
-          </li>
-          <li class="divider-li"></li>
-          <li>
-            <a href="https://github.com/neighbourkiller/legado" target="_blank" rel="noopener noreferrer">
-              Github
-            </a>
-          </li>
-          <li>
-            <a href="https://github.com/zsakvo" target="_blank" rel="noopener noreferrer">
-              zsakvo
-            </a>
-          </li>
-          <li>
-            <a href="https://html5up.net" target="_blank" rel="noopener noreferrer">
-              Design: HTML5 UP
-            </a>
-          </li>
-        </ul>
-      </div>
-    </el-drawer>
+        <button class="menu-close" type="button" aria-label="关闭菜单" @click="showMenu = false"></button>
+      </nav>
+    </transition>
 
     <!-- Book Source Dialog -->
     <el-dialog
@@ -167,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
@@ -184,6 +174,15 @@ const isDragging = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
 let dragCounter = 0
+
+const handleMenuKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && showMenu.value) {
+    showMenu.value = false
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleMenuKeydown))
+onUnmounted(() => window.removeEventListener('keydown', handleMenuKeydown))
 
 const goToBookshelf = () => {
   router.push('/bookshelf')
@@ -203,16 +202,6 @@ const openRssSourceDialog = () => {
 
 const triggerBookUpload = () => {
   fileInputRef.value?.click()
-}
-
-const triggerBookUploadAndCloseMenu = () => {
-  showMenu.value = false
-  triggerBookUpload()
-}
-
-const goTo = (path: string) => {
-  showMenu.value = false
-  router.push(path)
 }
 
 const onDragOver = (e: DragEvent) => {
@@ -293,7 +282,24 @@ const processFiles = async (files: File[]) => {
   justify-content: space-between;
   color: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background-color: #242943;
+  background-color: #1b1f22;
+}
+
+.home-page-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  transition: filter 0.35s ease, opacity 0.375s ease-out;
+}
+
+.home-wrapper.menu-open .home-page-content {
+  filter: blur(0.5em);
+}
+
+:global(body:has(.home-wrapper.menu-open) .global-settings-button) {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Background image & gradient overlay */
@@ -314,7 +320,7 @@ const processFiles = async (files: File[]) => {
   left: 0;
   width: 100%;
   height: 100%;
-  background: linear-gradient(rgba(17, 21, 37, 0.65), rgba(17, 21, 37, 0.65));
+  background: rgba(0, 0, 0, 0.6);
   z-index: 2;
 }
 
@@ -528,68 +534,118 @@ const processFiles = async (files: File[]) => {
   letter-spacing: 0.1em;
 }
 
-/* Drawer Styling */
-:deep(.forty-menu-drawer) {
-  background-color: rgba(36, 41, 67, 0.96) !important;
-  backdrop-filter: blur(12px);
-}
-
-.drawer-content {
-  height: 100%;
+/* Original Web full-screen menu */
+.home-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 10002;
   display: flex;
-  flex-direction: column;
-  padding: 2.5em 2em;
-  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 3em 2em;
+  background: rgba(0, 0, 0, 0.5);
 }
 
-.drawer-header {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 2em;
+.menu-inner {
+  width: 18em;
+  max-width: 100%;
+  max-height: 100vh;
+  overflow: auto;
+  text-align: center;
 }
 
-.close-btn {
-  background: transparent;
-  border: 0;
-  color: #ffffff;
-  font-size: 2.5rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: color 0.2s ease-in-out;
-}
-
-.close-btn:hover {
-  color: #9bf1ff;
-}
-
-.drawer-links {
+.menu-links {
   list-style: none;
+  margin: 0 0 1em;
   padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25em;
 }
 
-.drawer-links li a {
-  color: #ffffff;
-  text-decoration: none;
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: 0.15em;
-  transition: color 0.2s ease-in-out;
+.menu-links li {
+  padding: 0;
+}
+
+.menu-links a {
   display: block;
-  padding: 0.25em 0;
+  border-top: 1px solid rgba(212, 212, 255, 0.1);
+  color: #ffffff;
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  line-height: 4em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: color 0.2s ease-in-out;
 }
 
-.drawer-links li a:hover {
+.menu-links li:first-child a {
+  border-top: 0;
+}
+
+.menu-links a:hover,
+.menu-links a:active {
   color: #9bf1ff;
 }
 
-.divider-li {
-  height: 1px;
-  background-color: rgba(255, 255, 255, 0.15);
-  margin: 0.5em 0;
+.menu-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8em;
+  height: 4em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.menu-close::before,
+.menu-close::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4em;
+  height: 4em;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.menu-close::before {
+  background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cstyle%3Eline %7B stroke: %23ffffff%3B stroke-width: 2%3B %7D%3C/style%3E%3Cline x1='0' y1='0' x2='20' y2='20' /%3E%3Cline x1='20' y1='0' x2='0' y2='20' /%3E%3C/svg%3E");
+}
+
+.menu-close::after {
+  background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cstyle%3Eline %7B stroke: %239bf1ff%3B stroke-width: 2%3B %7D%3C/style%3E%3Cline x1='0' y1='0' x2='20' y2='20' /%3E%3Cline x1='20' y1='0' x2='0' y2='20' /%3E%3C/svg%3E");
+  opacity: 0;
+}
+
+.menu-close:hover::after,
+.menu-close:active::after {
+  opacity: 1;
+}
+
+.home-menu-enter-active,
+.home-menu-leave-active {
+  transition: opacity 0.35s ease, visibility 0.35s;
+}
+
+.home-menu-enter-active .menu-inner,
+.home-menu-leave-active .menu-inner {
+  transition: transform 0.35s ease-out, opacity 0.35s ease;
+}
+
+.home-menu-enter-from,
+.home-menu-leave-to,
+.home-menu-enter-from .menu-inner,
+.home-menu-leave-to .menu-inner {
+  opacity: 0;
+}
+
+.home-menu-enter-from .menu-inner,
+.home-menu-leave-to .menu-inner {
+  transform: rotateX(20deg);
 }
 
 /* Dialogs */
@@ -671,4 +727,3 @@ const processFiles = async (files: File[]) => {
   }
 }
 </style>
-

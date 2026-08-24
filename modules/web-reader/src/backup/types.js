@@ -8,5 +8,6 @@ export const ANDROID_BACKUP_FILES = [
     'bookmark.json',
     'readRecord.json',
 ];
+export const ANDROID_OPTIONAL_BACKUP_FILES = ['highlight.json', 'replaceRule.json'];
 export const TAURI_DATA_FILE = 'tauri/data.json';
 export const TAURI_MANIFEST_FILE = 'tauri/manifest.json';

@@ -7,6 +7,8 @@ import sourceFixture from '../../test-fixtures/android-compatible/bookSource.jso
 import bookFixture from '../../test-fixtures/android-compatible/bookshelf.json'
 import bookmarkFixture from '../../test-fixtures/android-compatible/bookmark.json'
 import readRecordFixture from '../../test-fixtures/android-compatible/readRecord.json'
+import highlightFixture from '../../test-fixtures/android-compatible/highlight.json'
+import replaceRuleFixture from '../../test-fixtures/android-compatible/replaceRule.json'
 import {
   BACKED_UP_LOCAL_STORAGE_KEYS,
   createBackupArchive,
@@ -86,6 +88,35 @@ describe('Tauri 混合 ZIP', () => {
       }],
       bookmarks: [],
       readingRecords: [],
+      highlights: [{
+        id: 'highlight-1',
+        bookId: onlineBook.meta.id,
+        bookName: onlineBook.meta.name,
+        bookAuthor: onlineBook.meta.author,
+        bookUrl: onlineBook.meta.bookUrl,
+        chapterIndex: 0,
+        chapterTitle: '第一章',
+        startOffset: 0,
+        endOffset: 2,
+        startParagraph: 0,
+        endParagraph: 0,
+        text: '网络',
+        style: { kind: 'background', color: 'rgba(255, 241, 118, 0.5)' },
+        createdAt: 7,
+      }],
+      replaceRules: [{
+        id: 8,
+        name: '规则',
+        pattern: '旧',
+        replacement: '新',
+        scopeTitle: false,
+        scopeSource: false,
+        scopeContent: true,
+        isEnabled: true,
+        isRegex: false,
+        timeoutMillisecond: 3000,
+        order: 1,
+      }],
       settings: [],
       remoteBooks: [],
     }, [...DATABASE_STORE_NAMES])
@@ -98,6 +129,8 @@ describe('Tauri 混合 ZIP', () => {
       'bookshelf.json',
       'bookmark.json',
       'readRecord.json',
+      'highlight.json',
+      'replaceRule.json',
       'tauri/manifest.json',
       'tauri/data.json',
       'tauri/books/000000.txt',
@@ -106,6 +139,8 @@ describe('Tauri 混合 ZIP', () => {
     const parsed = await parseBackupArchive(created.bytes)
     expect(parsed.preview.kind).toBe('tauri')
     expect(parsed.preview.counts.localBooks).toBe(1)
+    expect(parsed.preview.counts.highlights).toBe(1)
+    expect(parsed.preview.counts.replaceRules).toBe(1)
     expect(parsed.localBookFiles.size).toBe(1)
 
     await importDatabaseSnapshot({ books: [], bookSources: [] }, ['books', 'bookSources'])
@@ -116,6 +151,8 @@ describe('Tauri 混合 ZIP', () => {
     const restoredFile = books.find(item => item.meta.id === 'local-fixture')?.fileData
     expect(restoredFile).toBeInstanceOf(ArrayBuffer)
     expect(new TextDecoder().decode(restoredFile as ArrayBuffer)).toBe('本地正文内容')
+    expect(restored.highlights).toHaveLength(1)
+    expect(restored.replaceRules).toHaveLength(1)
   })
 
   it('合并恢复保留快照外数据并按设备合并阅读时长', async () => {
@@ -230,6 +267,8 @@ describe('纯 Android 覆盖边界', () => {
     zip.file('bookshelf.json', JSON.stringify(bookFixture))
     zip.file('bookmark.json', JSON.stringify(bookmarkFixture))
     zip.file('readRecord.json', JSON.stringify(readRecordFixture))
+    zip.file('highlight.json', JSON.stringify(highlightFixture))
+    zip.file('replaceRule.json', JSON.stringify(replaceRuleFixture))
     const parsed = await parseBackupArchive(await zip.generateAsync({ type: 'uint8array' }))
     expect(parsed.preview.kind).toBe('android')
     expect(parsed.preview.counts).toMatchObject({
@@ -237,6 +276,8 @@ describe('纯 Android 覆盖边界', () => {
       onlineBooks: 1,
       bookmarks: 1,
       readingRecords: 1,
+      highlights: 1,
+      replaceRules: 1,
     })
   })
 
@@ -275,5 +316,61 @@ describe('纯 Android 覆盖边界', () => {
     expect(books.some(item => item.meta.bookUrl === 'https://new.example.com/book')).toBe(true)
     expect(snapshot.settings).toEqual([{ key: 'readSettings', fontSize: 20 }])
     expect((snapshot.bookSources as any[]).map(item => item.bookSourceUrl)).toEqual(['https://new.example.com'])
+  })
+
+  it('可选恢复 highlight.json 与 replaceRule.json，缺少时仍兼容旧备份', async () => {
+    const zip = new JSZip()
+    zip.file('bookSource.json', '[]')
+    zip.file('bookshelf.json', JSON.stringify([{
+      bookUrl: onlineBook.meta.bookUrl,
+      origin: onlineBook.meta.sourceUrl,
+      name: onlineBook.meta.name,
+      author: onlineBook.meta.author,
+      totalChapterNum: 1,
+    }]))
+    zip.file('bookmark.json', '[]')
+    zip.file('readRecord.json', '[]')
+    zip.file('highlight.json', JSON.stringify([{
+      time: 123,
+      bookUrl: onlineBook.meta.bookUrl,
+      chapterUrl: onlineBook.chapters[0]?.href,
+      bookName: onlineBook.meta.name,
+      bookAuthor: onlineBook.meta.author,
+      chapterIndex: 0,
+      chapterPos: 1,
+      chapterPosEnd: 3,
+      layoutTitleLength: 0,
+      chapterName: '第一章',
+      bookText: '正文',
+      style: JSON.stringify({ underline: { kind: 'WAVY', color: -65536 } }),
+      note: '安卓备注',
+    }]))
+    zip.file('replaceRule.json', JSON.stringify([{
+      id: 99,
+      name: '安卓规则',
+      pattern: '甲',
+      replacement: '乙',
+      scopeTitle: false,
+      scopeSource: false,
+      scopeContent: true,
+      isEnabled: true,
+      isRegex: false,
+      timeoutMillisecond: 3000,
+      order: 1,
+    }]))
+    const parsed = await parseBackupArchive(await zip.generateAsync({ type: 'uint8array' }))
+    expect(parsed.preview.counts.highlights).toBe(1)
+    expect(parsed.preview.counts.replaceRules).toBe(1)
+    await restoreParsedBackup(parsed, 'overwrite')
+    const snapshot = await exportDatabaseSnapshot()
+    expect((snapshot.highlights as any[])[0]).toMatchObject({ note: '安卓备注' })
+    expect((snapshot.replaceRules as any[])[0]).toMatchObject({ id: 99, name: '安卓规则' })
+
+    const legacy = new JSZip()
+    legacy.file('bookSource.json', '[]')
+    legacy.file('bookshelf.json', '[]')
+    legacy.file('bookmark.json', '[]')
+    legacy.file('readRecord.json', '[]')
+    await expect(parseBackupArchive(await legacy.generateAsync({ type: 'uint8array' }))).resolves.toBeTruthy()
   })
 })

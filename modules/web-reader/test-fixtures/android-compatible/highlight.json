@@ -1,0 +1,17 @@
+[
+  {
+    "time": 1787533200003,
+    "bookUrl": "https://book.example.com/fixture",
+    "chapterUrl": "https://book.example.com/fixture/3",
+    "bookName": "Tauri 兼容测试书",
+    "bookAuthor": "兼容作者",
+    "chapterIndex": 2,
+    "chapterPos": 18,
+    "chapterPosEnd": 26,
+    "layoutTitleLength": 0,
+    "chapterName": "第三章",
+    "bookText": "这是跨端高亮",
+    "style": "{\"underline\":{\"kind\":\"WAVY\",\"color\":-65536}}",
+    "note": "桌面端高亮备注"
+  }
+]

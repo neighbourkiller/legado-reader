@@ -2,6 +2,8 @@ import type { StoredBook } from '@/parsers/types'
 import type {
   BookmarkRecord,
   DatabaseSnapshot,
+  HighlightRecord,
+  ReplaceRuleRecord,
   ReadingRecord,
   StoredChapterContent,
 } from '@/storage/db'
@@ -17,6 +19,8 @@ export const ANDROID_BACKUP_FILES = [
   'bookmark.json',
   'readRecord.json',
 ] as const
+
+export const ANDROID_OPTIONAL_BACKUP_FILES = ['highlight.json', 'replaceRule.json'] as const
 
 export const TAURI_DATA_FILE = 'tauri/data.json'
 export const TAURI_MANIFEST_FILE = 'tauri/manifest.json'
@@ -38,6 +42,8 @@ export interface BackupManifestV1 {
     bookmarks: number
     readingRecords: number
     chapterContents: number
+    highlights: number
+    replaceRules: number
   }
   checksums: Record<string, string>
 }
@@ -98,11 +104,31 @@ export interface AndroidReadRecord {
   lastRead: number
 }
 
+export interface AndroidBookHighlight {
+  time: number
+  bookUrl: string
+  chapterUrl: string
+  bookName: string
+  bookAuthor: string
+  chapterIndex: number
+  chapterPos: number
+  chapterPosEnd: number
+  layoutTitleLength: number
+  chapterName: string
+  bookText: string
+  style: string
+  note: string
+}
+
+export type AndroidReplaceRule = ReplaceRuleRecord
+
 export interface AndroidBackupData {
   bookSources: Record<string, unknown>[]
   books: AndroidBook[]
   bookmarks: AndroidBookmark[]
   readingRecords: AndroidReadRecord[]
+  highlights: AndroidBookHighlight[]
+  replaceRules: AndroidReplaceRule[]
 }
 
 export interface BackupPreview {
@@ -135,4 +161,6 @@ export interface AndroidConversionContext {
   chapterContents: StoredChapterContent[]
   bookmarks: BookmarkRecord[]
   readingRecords: ReadingRecord[]
+  highlights: HighlightRecord[]
+  replaceRules: ReplaceRuleRecord[]
 }

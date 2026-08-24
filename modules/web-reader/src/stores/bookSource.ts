@@ -6,9 +6,27 @@ import {
   saveBookSource,
   deleteBookSource as deleteBookSourceFromDB,
   importBookSources as importBookSourcesToDB,
+  getAllReplaceRules,
+  saveReplaceRule,
 } from '@/storage/db'
 import { getTransport } from '@/source/transport'
 import { getDefaultUserAgent } from '@/source/engine/SourceEngine'
+import { applyRulesToSourceJson, ReplacementTimeoutError } from '@/utils/replaceRules'
+
+export interface SourceImportPreview {
+  original: Record<string, unknown>[]
+  replaced: Record<string, unknown>[]
+  changed: number
+  errors: Array<{ name: string; message: string }>
+}
+
+export interface SourceImportResult {
+  total: number
+  unique: number
+  duplicates: number
+  changed: number
+  replacementErrors: number
+}
 
 export const useBookSourceStore = defineStore('bookSource', () => {
   const sources = ref<BookSource[]>([])
@@ -57,7 +75,7 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     sources.value = []
   }
 
-  async function importSources(jsonText: string): Promise<{ total: number; unique: number; duplicates: number }> {
+  function parseSources(jsonText: string): Record<string, unknown>[] {
     let parsed: unknown
     const trimmed = jsonText.trim()
     try {
@@ -104,16 +122,58 @@ export const useBookSourceStore = defineStore('bookSource', () => {
       throw new Error('数据中未包含有效的书源规则对象')
     }
 
+    return validList
+  }
+
+  async function previewSourceImport(jsonText: string): Promise<SourceImportPreview> {
+    const original = parseSources(jsonText)
+    const rules = await getAllReplaceRules()
+    const replaced: Record<string, unknown>[] = []
+    const errors: SourceImportPreview['errors'] = []
+    let changed = 0
+    for (const source of original) {
+      try {
+        const result = await applyRulesToSourceJson(source, rules)
+        replaced.push(result)
+        if (JSON.stringify(result) !== JSON.stringify(source)) changed += 1
+      } catch (error) {
+        if (error instanceof ReplacementTimeoutError) {
+          await saveReplaceRule({ ...error.rule, isEnabled: false }).catch(console.error)
+        }
+        replaced.push(source)
+        errors.push({
+          name: String(source.bookSourceName || source.bookSourceUrl || '未命名书源'),
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return { original, replaced, changed, errors }
+  }
+
+  async function importPreparedSources(
+    preview: SourceImportPreview,
+    useReplacement: boolean,
+  ): Promise<SourceImportResult> {
+    if (useReplacement && preview.errors.length > 0) {
+      throw new Error(`有 ${preview.errors.length} 条书源替换失败，请改为导入原始书源或修正规则`)
+    }
+    const validList = useReplacement ? preview.replaced : preview.original
     const uniqueCount = await importBookSourcesToDB(validList)
     await loadSources()
     return {
       total: validList.length,
       unique: uniqueCount,
       duplicates: validList.length - uniqueCount,
+      changed: useReplacement ? preview.changed : 0,
+      replacementErrors: preview.errors.length,
     }
   }
 
-  async function importSourcesFromUrl(url: string): Promise<{ total: number; unique: number; duplicates: number }> {
+  async function importSources(jsonText: string, useReplacement = true): Promise<SourceImportResult> {
+    return importPreparedSources(await previewSourceImport(jsonText), useReplacement)
+  }
+
+  async function fetchSourceText(url: string): Promise<string> {
     const targetUrl = url.trim()
     if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
       throw new Error('请输入以 http:// 或 https:// 开头的有效链接')
@@ -134,9 +194,15 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`网络请求失败 (HTTP ${res.status})`)
     }
+    return new TextDecoder(res.charset || 'utf-8').decode(res.body)
+  }
 
-    const text = new TextDecoder(res.charset || 'utf-8').decode(res.body)
-    return await importSources(text)
+  async function previewSourceImportFromUrl(url: string): Promise<SourceImportPreview> {
+    return previewSourceImport(await fetchSourceText(url))
+  }
+
+  async function importSourcesFromUrl(url: string, useReplacement = true): Promise<SourceImportResult> {
+    return importSources(await fetchSourceText(url), useReplacement)
   }
 
   async function toggleSource(bookSourceUrl: string) {
@@ -182,6 +248,9 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     deleteAllSources,
     importSources,
     importSourcesFromUrl,
+    previewSourceImport,
+    previewSourceImportFromUrl,
+    importPreparedSources,
     toggleSource,
     setAllSourcesEnabled,
     getEnabledSources,

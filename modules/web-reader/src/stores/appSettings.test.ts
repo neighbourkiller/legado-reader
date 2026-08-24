@@ -43,12 +43,22 @@ describe('应用偏好持久化', () => {
     expect(JSON.parse(localStorage.getItem('legado_app_settings')!)).toEqual({
       bookshelfClickAction: 'detail',
       readerThemeSyncPreference: 'sync',
+      searchEngine: 'bing',
+      lastHighlightStyle: {
+        kind: 'background',
+        color: 'rgba(255, 241, 118, 0.5)',
+      },
     })
 
     store.setBookshelfClickAction('reader')
     expect(JSON.parse(localStorage.getItem('legado_app_settings')!)).toEqual({
       bookshelfClickAction: 'reader',
       readerThemeSyncPreference: 'sync',
+      searchEngine: 'bing',
+      lastHighlightStyle: {
+        kind: 'background',
+        color: 'rgba(255, 241, 118, 0.5)',
+      },
     })
   })
 })

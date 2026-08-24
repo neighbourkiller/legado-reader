@@ -1,7 +1,10 @@
 <template>
   <el-config-provider>
-    <div class="app-container">
-      <router-view />
+    <div class="app-container" :class="{ 'desktop-app': isDesktop }">
+      <AppTitleBar v-if="isDesktop && !isFullscreen" />
+      <div class="app-content">
+        <router-view />
+      </div>
       <GlobalDownloadProgress />
       <ThemeSyncDialog />
       <GlobalHomeButton v-if="isDesktop" />
@@ -18,13 +21,14 @@ import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
 import ThemeSyncDialog from '@/components/ThemeSyncDialog.vue'
 import GlobalHomeButton from '@/components/GlobalHomeButton.vue'
 import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue'
+import AppTitleBar from '@/components/AppTitleBar.vue'
 
 const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 // Initialize theme globally
 useTheme()
 
-const { toggleFullscreen, exitFullscreen } = useFullscreen()
+const { isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen()
 
 const handleGlobalKeyDown = async (e: KeyboardEvent) => {
   if (e.key === 'F11') {
@@ -65,5 +69,26 @@ html, body, #app {
   min-height: 100%;
   margin: 0;
   padding: 0;
+}
+
+.desktop-app {
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.desktop-app .app-content > :deep(*) {
+  height: 100% !important;
+  min-height: 100% !important;
 }
 </style>
