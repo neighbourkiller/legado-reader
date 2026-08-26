@@ -4,8 +4,12 @@ use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Manager};
 use url::Url;
+
+use crate::storage::StorageDb;
 
 const DEFAULT_SERVER_URL: &str = "https://dav.jianguoyun.com/dav/";
 const DEFAULT_DIRECTORY: &str = "legado/";
@@ -178,26 +182,50 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn load_config(app: &AppHandle) -> Result<WebDavConfig, String> {
-    let path = config_path(app)?;
-    if !path.exists() {
-        return Ok(WebDavConfig::default());
+    if let Some(storage_db) = app.try_state::<Arc<StorageDb>>() {
+        if let Ok(Some(raw)) = storage_db.get_preference("legado_webdav_config") {
+            if let Ok(config) = serde_json::from_str::<WebDavConfig>(&raw) {
+                return normalized_config(config);
+            }
+        }
     }
-    let raw = fs::read_to_string(path).map_err(|error| format!("无法读取 WebDAV 配置：{error}"))?;
-    let config: WebDavConfig =
-        serde_json::from_str(&raw).map_err(|error| format!("WebDAV 配置已损坏：{error}"))?;
-    normalized_config(config)
+
+    // 回退或读取旧 webdav.json 迁移
+    if let Ok(path) = config_path(app) {
+        if path.exists() {
+            if let Ok(raw) = fs::read_to_string(&path) {
+                if let Ok(config) = serde_json::from_str::<WebDavConfig>(&raw) {
+                    if let Some(storage_db) = app.try_state::<Arc<StorageDb>>() {
+                        let _ = storage_db.save_preference("legado_webdav_config", &raw);
+                        let _ = fs::remove_file(path);
+                    }
+                    return normalized_config(config);
+                }
+            }
+        }
+    }
+
+    Ok(WebDavConfig::default())
 }
 
 fn save_config_file(app: &AppHandle, config: &WebDavConfig) -> Result<(), String> {
+    let raw = serde_json::to_string_pretty(config)
+        .map_err(|error| format!("无法序列化 WebDAV 配置：{error}"))?;
+
+    if let Some(storage_db) = app.try_state::<Arc<StorageDb>>() {
+        storage_db
+            .save_preference("legado_webdav_config", &raw)
+            .map_err(|e| format!("保存 WebDAV 配置失败: {e}"))?;
+        return Ok(());
+    }
+
     let path = config_path(app)?;
     let parent = path
         .parent()
         .ok_or_else(|| "WebDAV 配置路径无效".to_string())?;
     fs::create_dir_all(parent).map_err(|error| format!("无法创建应用配置目录：{error}"))?;
     let temporary = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(config)
-        .map_err(|error| format!("无法序列化 WebDAV 配置：{error}"))?;
-    fs::write(&temporary, bytes).map_err(|error| format!("无法写入 WebDAV 配置：{error}"))?;
+    fs::write(&temporary, &raw).map_err(|error| format!("无法写入 WebDAV 配置：{error}"))?;
     fs::rename(&temporary, &path).map_err(|error| format!("无法保存 WebDAV 配置：{error}"))
 }
 
@@ -509,10 +537,37 @@ pub async fn list_webdav_backups(app: AppHandle) -> Result<Vec<WebDavBackupFile>
 #[tauri::command]
 pub async fn upload_webdav_backup(
     app: AppHandle,
-    name: String,
-    data: Vec<u8>,
+    request: Request<'_>,
 ) -> Result<(), String> {
+    let body = match request.body() {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        _ => return Err("请求体必须为原始二进制".to_string()),
+    };
+
+    // 优先从命令请求 Header 中获取独立验证的文件名参数
+    let (name, data) = if let Some(header_val) = request.headers().get("x-backup-name") {
+        let raw = header_val
+            .to_str()
+            .map_err(|e| format!("备份文件名 Header 无效: {e}"))?;
+        let decoded = percent_encoding::percent_decode_str(raw)
+            .decode_utf8_lossy()
+            .to_string();
+        (decoded, body)
+    } else if body.len() >= 4 {
+        let name_len = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
+        if body.len() < 4 + name_len {
+            return Err("备份文件名数据截断".to_string());
+        }
+        let name = String::from_utf8(body[4..4 + name_len].to_vec())
+            .map_err(|e| format!("文件名不是有效 UTF-8: {e}"))?;
+        let data = body[4 + name_len..].to_vec();
+        (name, data)
+    } else {
+        return Err("缺少备份文件名参数".to_string());
+    };
+
     validate_backup_name(&name)?;
+
     let config = load_config(&app)?;
     let password = resolved_password(&config, None, &SystemCredentialStore)?;
     let client = webdav_client()?;
@@ -520,11 +575,12 @@ pub async fn upload_webdav_backup(
 }
 
 #[tauri::command]
-pub async fn download_webdav_backup(app: AppHandle, name: String) -> Result<Vec<u8>, String> {
+pub async fn download_webdav_backup(app: AppHandle, name: String) -> Result<Response, String> {
     validate_backup_name(&name)?;
     let config = load_config(&app)?;
     let password = resolved_password(&config, None, &SystemCredentialStore)?;
-    get_backup(&webdav_client()?, &config, &password, &name).await
+    let bytes = get_backup(&webdav_client()?, &config, &password, &name).await?;
+    Ok(Response::new(bytes))
 }
 
 #[cfg(test)]

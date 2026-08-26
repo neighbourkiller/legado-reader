@@ -1,4 +1,5 @@
 import { ref, computed, watchEffect } from 'vue'
+import { getPreference, setPreference } from '@/storage/preferences'
 
 export type ThemeMode = 'auto' | 'light' | 'dark'
 export type ThemeAccent = 'blue' | 'purple' | 'cyan' | 'green' | 'orange' | 'rose'
@@ -27,7 +28,7 @@ const validThemeModes = new Set<ThemeMode>(['auto', 'light', 'dark'])
 const validThemeAccents = new Set<ThemeAccent>(THEME_ACCENT_OPTIONS.map(option => option.value))
 
 function readStorage(key: string): string | null {
-  return typeof localStorage === 'undefined' ? null : localStorage.getItem(key)
+  return getPreference(key)
 }
 
 function getStoredThemeMode(): ThemeMode {
@@ -42,6 +43,11 @@ function getStoredThemeAccent(): ThemeAccent {
 
 const themeMode = ref<ThemeMode>(getStoredThemeMode())
 const themeAccent = ref<ThemeAccent>(getStoredThemeAccent())
+
+export function hydrateTheme(): void {
+  themeMode.value = getStoredThemeMode()
+  themeAccent.value = getStoredThemeAccent()
+}
 
 const systemPrefersDark = ref(
   typeof window !== 'undefined' && window.matchMedia
@@ -112,15 +118,27 @@ watchEffect(() => {
   }
 })
 
+const themeSaveError = ref<string | null>(null)
+
 export function useTheme() {
   const applyTheme = (mode: ThemeMode) => {
     themeMode.value = mode
-    if (typeof localStorage !== 'undefined') localStorage.setItem(THEME_STORAGE_KEY, mode)
+    themeSaveError.value = null
+    setPreference(THEME_STORAGE_KEY, mode).catch(e => {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('保存主题模式偏好失败:', e)
+      themeSaveError.value = msg
+    })
   }
 
   const setAccent = (accent: ThemeAccent) => {
     themeAccent.value = accent
-    if (typeof localStorage !== 'undefined') localStorage.setItem(THEME_ACCENT_STORAGE_KEY, accent)
+    themeSaveError.value = null
+    setPreference(THEME_ACCENT_STORAGE_KEY, accent).catch(e => {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('保存强调色偏好失败:', e)
+      themeSaveError.value = msg
+    })
   }
 
   return {
@@ -128,6 +146,7 @@ export function useTheme() {
     themeAccent,
     systemPrefersDark,
     isDark,
+    themeSaveError,
     applyTheme,
     setAccent,
   }

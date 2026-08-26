@@ -1,6 +1,12 @@
 <template>
   <el-config-provider>
-    <div class="app-container" :class="{ 'desktop-app': isDesktop }">
+    <div
+      class="app-container"
+      :class="{
+        'desktop-app': isDesktop,
+        'desktop-app-with-titlebar': isDesktop && !isFullscreen,
+      }"
+    >
       <AppTitleBar v-if="isDesktop && !isFullscreen" />
       <div class="app-content">
         <router-view />
@@ -72,11 +78,16 @@ html, body, #app {
 }
 
 .desktop-app {
+  --reader-toolbar-top: 0px;
   display: flex;
   height: 100vh;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+}
+
+.desktop-app-with-titlebar {
+  --reader-toolbar-top: 36px;
 }
 
 .app-content {

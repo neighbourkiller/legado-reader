@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { HighlightStyleRecord } from '@/storage/db'
+import { getPreference, setPreference } from '@/storage/preferences'
 
 export type BookshelfClickAction = 'detail' | 'reader'
 export type ReaderThemeSyncPreference = 'none' | 'sync' | 'independent'
@@ -17,7 +18,7 @@ interface StoredAppSettings {
 
 function loadStoredSettings(): StoredAppSettings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = getPreference(STORAGE_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as StoredAppSettings
     return parsed && typeof parsed === 'object' ? parsed : {}
@@ -28,6 +29,8 @@ function loadStoredSettings(): StoredAppSettings {
 
 export const useAppSettingsStore = defineStore('appSettings', () => {
   const stored = loadStoredSettings()
+  const saveError = ref<string | null>(null)
+
   const bookshelfClickAction = ref<BookshelfClickAction>(
     stored.bookshelfClickAction === 'detail' ? 'detail' : 'reader',
   )
@@ -56,15 +59,19 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
   )
 
   const persistSettings = () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        bookshelfClickAction: bookshelfClickAction.value,
-        readerThemeSyncPreference: readerThemeSyncPreference.value,
-        searchEngine: searchEngine.value,
-        lastHighlightStyle: { ...lastHighlightStyle.value },
-      } satisfies StoredAppSettings),
-    )
+    saveError.value = null
+    const payload = JSON.stringify({
+      bookshelfClickAction: bookshelfClickAction.value,
+      readerThemeSyncPreference: readerThemeSyncPreference.value,
+      searchEngine: searchEngine.value,
+      lastHighlightStyle: { ...lastHighlightStyle.value },
+    } satisfies StoredAppSettings)
+
+    setPreference(STORAGE_KEY, payload).catch(err => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('持久化应用设置失败:', err)
+      saveError.value = msg
+    })
   }
 
   const setBookshelfClickAction = (action: BookshelfClickAction) => {
@@ -92,6 +99,7 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     readerThemeSyncPreference,
     searchEngine,
     lastHighlightStyle,
+    saveError,
     setBookshelfClickAction,
     setReaderThemeSyncPreference,
     setSearchEngine,

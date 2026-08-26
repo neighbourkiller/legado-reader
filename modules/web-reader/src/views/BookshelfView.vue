@@ -137,6 +137,10 @@
         description="书架空空如也，去导入电子书吧"
         class="shelf-empty"
       >
+        <StartupRestoreGuide
+          v-if="showStartupRestoreGuide"
+          @restored="reloadAfterRestore"
+        />
         <el-button type="primary" :icon="Plus" @click="triggerUpload">
           立即导入书籍
         </el-button>
@@ -236,13 +240,17 @@ import '@/assets/fonts/shelffont.css'
 import defaultCover from '@/assets/imgs/default_cover.jpg'
 import type { BookMeta } from '@/parsers/types'
 import BookCard from '@/components/BookCard.vue'
+import StartupRestoreGuide from '@/components/StartupRestoreGuide.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import { shouldShowStartupRestoreGuide } from '@/backup/startupRestore'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import { useAppSettingsStore } from '@/stores/appSettings'
 import { useTheme } from '@/composables/useTheme'
 
+import { platform } from '@/platform/capabilities'
+
 const router = useRouter()
-const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
+const isDesktop = platform.isDesktop
 const bookshelfStore = useBookshelfStore()
 const appSettingsStore = useAppSettingsStore()
 const { isDark } = useTheme()
@@ -297,6 +305,16 @@ const filteredBooks = computed(() => {
     return b.lastReadTime - a.lastReadTime
   })
 })
+
+const showStartupRestoreGuide = computed(() => shouldShowStartupRestoreGuide(
+  isDesktop,
+  bookshelfStore.isLoading,
+  bookshelfStore.books.length,
+))
+
+const reloadAfterRestore = () => {
+  window.location.reload()
+}
 
 const handleBookshelfSortCommand = (command: string) => {
   if (command in bookshelfSortLabels) {

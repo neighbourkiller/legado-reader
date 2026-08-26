@@ -13,7 +13,10 @@ import {
   type HighlightRecord,
   type ReplaceRuleRecord,
   type StoredChapterContent,
+  exportSnapshotViaSession,
+  importSnapshotViaStaging,
 } from '@/storage/db'
+import { StorageError } from '@/storage/types'
 import {
   createAndroidBackupData,
   fromAndroidBook,
@@ -21,6 +24,7 @@ import {
   fromAndroidHighlight,
   fromAndroidReadRecords,
 } from './compat'
+import { platform } from '@/platform/capabilities'
 import {
   ANDROID_BACKUP_FILES,
   ANDROID_OPTIONAL_BACKUP_FILES,
@@ -208,66 +212,103 @@ export async function createBackupArchive(appVersion = '1.0.0'): Promise<{
   manifest: BackupManifestV1
   positionFallbacks: number
 }> {
-  const snapshot = await exportDatabaseSnapshot()
-  const books = storeRecords<StoredBook>(snapshot, 'books')
-  const chapterContents = storeRecords<StoredChapterContent>(snapshot, 'chapterContents')
-  const bookmarks = storeRecords<BookmarkRecord>(snapshot, 'bookmarks')
-  const readingRecords = storeRecords<ReadingRecord>(snapshot, 'readingRecords')
-  const highlights = storeRecords<HighlightRecord>(snapshot, 'highlights')
-  const replaceRules = storeRecords<ReplaceRuleRecord>(snapshot, 'replaceRules')
-  const converted = createAndroidBackupData({
-    books,
-    chapterContents,
-    bookmarks,
-    readingRecords,
-    highlights,
-    replaceRules,
-  })
-  converted.data.bookSources = storeRecords<Record<string, unknown>>(snapshot, 'bookSources')
+  let snapshot: DatabaseSnapshot
+  let localStorageSnapshot: Record<string, string | null>
+  let readBookBlob: ((bookId: string) => Promise<ArrayBuffer>) | null = null
+  let closeExportSession: (() => Promise<void>) | null = null
 
-  const zip = new JSZip()
-  const checksums: Record<string, string> = {}
-  const addChecked = async (path: string, bytes: Uint8Array) => {
-    checksums[path] = await sha256(bytes)
-    zip.file(path, bytes)
+  if (platform.isDesktop) {
+    const session = await exportSnapshotViaSession()
+    snapshot = session.snapshot
+    localStorageSnapshot = session.preferences
+    readBookBlob = session.readBookFile
+    closeExportSession = session.closeSession
+  } else {
+    snapshot = await exportDatabaseSnapshot()
+    localStorageSnapshot = Object.fromEntries(
+      BACKED_UP_LOCAL_STORAGE_KEYS.map(key => [key, localStorage.getItem(key)]),
+    )
   }
 
-  await addChecked('bookSource.json', jsonBytes(converted.data.bookSources))
-  await addChecked('bookshelf.json', jsonBytes(converted.data.books))
-  await addChecked('bookmark.json', jsonBytes(converted.data.bookmarks))
-  await addChecked('readRecord.json', jsonBytes(converted.data.readingRecords))
-  await addChecked('highlight.json', jsonBytes(converted.data.highlights))
-  await addChecked('replaceRule.json', jsonBytes(converted.data.replaceRules))
+  try {
+    const books = storeRecords<StoredBook>(snapshot, 'books')
+    const chapterContents = storeRecords<StoredChapterContent>(snapshot, 'chapterContents')
+    const bookmarks = storeRecords<BookmarkRecord>(snapshot, 'bookmarks')
+    const readingRecords = storeRecords<ReadingRecord>(snapshot, 'readingRecords')
+    const highlights = storeRecords<HighlightRecord>(snapshot, 'highlights')
+    const replaceRules = storeRecords<ReplaceRuleRecord>(snapshot, 'replaceRules')
+    const converted = createAndroidBackupData({
+      books,
+      chapterContents,
+      bookmarks,
+      readingRecords,
+      highlights,
+      replaceRules,
+    })
+    converted.data.bookSources = storeRecords<Record<string, unknown>>(snapshot, 'bookSources')
 
-  const backupBooks: TauriBackupBook[] = []
-  for (let index = 0; index < books.length; index += 1) {
-    const book = books[index]!
-    const backupBook: TauriBackupBook = {
-      meta: JSON.parse(JSON.stringify(book.meta)),
-      chapters: JSON.parse(JSON.stringify(book.chapters)),
-      fileData: null,
+    const zip = new JSZip()
+    const checksums: Record<string, string> = {}
+    const addChecked = async (path: string, bytes: Uint8Array) => {
+      checksums[path] = await sha256(bytes)
+      zip.file(path, bytes)
     }
-    if (book.fileData) {
-      const fileEntry = `tauri/books/${String(index).padStart(6, '0')}.${book.meta.format}`
-      backupBook.fileEntry = fileEntry
-      await addChecked(fileEntry, new Uint8Array(book.fileData))
-    }
-    backupBooks.push(backupBook)
-  }
 
-  const database: Omit<DatabaseSnapshot, 'books'> & { books?: TauriBackupBook[] } = {
-    ...snapshot,
-    books: backupBooks,
-  }
-  const localStorageSnapshot = Object.fromEntries(
-    BACKED_UP_LOCAL_STORAGE_KEYS.map(key => [key, localStorage.getItem(key)]),
-  )
-  const tauriData: TauriBackupDataV1 = {
-    version: 1,
-    database,
-    localStorage: localStorageSnapshot,
-  }
-  await addChecked(TAURI_DATA_FILE, jsonBytes(tauriData))
+    await addChecked('bookSource.json', jsonBytes(converted.data.bookSources))
+    await addChecked('bookshelf.json', jsonBytes(converted.data.books))
+    await addChecked('bookmark.json', jsonBytes(converted.data.bookmarks))
+    await addChecked('readRecord.json', jsonBytes(converted.data.readingRecords))
+    await addChecked('highlight.json', jsonBytes(converted.data.highlights))
+    await addChecked('replaceRule.json', jsonBytes(converted.data.replaceRules))
+
+    const backupBooks: TauriBackupBook[] = []
+    for (let index = 0; index < books.length; index += 1) {
+      const book = books[index]!
+      const backupBook: TauriBackupBook = {
+        meta: JSON.parse(JSON.stringify(book.meta)),
+        chapters: JSON.parse(JSON.stringify(book.chapters)),
+        fileData: null,
+      }
+
+      let fileBytes: Uint8Array | null = null
+      if (readBookBlob && book.meta?.format !== 'online') {
+        try {
+          const ab = await readBookBlob(book.meta.id)
+          if (ab && ab.byteLength > 0) {
+            fileBytes = new Uint8Array(ab)
+          }
+        } catch (err: unknown) {
+          const isNotFound =
+            err instanceof StorageError
+              ? err.code === 'NOT_FOUND'
+              : (err as any)?.code === 'NOT_FOUND'
+          if (!isNotFound) {
+            const msg = err instanceof Error ? err.message : String(err)
+            throw new Error(`读取本地书籍「${book.meta.name}」正文失败，备份已中止: ${msg}`)
+          }
+        }
+      } else if (book.fileData) {
+        fileBytes = new Uint8Array(book.fileData)
+      }
+
+      if (fileBytes && fileBytes.byteLength > 0) {
+        const fileEntry = `tauri/books/${String(index).padStart(6, '0')}.${book.meta.format}`
+        backupBook.fileEntry = fileEntry
+        await addChecked(fileEntry, fileBytes)
+      }
+      backupBooks.push(backupBook)
+    }
+
+    const database: Omit<DatabaseSnapshot, 'books'> & { books?: TauriBackupBook[] } = {
+      ...snapshot,
+      books: backupBooks,
+    }
+    const tauriData: TauriBackupDataV1 = {
+      version: 1,
+      database,
+      localStorage: localStorageSnapshot,
+    }
+    await addChecked(TAURI_DATA_FILE, jsonBytes(tauriData))
 
   const manifest: BackupManifestV1 = {
     format: BACKUP_FORMAT,
@@ -290,10 +331,15 @@ export async function createBackupArchive(appVersion = '1.0.0'): Promise<{
   }
   zip.file(TAURI_MANIFEST_FILE, jsonBytes(manifest))
 
-  return {
-    bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }),
-    manifest,
-    positionFallbacks: converted.positionFallbacks,
+    return {
+      bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }),
+      manifest,
+      positionFallbacks: converted.positionFallbacks,
+    }
+  } finally {
+    if (closeExportSession) {
+      await closeExportSession()
+    }
   }
 }
 
@@ -684,17 +730,32 @@ export async function restoreParsedBackup(
     skippedAndroidHighlights = android.skippedHighlights
   }
 
-  try {
-    await importDatabaseSnapshot(target, clearStores)
-    if (targetLocalStorage) applyLocalStorage(targetLocalStorage)
-  } catch (error) {
-    try {
-      await importDatabaseSnapshot(originalDatabase, clearStores)
-      applyLocalStorage(originalLocalStorage)
-    } catch (rollbackError) {
-      console.error('恢复失败后的回滚也失败', rollbackError)
+  if (platform.isDesktop) {
+    const bookFiles = new Map<string, ArrayBuffer | Uint8Array>()
+    if (parsed.tauriData?.database.books) {
+      for (const book of parsed.tauriData.database.books) {
+        if (book.fileEntry && book.meta?.id) {
+          const file = parsed.localBookFiles.get(book.fileEntry)
+          if (file) {
+            bookFiles.set(book.meta.id, file)
+          }
+        }
+      }
     }
-    throw error
+    await importSnapshotViaStaging(target, clearStores, targetLocalStorage, bookFiles)
+  } else {
+    try {
+      await importDatabaseSnapshot(target, clearStores)
+      if (targetLocalStorage) applyLocalStorage(targetLocalStorage)
+    } catch (error) {
+      try {
+        await importDatabaseSnapshot(originalDatabase, clearStores)
+        applyLocalStorage(originalLocalStorage)
+      } catch (rollbackError) {
+        console.error('恢复失败后的回滚也失败', rollbackError)
+      }
+      throw error
+    }
   }
 
   return {

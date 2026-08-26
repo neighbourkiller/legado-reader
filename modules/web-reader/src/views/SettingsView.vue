@@ -52,6 +52,16 @@
           </div>
         </div>
 
+        <el-alert
+          v-if="appSettingsStore.saveError"
+          type="error"
+          :title="`设置保存失败：${appSettingsStore.saveError}`"
+          show-icon
+          closable
+          style="margin-bottom: 16px"
+          @close="appSettingsStore.saveError = null"
+        />
+
         <div v-if="selectedKey === 'preferences'" class="preference-list">
           <div class="preference-row">
             <div class="preference-copy">

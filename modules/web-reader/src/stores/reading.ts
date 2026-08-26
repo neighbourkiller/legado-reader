@@ -17,6 +17,7 @@ import {
 import { useBookSourceStore } from '@/stores/bookSource'
 import { SourceEngine } from '@/source/engine/SourceEngine'
 import { characterOffsetToParagraphIndex } from '@/backup/compat'
+import { platform } from '@/platform/capabilities'
 
 export interface ChapterPayload {
   index: number
@@ -102,13 +103,22 @@ async function resolveImportedBookmarkPositions(
   }
 }
 
+let cachedDesktopReadSettings: ReadSettings | null = null
+
+export function setCachedDesktopReadSettings(s: ReadSettings): void {
+  cachedDesktopReadSettings = s
+}
+
 export const useReadingStore = defineStore('reading', () => {
   const currentBook = ref<BookMeta | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentContent = ref('')
   const isLoading = ref(false)
   const fileData = ref<ArrayBuffer | null>(null)
-  const settings = ref<ReadSettings>(normalizeSettings(loadLocalSettings()))
+  const initialSettings = platform.isDesktop && cachedDesktopReadSettings
+    ? cachedDesktopReadSettings
+    : normalizeSettings(loadLocalSettings())
+  const settings = ref<ReadSettings>(initialSettings)
   const miniInterface = ref(false)
   const popCataVisible = ref(false)
   const readSettingsVisible = ref(false)
@@ -131,6 +141,17 @@ export const useReadingStore = defineStore('reading', () => {
 
   async function hydrateSettings() {
     if (settingsHydrated) return
+    if (platform.isDesktop) {
+      if (cachedDesktopReadSettings) {
+        settings.value = cachedDesktopReadSettings
+      } else {
+        settings.value = await loadSettings()
+        cachedDesktopReadSettings = settings.value
+      }
+      settingsHydrated = true
+      return
+    }
+
     const dbSettings = await loadSettings()
     const localSettings = loadLocalSettings()
     // localStorage is written synchronously before IndexedDB. Prefer it when
@@ -247,12 +268,12 @@ export const useReadingStore = defineStore('reading', () => {
           await resolveImportedBookmarkPositions(
             currentBook.value.id,
             index,
-            normalizeOnlineContent(cached.content, chapter.title).join('\n'),
+            normalizeOnlineContent(cached, chapter.title).join('\n'),
           )
           return {
             index,
             title: chapter.title,
-            content: normalizeOnlineContent(cached.content, chapter.title),
+            content: normalizeOnlineContent(cached, chapter.title),
             format: 'txt',
           }
         }
@@ -392,8 +413,30 @@ export const useReadingStore = defineStore('reading', () => {
     }
   }
 
-  async function saveProgress(chapterIndex?: number, chapterPos?: number) {
+  let progressThrottleTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingProgressMeta: { id: string; updates: Partial<BookMeta> } | null = null
+
+  async function flushProgress(): Promise<void> {
+    if (progressThrottleTimer) {
+      clearTimeout(progressThrottleTimer)
+      progressThrottleTimer = null
+    }
+    if (pendingProgressMeta) {
+      const { id, updates } = pendingProgressMeta
+      pendingProgressMeta = null
+      await updateBookMeta(id, updates).catch(err => {
+        console.warn('刷新最新阅读进度失败:', err)
+      })
+    }
+  }
+
+  async function saveProgress(
+    chapterIndex?: number,
+    chapterPos?: number,
+    immediate = false,
+  ) {
     if (!currentBook.value) return
+    const prevChapter = currentBook.value.currentChapter
     const targetIndex = chapterIndex !== undefined ? chapterIndex : currentBook.value.currentChapter
     currentBook.value.currentChapter = targetIndex
     currentBook.value.currentProgress = Math.round(
@@ -408,22 +451,50 @@ export const useReadingStore = defineStore('reading', () => {
       currentBook.value.durChapterTitle = chapters.value[targetIndex].title
     }
 
-    await updateBookMeta(currentBook.value.id, {
+    const updates: Partial<BookMeta> = {
       currentChapter: currentBook.value.currentChapter,
       currentProgress: currentBook.value.currentProgress,
       durChapterTitle: currentBook.value.durChapterTitle,
       currentChapterPos: currentBook.value.currentChapterPos,
       legacyChapterCharPos: currentBook.value.legacyChapterCharPos,
       lastReadTime: currentBook.value.lastReadTime,
-    })
+    }
+
+    // 章节切换或指定 immediate 时立即落盘
+    if (immediate || prevChapter !== targetIndex) {
+      await flushProgress()
+      await updateBookMeta(currentBook.value.id, updates)
+      return
+    }
+
+    pendingProgressMeta = { id: currentBook.value.id, updates }
+
+    // 500ms leading / trailing 节流：若定时器未激活，先立即保存一次（leading），并在 500ms 后补提最新一次（trailing）
+    if (!progressThrottleTimer) {
+      await updateBookMeta(currentBook.value.id, updates).catch(err => {
+        console.warn('保存阅读进度失败:', err)
+      })
+      progressThrottleTimer = setTimeout(async () => {
+        progressThrottleTimer = null
+        if (pendingProgressMeta) {
+          const p = pendingProgressMeta
+          pendingProgressMeta = null
+          await updateBookMeta(p.id, p.updates).catch(console.warn)
+        }
+      }, 500)
+    }
   }
 
   async function updateSettings(newSettings: Partial<ReadSettings>) {
     settings.value = normalizeSettings(settings.value, newSettings)
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
-    } catch (e) {
-      console.warn('Failed to write settings to localStorage', e)
+    if (platform.isDesktop) {
+      cachedDesktopReadSettings = settings.value
+    } else {
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
+      } catch (e) {
+        console.warn('Failed to write settings to localStorage', e)
+      }
     }
     await saveSettings(settings.value)
   }
@@ -464,6 +535,7 @@ export const useReadingStore = defineStore('reading', () => {
     nextChapter,
     prevChapter,
     saveProgress,
+    flushProgress,
     updateSettings,
     syncThemeWithGlobal,
     setMiniInterface,

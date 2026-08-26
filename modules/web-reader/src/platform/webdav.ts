@@ -53,11 +53,16 @@ export async function listWebDavBackups(): Promise<WebDavBackupFile[]> {
 
 export async function uploadWebDavBackup(name: string, data: Uint8Array): Promise<void> {
   requireDesktop()
-  return invoke('upload_webdav_backup', { name, data: Array.from(data) })
+  return invoke('upload_webdav_backup', data, {
+    headers: {
+      'x-backup-name': encodeURIComponent(name),
+    },
+  })
 }
 
 export async function downloadWebDavBackup(name: string): Promise<Uint8Array> {
   requireDesktop()
-  const data = await invoke<number[]>('download_webdav_backup', { name })
-  return new Uint8Array(data)
+  const res = await invoke<ArrayBuffer | Uint8Array>('download_webdav_backup', { name })
+  if (res instanceof Uint8Array) return res
+  return new Uint8Array(res)
 }

@@ -1147,7 +1147,7 @@ watchEffect(() => {
 // 监听页面隐藏自动保存进度
 const onVisibilityChange = () => {
   if (document.visibilityState === 'hidden') {
-    if (currentBook.value) store.saveProgress().catch(console.error)
+    if (currentBook.value) store.saveProgress(undefined, undefined, true).catch(console.error)
     flushReadingSession().catch(console.error)
   } else if (supportsBookDetail && currentBook.value && readingSessionStartedAt === 0) {
     readingSessionStartedAt = Date.now()
@@ -1261,6 +1261,7 @@ onUnmounted(() => {
   readSettingsVisible.value = false
   scrollObserver?.disconnect()
   scrollObserver = null
+  store.flushProgress().catch(console.error)
   store.cleanup()
 })
 
@@ -1268,7 +1269,7 @@ onBeforeRouteLeave(() => {
   window.removeEventListener('keyup', handleKeyPress)
   document.removeEventListener('pointerup', onSelectionPointerUp)
   if (currentBook.value) {
-    store.saveProgress().catch(console.error)
+    store.saveProgress(undefined, undefined, true).catch(console.error)
     flushReadingSession(false).catch(console.error)
   }
 })
@@ -1284,6 +1285,12 @@ onBeforeRouteLeave(() => {
   margin-left: 10px;
 }
 
+// App.vue 为桌面端路由根节点设置了 height: 100%。此选择器必须比该规则
+// 更具体，阅读正文超出首屏时才能按内容撑开，不露出全局主题背景。
+:global(.desktop-app .app-content > .chapter-wrapper.chapter-wrapper) {
+  height: auto !important;
+}
+
 .chapter-wrapper {
   padding: 0;
   width: 100%;
@@ -1292,7 +1299,7 @@ onBeforeRouteLeave(() => {
 
   .tool-bar {
     position: fixed;
-    top: 0;
+    top: var(--reader-toolbar-top, 0px);
     left: 50%;
     z-index: 100;
 

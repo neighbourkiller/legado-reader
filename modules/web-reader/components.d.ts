@@ -65,6 +65,7 @@ declare module 'vue' {
     SourceAuthDialog: typeof import('./src/components/SourceAuthDialog.vue')['default']
     SourceDebugDialog: typeof import('./src/components/SourceDebugDialog.vue')['default']
     SourceEditDialog: typeof import('./src/components/SourceEditDialog.vue')['default']
+    StartupRestoreGuide: typeof import('./src/components/StartupRestoreGuide.vue')['default']
     SystemFontDialog: typeof import('./src/components/SystemFontDialog.vue')['default']
     ThemeSettingsPanel: typeof import('./src/components/settings/ThemeSettingsPanel.vue')['default']
     ThemeSyncDialog: typeof import('./src/components/ThemeSyncDialog.vue')['default']

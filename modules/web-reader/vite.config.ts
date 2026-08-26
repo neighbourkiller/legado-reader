@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
+      extensions: ['.ts', '.tsx', '.mjs', '.js', '.mts', '.jsx', '.json'],
     },
     // Tauri 开发模式需要固定端口和关闭清屏
     ...(isDesktop

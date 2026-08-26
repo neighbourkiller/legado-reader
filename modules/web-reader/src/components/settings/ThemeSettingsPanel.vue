@@ -1,5 +1,14 @@
 <template>
   <div class="theme-settings-panel">
+    <el-alert
+      v-if="themeSaveError"
+      type="error"
+      :title="`主题持久化失败：${themeSaveError}`"
+      show-icon
+      closable
+      class="theme-error-alert"
+      @close="themeSaveError = null"
+    />
     <section class="setting-section">
       <div class="section-copy">
         <h3>主题模式</h3>
@@ -47,7 +56,7 @@ import {
 } from '@/composables/useTheme'
 import { useThemeController } from '@/composables/useThemeController'
 
-const { themeAccent, setAccent } = useTheme()
+const { themeAccent, setAccent, themeSaveError } = useTheme()
 const { requestTheme } = useThemeController()
 
 const resetTheme = () => {
