@@ -1,52 +1,66 @@
 import type { TocRule } from '@/source/types/BookSource'
-import { parseList, parseString, resolveAbsoluteUrl } from './RuleParser'
+import { parseListAsync, parseStringAsync, resolveAbsoluteUrl } from './RuleParser'
+import type { RuleExecutionContext } from './RuleTypes'
 
 export interface TocItem {
   name: string
   url: string
+  isVolume?: boolean
+  isVip?: boolean
+  isPay?: boolean
+  updateTime?: string
 }
 
-export function parseToc(html: string, rule: TocRule, baseUrl: string): TocItem[] {
-  if (!rule.chapterList) return []
+export function isLegadoTrue(val: string | null | undefined, nullIsTrue = false): boolean {
+  if (!val || !val.trim() || val.trim().toLowerCase() === 'null') {
+    return nullIsTrue
+  }
+  return !/^(?:false|no|not|0|0\.0)$/i.test(val.trim())
+}
 
+export async function parseToc(
+  html: string,
+  rule: TocRule,
+  baseUrl: string,
+  options?: Partial<RuleExecutionContext>,
+): Promise<TocItem[]> {
   const isJson = html.trim().startsWith('{') || html.trim().startsWith('[')
-  const list = parseList(html, rule.chapterList, isJson)
+  const context = isJson ? JSON.parse(html) : new DOMParser().parseFromString(html, 'text/html')
 
-  return list
-    .map(item => {
+  const field = (name: string) => ({ ...options, stage: 'toc' as const, baseUrl, field: `ruleToc.${name}` })
+  const rawChapters = await parseListAsync(context, rule.chapterList || '', field('chapterList'))
+
+  const result = await Promise.all(
+    rawChapters.map(async (item) => {
       // 1. 提取章节链接
-      let rawUrl = parseString(item, rule.chapterUrl || '')
-      if (!rawUrl && typeof item === 'object' && item !== null) {
-        if (typeof (item as any).getAttribute === 'function') {
-          const directHref = (item as Element).getAttribute('href')
-          if (directHref) {
-            rawUrl = directHref
-          }
-        }
-        if (!rawUrl && typeof (item as any).querySelector === 'function') {
-          const aEl = (item as Element).querySelector('a') || (item as Element).querySelector('[href]')
-          if (aEl) {
-            rawUrl = aEl.getAttribute('href') || ''
-          }
-        }
+      let chapterUrl = await parseStringAsync(item, rule.chapterUrl || '', field('chapterUrl'))
+      if (!chapterUrl && item instanceof Element) {
+        chapterUrl = item.getAttribute('href') || item.querySelector('a')?.getAttribute('href') || ''
       }
-      const finalUrl = resolveAbsoluteUrl(rawUrl, baseUrl)
+      const finalUrl = resolveAbsoluteUrl(chapterUrl, baseUrl)
 
       // 2. 提取章节名称
-      let name = parseString(item, rule.chapterName || '')
-      if (!name && typeof item === 'object' && item !== null) {
-        if (typeof (item as any).querySelector === 'function') {
-          const aEl = (item as Element).querySelector('a')
-          name = aEl?.textContent?.trim() || (item as Element).textContent?.trim() || ''
-        } else if ((item as any).textContent) {
-          name = String((item as any).textContent).trim()
-        }
+      let name = await parseStringAsync(item, rule.chapterName || '', field('chapterName'))
+      if (!name && item instanceof Element) {
+        const aEl = item.querySelector('a')
+        name = aEl?.textContent?.trim() || item.textContent?.trim() || ''
       }
+      if (rule.formatJs?.trim()) {
+        name = await parseStringAsync(name, `@js:${rule.formatJs}`, field('formatJs'))
+      }
+
+      const isVolumeStr = rule.isVolume?.trim() ? await parseStringAsync(item, rule.isVolume, field('isVolume')) : undefined
+      const isVipStr = rule.isVip?.trim() ? await parseStringAsync(item, rule.isVip, field('isVip')) : undefined
+      const isPayStr = rule.isPay?.trim() ? await parseStringAsync(item, rule.isPay, field('isPay')) : undefined
 
       return {
         name: name.trim(),
         url: finalUrl,
+        isVolume: isLegadoTrue(isVolumeStr),
+        isVip: isLegadoTrue(isVipStr),
+        isPay: isLegadoTrue(isPayStr),
+        updateTime: await parseStringAsync(item, rule.updateTime || '', field('updateTime')) || undefined,
       }
-    })
-    .filter(item => Boolean(item.name && item.url))
+    }))
+  return result.filter(item => Boolean(item.name && item.url))
 }

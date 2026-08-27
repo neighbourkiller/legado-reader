@@ -2,6 +2,7 @@ mod app_files;
 mod cookie_store;
 mod source_http;
 mod source_policy;
+mod source_script;
 pub mod storage;
 mod webdav;
 
@@ -9,8 +10,10 @@ use app_files::open_app_data_dir;
 use source_http::{
     check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
     open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
+    execute_webview_script,
     toggle_fullscreen, webview_fetch, AppState,
 };
+use source_script::execute_source_script;
 use storage::backup_session::*;
 use storage::commands::*;
 use tauri::Manager;
@@ -78,6 +81,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             source_request,
+            execute_source_script,
+            execute_webview_script,
             set_source_cookies,
             get_source_cookies,
             open_source_auth_window,
@@ -125,6 +130,9 @@ pub fn run() {
             storage_get_chapter_cache_summaries,
             storage_delete_book_chapter_contents,
             storage_clear_chapter_contents,
+            storage_replace_chapter_images,
+            storage_get_chapter_images,
+            storage_clear_chapter_images,
             storage_save_settings,
             storage_load_settings,
             storage_save_book_source,

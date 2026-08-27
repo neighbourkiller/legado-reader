@@ -147,6 +147,7 @@ pub async fn source_request(
     // 3. Build reqwest Request
     let method = match request.method.to_uppercase().as_str() {
         "POST" => Method::POST,
+        "HEAD" => Method::HEAD,
         _ => Method::GET,
     };
 
@@ -340,6 +341,80 @@ struct WebviewFetchResult {
 const WEBVIEW_FETCH_RESULT_STORE: &str = "__legadoWebviewFetchResults";
 const WEBVIEW_FETCH_PENDING: &str = "__LEGADO_FETCH_PENDING__";
 static WEBVIEW_FETCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewScriptResponse {
+    pub result: serde_json::Value,
+}
+
+#[tauri::command]
+pub async fn execute_webview_script(
+    app: tauri::AppHandle,
+    source_id: String,
+    url: String,
+    code: String,
+    bindings: serde_json::Value,
+    timeout_ms: Option<u64>,
+) -> Result<WebviewScriptResponse, String> {
+    validate_url(&url)?;
+    let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let timeout = timeout_ms.unwrap_or(10_000).clamp(100, 30_000);
+    let webview = ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
+    let request_id = format!("script-{}-{}", std::process::id(), WEBVIEW_FETCH_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+    let request_id_json = serde_json::to_string(&request_id).map_err(|e| e.to_string())?;
+    let code_json = serde_json::to_string(&code).map_err(|e| e.to_string())?;
+    let bindings_json = serde_json::to_string(&bindings).map_err(|e| e.to_string())?;
+    let store_json = serde_json::to_string(WEBVIEW_FETCH_RESULT_STORE).map_err(|e| e.to_string())?;
+    let pending_json = serde_json::to_string(WEBVIEW_FETCH_PENDING).map_err(|e| e.to_string())?;
+    let start_js = format!(r#"(() => {{
+      const store = window[{store_json}] ?? (window[{store_json}] = Object.create(null));
+      store[{request_id_json}] = {pending_json};
+      void (async () => {{
+        const previous = Object.create(null);
+        const bindings = {bindings_json};
+        for (const key of Object.keys(bindings)) {{ previous[key] = window[key]; window[key] = bindings[key]; }}
+        try {{
+          const value = await (0, eval)({code_json});
+          store[{request_id_json}] = JSON.stringify({{ ok: true, result: value === undefined ? null : value }});
+        }} catch (error) {{
+          store[{request_id_json}] = JSON.stringify({{ ok: false, error: error?.message || String(error) }});
+        }} finally {{
+          for (const key of Object.keys(bindings)) {{
+            if (previous[key] === undefined) delete window[key]; else window[key] = previous[key];
+          }}
+        }}
+      }})();
+    }})()"#);
+    webview.eval(&start_js).map_err(|e| format!("Failed to start WebView script: {e}"))?;
+    let poll_js = format!(r#"(() => {{
+      const value = window[{store_json}]?.[{request_id_json}];
+      if (value === undefined || value === {pending_json}) return {pending_json};
+      delete window[{store_json}][{request_id_json}];
+      return value;
+    }})()"#);
+    let deadline = Instant::now() + Duration::from_millis(timeout);
+    let raw_result = loop {
+        if Instant::now() >= deadline { return Err("WEBJS_TIMEOUT: 页面脚本执行超时".to_string()); }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
+        webview.eval_with_callback(&poll_js, move |result| {
+            if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) { let _ = tx.send(result); }
+        }).map_err(|e| format!("Failed to poll WebView script: {e}"))?;
+        if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_secs(2), rx).await {
+            if let Some(value) = decode_webview_callback_value(raw) {
+                if value != WEBVIEW_FETCH_PENDING { break value; }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let envelope: serde_json::Value = serde_json::from_str(&raw_result)
+        .map_err(|e| format!("Failed to parse WebView script result: {e}"))?;
+    if envelope.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return Err(format!("WEBJS_EXECUTION_FAILED: {}", envelope.get("error").and_then(|value| value.as_str()).unwrap_or("未知错误")));
+    }
+    Ok(WebviewScriptResponse { result: envelope.get("result").cloned().unwrap_or(serde_json::Value::Null) })
+}
 
 fn is_browser_managed_header(name: &str) -> bool {
     let name = name.to_ascii_lowercase();

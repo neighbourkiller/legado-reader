@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::storage::db::StorageDb;
 use crate::storage::models::*;
+use crate::storage::schema::CURRENT_DB_VERSION;
 
 pub type StorageState = Arc<StorageDb>;
 
@@ -19,7 +20,7 @@ pub async fn storage_init_check(
             let version: i32 = conn
                 .query_row("PRAGMA user_version;", [], |row| row.get(0))
                 .map_err(|e| StorageErrorPayload::new("INIT_FAILED", "check_version", e.to_string()))?;
-            if version == 1 {
+            if version == CURRENT_DB_VERSION {
                 Ok(true)
             } else {
                 Err(StorageErrorPayload::new(
@@ -448,6 +449,40 @@ pub async fn storage_clear_chapter_contents(
 ) -> Result<(), StorageErrorPayload> {
     let db = state.inner().clone();
     tokio::task::spawn_blocking(move || db.clear_chapter_contents())
+        .await
+        .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn storage_replace_chapter_images(
+    images: Vec<ChapterImageCacheRecord>,
+    state: State<'_, StorageState>,
+) -> Result<(), StorageErrorPayload> {
+    let db = state.inner().clone();
+    tokio::task::spawn_blocking(move || db.replace_chapter_images(&images))
+        .await
+        .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn storage_get_chapter_images(
+    book_id: String,
+    chapter_index: i64,
+    state: State<'_, StorageState>,
+) -> Result<Vec<ChapterImageCacheRecord>, StorageErrorPayload> {
+    let db = state.inner().clone();
+    tokio::task::spawn_blocking(move || db.get_chapter_images(&book_id, chapter_index))
+        .await
+        .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn storage_clear_chapter_images(
+    book_id: Option<String>,
+    state: State<'_, StorageState>,
+) -> Result<(), StorageErrorPayload> {
+    let db = state.inner().clone();
+    tokio::task::spawn_blocking(move || db.clear_chapter_image_cache(book_id.as_deref()))
         .await
         .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))?
 }

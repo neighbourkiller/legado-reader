@@ -106,24 +106,36 @@
     <section class="cache-section" aria-labelledby="chapter-cache-title">
       <div class="section-heading">
         <div>
-          <h3 id="chapter-cache-title">离线章节缓存</h3>
-          <p>按书籍管理已下载或阅读时自动保存的网络章节正文</p>
+          <h3 id="chapter-cache-title">离线章节与图片缓存</h3>
+          <p>管理已下载或阅读时自动保存的网络章节正文与漫画/插图原生 BLOB 缓存</p>
         </div>
-        <el-button
-          type="danger"
-          plain
-          :disabled="cacheSummaries.length === 0"
-          :loading="clearingAllCaches"
-          @click="clearAllCaches"
-        >
-          全部清理
-        </el-button>
+        <div class="header-actions">
+          <el-button
+            type="warning"
+            plain
+            :disabled="totalImageCount === 0"
+            :loading="clearingOnlyImages"
+            @click="clearAllImages"
+          >
+            仅清理图片缓存 ({{ formatSize(totalImageSize) }})
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            :disabled="cacheSummaries.length === 0"
+            :loading="clearingAllCaches"
+            @click="clearAllCaches"
+          >
+            全部清理
+          </el-button>
+        </div>
       </div>
 
       <div class="cache-summary">
         <span>{{ cacheSummaries.length }} 本书</span>
-        <span>{{ totalCachedChapters }} 章</span>
-        <span>约 {{ formatSize(totalCacheSize) }}</span>
+        <span>{{ totalCachedChapters }} 章正文</span>
+        <span v-if="totalImageCount > 0">{{ totalImageCount }} 张图片 (约 {{ formatSize(totalImageSize) }})</span>
+        <span>总计约 {{ formatSize(totalCacheSize) }}</span>
       </div>
 
       <div class="cache-list-header">
@@ -137,6 +149,9 @@
           <span class="cache-book">
             <strong>{{ cache.bookName || '未知书籍' }}</strong>
             <small>{{ cache.bookAuthor || cache.bookId }}</small>
+            <el-tag v-if="cache.imageCount && cache.imageCount > 0" size="small" type="info" effect="plain" class="image-cache-tag">
+              {{ cache.imageCount }} 图 ({{ formatSize(cache.imageSize || 0) }})
+            </el-tag>
           </span>
           <span>{{ cache.chapterCount }} 章</span>
           <span>{{ formatSize(cache.size) }}</span>
@@ -164,6 +179,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Back, Document, FolderOpened, Refresh, Search } from '@element-plus/icons-vue'
 import {
   clearChapterContents,
+  clearChapterImages,
   deleteBookChapterContents,
   getAllStoredBookFiles,
   getChapterCacheSummaries,
@@ -180,6 +196,7 @@ const bookshelfStore = useBookshelfStore()
 const loading = ref(false)
 const openingAppDirectory = ref(false)
 const clearingAllCaches = ref(false)
+const clearingOnlyImages = ref(false)
 const clearingBookId = ref('')
 const keyword = ref('')
 const currentDirectory = ref<Directory>('root')
@@ -201,6 +218,12 @@ const allFilesSize = computed(() => files.value.reduce((total, file) => total + 
 const visibleFilesSize = computed(() => filteredFiles.value.reduce((total, file) => total + file.size, 0))
 const totalCachedChapters = computed(() =>
   cacheSummaries.value.reduce((total, cache) => total + cache.chapterCount, 0),
+)
+const totalImageCount = computed(() =>
+  cacheSummaries.value.reduce((total, cache) => total + (cache.imageCount || 0), 0),
+)
+const totalImageSize = computed(() =>
+  cacheSummaries.value.reduce((total, cache) => total + (cache.imageSize || 0), 0),
 )
 const totalCacheSize = computed(() =>
   cacheSummaries.value.reduce((total, cache) => total + cache.size, 0),
@@ -291,6 +314,27 @@ const clearAllCaches = async () => {
   }
 }
 
+const clearAllImages = async () => {
+  try {
+    await ElMessageBox.confirm(
+      `确定清理所有已缓存的图片（共 ${totalImageCount.value} 张，约 ${formatSize(totalImageSize.value)}）吗？图片属于可重建缓存，清理后重新阅读对应章节将按需重新下载。`,
+      '仅清理图片缓存',
+      { confirmButtonText: '清理图片', cancelButtonText: '取消', type: 'warning' },
+    )
+    clearingOnlyImages.value = true
+    await clearChapterImages()
+    await loadFiles()
+    ElMessage.success('图片缓存已全部清理')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      console.error('清理图片缓存失败', error)
+      ElMessage.error('清理图片缓存失败')
+    }
+  } finally {
+    clearingOnlyImages.value = false
+  }
+}
+
 const removeFile = async (file: StoredBookFileInfo) => {
   try {
     await ElMessageBox.confirm(
@@ -367,6 +411,8 @@ button.name-cell { padding: 0; cursor: pointer; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
 .section-heading h3 { margin: 0 0 5px; color: var(--el-text-color-primary); font-size: 16px; }
 .section-heading p { margin: 0; color: var(--el-text-color-secondary); font-size: 13px; }
+.header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.image-cache-tag { width: fit-content; margin-top: 2px; }
 .cache-summary { display: flex; gap: 18px; padding: 11px 16px; border: 1px solid var(--el-border-color-lighter); border-bottom: 0; border-radius: 10px 10px 0 0; color: var(--el-text-color-secondary); background: var(--el-fill-color-light); font-size: 12px; }
 .cache-list-header, .cache-row { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 140px 80px; align-items: center; column-gap: 12px; }
 .cache-list-header { padding: 9px 16px; border: 1px solid var(--el-border-color-lighter); border-bottom: 0; color: var(--el-text-color-secondary); font-size: 12px; }

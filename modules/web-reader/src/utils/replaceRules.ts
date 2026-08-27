@@ -145,11 +145,11 @@ export async function applyRulesToChapter(
   const title = titleRules.length
     ? (await applyReplacementRulesToSegments([payload.title], titleRules)).segments[0] || ''
     : payload.title
-  let content: string[] | string = payload.content
-  if (contentRules.length) {
+  let content = payload.content
+  if (contentRules.length && payload.format !== 'images') {
     content = Array.isArray(payload.content)
-      ? (await applyReplacementRulesToSegments(payload.content, contentRules)).segments
-      : await replaceHtmlTextNodes(payload.content, contentRules)
+      ? (await applyReplacementRulesToSegments(payload.content as string[], contentRules)).segments
+      : await replaceHtmlTextNodes(payload.content as string, contentRules)
   }
   return { ...payload, title, content }
 }

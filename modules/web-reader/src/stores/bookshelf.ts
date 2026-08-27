@@ -16,7 +16,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   async function loadBooks() {
     isLoading.value = true
     try {
-      books.value = await getAllBookMetas()
+      const allBooks = await getAllBookMetas()
+      // 仅展示已加入书架的书籍，过滤未入架的在线书籍 (inShelf !== false)
+      books.value = allBooks.filter(b => b.inShelf !== false)
       // Sort by last read time, most recent first
       books.value.sort((a, b) => b.lastReadTime - a.lastReadTime)
     } finally {
@@ -29,7 +31,10 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const fileData = await file.arrayBuffer()
 
     const storedBook: StoredBook = {
-      meta: parsed.meta,
+      meta: {
+        ...parsed.meta,
+        inShelf: true,
+      },
       chapters: parsed.chapters,
       fileData,
     }
@@ -44,7 +49,13 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     await updateBookMeta(id, updates)
     const idx = books.value.findIndex(b => b.id === id)
     if (idx !== -1) {
-      books.value[idx] = { ...books.value[idx], ...updates }
+      if (updates.inShelf === false) {
+        books.value.splice(idx, 1)
+      } else {
+        books.value[idx] = { ...books.value[idx], ...updates }
+      }
+    } else if (updates.inShelf === true) {
+      await loadBooks()
     }
   }
 

@@ -55,6 +55,7 @@ export const getBookChapterContents = (...args: Parameters<StorageBackend['getBo
 export const getChapterCacheSummaries = (...args: Parameters<StorageBackend['getChapterCacheSummaries']>) => backend.getChapterCacheSummaries(...args)
 export const deleteBookChapterContents = (...args: Parameters<StorageBackend['deleteBookChapterContents']>) => backend.deleteBookChapterContents(...args)
 export const clearChapterContents = (...args: Parameters<StorageBackend['clearChapterContents']>) => backend.clearChapterContents(...args)
+export const clearChapterImages = (...args: Parameters<StorageBackend['clearChapterImages']>) => backend.clearChapterImages(...args)
 
 // --- Settings ---
 export const saveSettings = (...args: Parameters<StorageBackend['saveSettings']>) => backend.saveSettings(...args)

@@ -4,6 +4,11 @@ export interface BookChapter {
   startOffset?: number
   endOffset?: number
   href?: string
+  isVolume?: boolean
+  isVip?: boolean
+  isPay?: boolean
+  updateTime?: string
+  contentType?: 'text' | 'images'
 }
 
 export interface BookMeta {
@@ -28,6 +33,8 @@ export interface BookMeta {
   tocUrl?: string
   intro?: string
   kind?: string
+  /** 是否已加入书架（对于在线书籍，仅浏览或试读未加入书架时为 false） */
+  inShelf?: boolean
 }
 
 export interface ParsedBook {
@@ -46,6 +53,8 @@ export interface SpacingConfig {
   paragraph: number
 }
 
+export type ReaderPageAnimation = 'cover' | 'slide' | 'simulation' | 'scroll' | 'none'
+
 export interface ReadSettings {
   theme: number
   font: number
@@ -55,7 +64,7 @@ export interface ReadSettings {
   fontSize: number
   spacing: SpacingConfig
   readWidth: number
-  infiniteLoading: boolean
+  pageAnimation: ReaderPageAnimation
   jumpDuration: number
   lineHeight?: number
   backgroundColor?: string
@@ -75,7 +84,7 @@ export const DEFAULT_READ_SETTINGS: ReadSettings = {
     paragraph: 1.0,
   },
   readWidth: 800,
-  infiniteLoading: false,
+  pageAnimation: 'scroll',
   jumpDuration: 1000,
   lineHeight: 1.8,
   backgroundColor: '#ede7da',

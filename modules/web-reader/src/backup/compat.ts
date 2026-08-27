@@ -155,7 +155,7 @@ export function toAndroidBook(
   chapterContents: StoredChapterContent[],
 ): { book: AndroidBook; positionFallback: boolean } | null {
   const meta = stored.meta
-  if (meta.format !== 'online' || !meta.bookUrl || !meta.sourceUrl) return null
+  if (meta.format !== 'online' || !meta.bookUrl || !meta.sourceUrl || meta.inShelf === false) return null
 
   const chapterRecord = chapterContents.find(
     item => item.bookId === meta.id && item.chapterIndex === meta.currentChapter,

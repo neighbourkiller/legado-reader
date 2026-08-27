@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use crate::storage::models::StorageErrorPayload;
 
-pub const CURRENT_DB_VERSION: i32 = 1;
+pub const CURRENT_DB_VERSION: i32 = 2;
 
 pub fn initialize_schema(conn: &mut Connection) -> std::result::Result<(), StorageErrorPayload> {
     // 1. 设置 PRAGMA
@@ -165,6 +165,29 @@ pub fn initialize_schema(conn: &mut Connection) -> std::result::Result<(), Stora
 
         tx.commit()
             .map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_v1", e.to_string()))?;
+    }
+
+    if existing_version < 2 {
+        let tx = conn.transaction()
+            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "begin_migration_v2", e.to_string()))?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS chapter_image_cache (
+                book_id TEXT NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                image_index INTEGER NOT NULL,
+                source_url TEXT NOT NULL,
+                mime TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                data BLOB NOT NULL,
+                PRIMARY KEY (book_id, chapter_index, image_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_chapter_image_cache_book
+                ON chapter_image_cache(book_id, chapter_index, image_index);
+            PRAGMA user_version = 2;"
+        ).map_err(|e| StorageErrorPayload::new("INIT_FAILED", "apply_ddl_v2", e.to_string()))?;
+        tx.commit()
+            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_v2", e.to_string()))?;
     }
 
     Ok(())

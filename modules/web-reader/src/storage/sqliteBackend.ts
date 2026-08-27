@@ -387,6 +387,14 @@ export async function clearChapterContents(): Promise<void> {
   }
 }
 
+export async function clearChapterImages(bookId?: string): Promise<void> {
+  try {
+    await invoke('storage_clear_chapter_images', { bookId: bookId || null })
+  } catch (err) {
+    handleIpcError('clearChapterImages', err)
+  }
+}
+
 // --- Settings ---
 
 export async function saveSettings(settings: ReadSettings): Promise<void> {
@@ -657,6 +665,7 @@ export const sqliteBackend: StorageBackend = {
   getChapterCacheSummaries,
   deleteBookChapterContents,
   clearChapterContents,
+  clearChapterImages,
   saveSettings,
   loadSettings,
   saveBookSource,

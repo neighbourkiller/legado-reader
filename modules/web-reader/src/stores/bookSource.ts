@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { BookSource } from '@/source/types/BookSource'
+import type { BookSource, SourceCompatibilityReport } from '@/source/types/BookSource'
 import {
   getAllBookSources,
   saveBookSource,
@@ -12,12 +12,15 @@ import {
 import { getTransport } from '@/source/transport'
 import { getDefaultUserAgent } from '@/source/engine/SourceEngine'
 import { applyRulesToSourceJson, ReplacementTimeoutError } from '@/utils/replaceRules'
+import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
 
 export interface SourceImportPreview {
   original: Record<string, unknown>[]
   replaced: Record<string, unknown>[]
   changed: number
   errors: Array<{ name: string; message: string }>
+  originalCompatibility: SourceCompatibilityReport[]
+  replacedCompatibility: SourceCompatibilityReport[]
 }
 
 export interface SourceImportResult {
@@ -106,7 +109,9 @@ export const useBookSourceStore = defineStore('bookSource', () => {
 
     const rawList = Array.isArray(parsed) ? parsed : [parsed]
     const validList = rawList
-      .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object' && (s as any).bookSourceName))
+      .filter((s): s is Record<string, unknown> => Boolean(
+        s && typeof s === 'object' && 'bookSourceName' in s && s.bookSourceName,
+      ))
       .map(s => {
         const source = { ...s } as Record<string, unknown>
         if (!source.bookSourceUrl || typeof source.bookSourceUrl !== 'string' || !source.bookSourceUrl.trim()) {
@@ -147,7 +152,11 @@ export const useBookSourceStore = defineStore('bookSource', () => {
         })
       }
     }
-    return { original, replaced, changed, errors }
+    return {
+      original, replaced, changed, errors,
+      originalCompatibility: original.map(source => inspectSourceCompatibility(source as unknown as BookSource)),
+      replacedCompatibility: replaced.map(source => inspectSourceCompatibility(source as unknown as BookSource)),
+    }
   }
 
   async function importPreparedSources(
@@ -237,6 +246,13 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     sources.value = sortSources([...sources.value])
   }
 
+  async function setCompatibilityMode(bookSourceUrl: string, mode: 'legado' | 'standard') {
+    const source = sources.value.find(item => item.bookSourceUrl === bookSourceUrl)
+    if (!source) return
+    source.webReaderCompatibilityMode = mode
+    await saveBookSource(source as unknown as Record<string, unknown>)
+  }
+
   return {
     sources,
     isLoading,
@@ -244,6 +260,7 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     addSource,
     updateSource,
     toggleTopSource,
+    setCompatibilityMode,
     deleteSource,
     deleteAllSources,
     importSources,

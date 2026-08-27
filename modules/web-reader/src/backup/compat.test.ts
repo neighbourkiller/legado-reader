@@ -67,6 +67,14 @@ describe('Android 字段与位置互通', () => {
     expect(toAndroidBook(localBook, [])).toBeNull()
   })
 
+  it('未入架在线书籍 (inShelf: false) 不写入 Android 书架', () => {
+    const trialBook: StoredBook = {
+      ...onlineBook,
+      meta: { ...onlineBook.meta, inShelf: false },
+    }
+    expect(toAndroidBook(trialBook, [])).toBeNull()
+  })
+
   it('从 Android 网络书恢复稳定标识和待换算字符位置', () => {
     const android = toAndroidBook(onlineBook, [cache])!.book
     const restored = fromAndroidBook(android)

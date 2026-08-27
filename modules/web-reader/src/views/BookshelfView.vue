@@ -27,7 +27,7 @@
         <div class="search-wrapper">
           <el-input
             v-model="searchWord"
-            placeholder="搜索书籍，在线书籍自动加入书架"
+            placeholder="搜索书架中的书籍..."
             class="search-input"
             clearable
           >

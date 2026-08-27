@@ -188,4 +188,20 @@ pub struct ChapterCacheSummary {
     pub book_author: String,
     pub chapter_count: usize,
     pub size: usize,
+    #[serde(default)]
+    pub image_count: Option<usize>,
+    #[serde(default)]
+    pub image_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterImageCacheRecord {
+    pub book_id: String,
+    pub chapter_index: i64,
+    pub image_index: i64,
+    pub source_url: String,
+    pub mime: String,
+    pub content_hash: String,
+    pub data: Vec<u8>,
 }

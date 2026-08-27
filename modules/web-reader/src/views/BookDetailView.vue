@@ -416,9 +416,11 @@ const fetchBookDetailAndToc = async () => {
     isLoadingDetail.value = false
   }
 
-  // 2. 拉取目录并保存至本地数据库缓存
+  // 2. 拉取目录
   await fetchToc(false)
-  await saveCurrentBookToDB()
+  if (inShelf.value) {
+    await saveCurrentBookToDB()
+  }
 }
 
 const refreshBookDetail = async (showToast = true) => {
@@ -454,13 +456,20 @@ const refreshBookDetail = async (showToast = true) => {
         index: idx,
         title: ch.name,
         href: ch.url,
+        isVolume: ch.isVolume,
+        isVip: ch.isVip,
+        isPay: ch.isPay,
+        updateTime: ch.updateTime,
+        contentType: source.bookSourceType === 2 ? 'images' : 'text',
       }))
       book.value.totalChapters = chapters.value.length
       latestChapter.value = chapters.value[chapters.value.length - 1].title
       book.value.latestChapterTitle = latestChapter.value
 
-      // 保存至本地数据库缓存
-      await saveCurrentBookToDB()
+      // 保存至本地数据库缓存（仅在已加入书架时同步）
+      if (inShelf.value) {
+        await saveCurrentBookToDB()
+      }
 
       if (showToast) {
         ElMessage.success(`刷新成功，共 ${chapters.value.length} 章 (最新: ${latestChapter.value})`)
@@ -500,6 +509,11 @@ const fetchToc = async (showToast = false) => {
         index: idx,
         title: ch.name,
         href: ch.url,
+        isVolume: ch.isVolume,
+        isVip: ch.isVip,
+        isPay: ch.isPay,
+        updateTime: ch.updateTime,
+        contentType: source.bookSourceType === 2 ? 'images' : 'text',
       }))
       book.value.totalChapters = chapters.value.length
       latestChapter.value = chapters.value[chapters.value.length - 1].title
@@ -548,13 +562,20 @@ const displayChapters = computed(() => {
   return filteredChapters.value.slice(0, 100)
 })
 
-// 保存当前网络书籍到本地 IndexedDB
-const saveCurrentBookToDB = async () => {
+// 保存当前网络书籍到本地数据库
+const saveCurrentBookToDB = async (inShelfOverride?: boolean) => {
   if (!book.value) return
   const existing = await getBook(book.value.id)
+  const isBookInShelf = inShelfOverride !== undefined
+    ? inShelfOverride
+    : (inShelf.value || existing?.meta?.inShelf === true || book.value.inShelf === true)
+
+  book.value.inShelf = isBookInShelf
+
   const record: StoredBook = {
     meta: {
       ...book.value,
+      inShelf: isBookInShelf,
       totalChapters: chapters.value.length,
       tocUrl: tocUrl.value || book.value.bookUrl,
       latestChapterTitle: latestChapter.value,
@@ -574,7 +595,6 @@ const handleStartReading = async () => {
 
   try {
     await saveCurrentBookToDB()
-    const targetChapter = shelfBook.value?.currentChapter || 0
     router.push(`/reader/${book.value.id}`)
   } catch (err: any) {
     ElMessage.error(`进入阅读失败: ${err.message || err}`)
@@ -603,6 +623,7 @@ const handleToggleShelf = async () => {
   try {
     if (inShelf.value) {
       await deleteBookFromDB(book.value.id)
+      book.value.inShelf = false
       downloadedCount.value = 0
       await bookshelfStore.loadBooks()
       ElMessage.success('已从书架移出')
@@ -611,7 +632,7 @@ const handleToggleShelf = async () => {
         return
       }
     } else {
-      await saveCurrentBookToDB()
+      await saveCurrentBookToDB(true)
       ElMessage.success('已加入书架')
     }
   } catch (err: any) {

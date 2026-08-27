@@ -12,6 +12,7 @@ const STORAGE_KEY = 'legado_app_settings'
 interface StoredAppSettings {
   bookshelfClickAction?: BookshelfClickAction
   readerThemeSyncPreference?: ReaderThemeSyncPreference
+  readerScrollInfiniteLoading?: boolean
   searchEngine?: SearchEngine
   lastHighlightStyle?: HighlightStyleRecord
 }
@@ -40,6 +41,7 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
       ? stored.readerThemeSyncPreference
       : 'none',
   )
+  const readerScrollInfiniteLoading = ref(stored.readerScrollInfiniteLoading !== false)
   const searchEngine = ref<SearchEngine>(
     stored.searchEngine === 'baidu' || stored.searchEngine === 'google'
       ? stored.searchEngine
@@ -63,6 +65,7 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     const payload = JSON.stringify({
       bookshelfClickAction: bookshelfClickAction.value,
       readerThemeSyncPreference: readerThemeSyncPreference.value,
+      readerScrollInfiniteLoading: readerScrollInfiniteLoading.value,
       searchEngine: searchEngine.value,
       lastHighlightStyle: { ...lastHighlightStyle.value },
     } satisfies StoredAppSettings)
@@ -84,6 +87,11 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     persistSettings()
   }
 
+  const setReaderScrollInfiniteLoading = (enabled: boolean) => {
+    readerScrollInfiniteLoading.value = enabled
+    persistSettings()
+  }
+
   const setSearchEngine = (engine: SearchEngine) => {
     searchEngine.value = engine
     persistSettings()
@@ -97,11 +105,13 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
   return {
     bookshelfClickAction,
     readerThemeSyncPreference,
+    readerScrollInfiniteLoading,
     searchEngine,
     lastHighlightStyle,
     saveError,
     setBookshelfClickAction,
     setReaderThemeSyncPreference,
+    setReaderScrollInfiniteLoading,
     setSearchEngine,
     setLastHighlightStyle,
   }

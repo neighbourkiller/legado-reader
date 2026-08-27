@@ -806,6 +806,10 @@ export async function clearChapterContents(): Promise<void> {
   })
 }
 
+export async function clearChapterImages(_bookId?: string): Promise<void> {
+  // Web IndexedDB 模式下无独立原生 chapter_image_cache 表
+}
+
 // --- Settings Storage ---
 
 export async function saveSettings(settings: ReadSettings): Promise<void> {
@@ -1077,6 +1081,7 @@ export const indexedDbBackend: StorageBackend = {
   getChapterCacheSummaries,
   deleteBookChapterContents,
   clearChapterContents,
+  clearChapterImages,
   saveSettings,
   loadSettings,
   saveBookSource,

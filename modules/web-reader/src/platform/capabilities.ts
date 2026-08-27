@@ -7,4 +7,7 @@ export const platform = {
   get supportsNativeHttp(): boolean { return this.isDesktop },
   get supportsOnlineBookSources(): boolean { return this.isDesktop },
   get supportsNativeFileDialog(): boolean { return this.isDesktop },
+  get supportsChapterImageCache(): boolean { return this.isDesktop },
+  get supportsSourceJavaScript(): boolean { return this.isDesktop },
+  get supportsSourceWebJavaScript(): boolean { return this.isDesktop },
 }

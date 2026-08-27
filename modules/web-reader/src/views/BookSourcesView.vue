@@ -83,6 +83,9 @@
               <span class="source-group" v-if="source.bookSourceGroup">
                 {{ source.bookSourceGroup }}
               </span>
+              <el-tag size="small" :type="compatibilityTagType(source)" effect="plain">
+                {{ compatibilityLabel(source) }}
+              </el-tag>
             </div>
             <div class="source-url" :title="source.bookSourceUrl">{{ source.bookSourceUrl }}</div>
           </div>
@@ -133,6 +136,9 @@
                   <el-dropdown-item command="debug">
                     <el-icon><VideoPlay /></el-icon>
                     调试书源
+                  </el-dropdown-item>
+                  <el-dropdown-item command="toggleCompatibility">
+                    语义模式：{{ source.webReaderCompatibilityMode === 'standard' ? 'standard' : 'legado' }}
                   </el-dropdown-item>
                   <el-dropdown-item command="auth">
                     <el-icon><Key /></el-icon>
@@ -251,6 +257,13 @@
           :closable="false"
           :title="`替换预览：改变 ${importPreviewSummary.changed} 条，失败 ${importPreviewSummary.errors} 条`"
         />
+        <el-alert
+          v-if="importCompatibilitySummary"
+          class="replacement-summary"
+          :type="importCompatibilitySummary.unsupported ? 'warning' : 'info'"
+          :closable="false"
+          :title="`兼容扫描：部分支持 ${importCompatibilitySummary.partial} 条，不支持 ${importCompatibilitySummary.unsupported} 条（仍会保留并导入）`"
+        />
       </div>
 
       <template #footer>
@@ -292,6 +305,7 @@ import {
 import { useBookSourceStore } from '@/stores/bookSource'
 import type { SourceImportPreview, SourceImportResult } from '@/stores/bookSource'
 import type { BookSource } from '@/source/types/BookSource'
+import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
 import SourceEditDialog from '@/components/SourceEditDialog.vue'
 import SourceDebugDialog from '@/components/SourceDebugDialog.vue'
 import SourceAuthDialog from '@/components/SourceAuthDialog.vue'
@@ -306,6 +320,7 @@ const importJson = ref('')
 const isImporting = ref(false)
 const useSourceReplacement = ref(true)
 const importPreviewSummary = ref<{ changed: number; errors: number } | null>(null)
+const importCompatibilitySummary = ref<{ partial: number; unsupported: number } | null>(null)
 const searchKeyword = ref('')
 type SourceSort = 'default' | 'name' | 'group' | 'enabled'
 const sourceSort = ref<SourceSort>('default')
@@ -345,6 +360,15 @@ onMounted(() => {
 })
 
 const enabledCount = computed(() => bookSourceStore.getEnabledSources().length)
+const compatibilityReport = (source: BookSource) => inspectSourceCompatibility(source)
+const compatibilityLabel = (source: BookSource) => {
+  const report = compatibilityReport(source)
+  return report.status === 'supported' ? '兼容' : `${report.status === 'partial' ? '部分兼容' : '不支持'} ${report.issues.length}`
+}
+const compatibilityTagType = (source: BookSource) => {
+  const status = compatibilityReport(source).status
+  return status === 'supported' ? 'success' : status === 'partial' ? 'warning' : 'danger'
+}
 
 const filteredSources = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
@@ -430,6 +454,13 @@ const handleCommand = async (command: string, source: BookSource) => {
       showDebugDialog.value = true
       break
 
+    case 'toggleCompatibility': {
+      const mode = source.webReaderCompatibilityMode === 'standard' ? 'legado' : 'standard'
+      await bookSourceStore.setCompatibilityMode(source.bookSourceUrl, mode)
+      ElMessage.success(`已切换为 ${mode} 规则语义`)
+      break
+    }
+
     case 'auth':
       currentAuthSource.value = source
       showAuthDialog.value = true
@@ -477,6 +508,11 @@ const handleImport = async () => {
       preview = await bookSourceStore.previewSourceImport(importJson.value)
     }
     importPreviewSummary.value = { changed: preview.changed, errors: preview.errors.length }
+    const reports = useSourceReplacement.value ? preview.replacedCompatibility : preview.originalCompatibility
+    importCompatibilitySummary.value = {
+      partial: reports.filter(report => report.status === 'partial').length,
+      unsupported: reports.filter(report => report.status === 'unsupported').length,
+    }
 
     if (useSourceReplacement.value && preview.errors.length > 0) {
       ElMessage.warning(`有 ${preview.errors.length} 条书源替换失败；可取消勾选后导入原始书源`)
@@ -506,6 +542,7 @@ const handleImport = async () => {
     showImportDialog.value = false
     importJson.value = ''
     importPreviewSummary.value = null
+    importCompatibilitySummary.value = null
   } catch (err: any) {
     if (err !== 'cancel' && err !== 'close') {
       ElMessage.error(err?.message || '导入失败，请检查链接或格式')

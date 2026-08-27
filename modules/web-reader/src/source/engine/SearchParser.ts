@@ -1,58 +1,62 @@
 import type { SearchRule, SearchResult, BookSource } from '@/source/types/BookSource'
-import { parseList, parseString, resolveAbsoluteUrl, cleanBookTitle } from './RuleParser'
+import { parseListAsync, parseStringAsync, resolveAbsoluteUrl, cleanBookTitle } from './RuleParser'
+import type { RuleExecutionContext } from './RuleTypes'
 
-export function parseSearchResults(
+export async function parseSearchResults(
   html: string,
   rule: SearchRule,
   baseUrl: string,
   source?: BookSource
-): SearchResult[] {
+): Promise<SearchResult[]> {
   if (!rule.bookList) return []
 
-  const isJson = html.trim().startsWith('{') || html.trim().startsWith('[')
-  const list = parseList(html, rule.bookList, isJson)
+  const baseContext: Partial<RuleExecutionContext> = {
+    compatibilityMode: source?.webReaderCompatibilityMode || 'legado',
+    stage: 'search', baseUrl, source: source as unknown as Record<string, unknown>,
+  }
+  const field = (name: string) => ({ ...baseContext, field: `ruleSearch.${name}` })
+  const list = await parseListAsync(html, rule.bookList, field('bookList'))
 
-  return list
-    .map(item => {
+  const results = await Promise.all(list.map(async item => {
       // 1. 书名
-      let name = parseString(item, rule.name || '')
+      let name = await parseStringAsync(item, rule.name || '', field('name'))
       if (!name && typeof item === 'object') {
-        name = parseString(item, 'h5 a || h3 a || h4 a || h2 a || h1 a || .title a || .bname a || .name || a')
+        name = await parseStringAsync(item, 'h5 a || h3 a || h4 a || h2 a || h1 a || .title a || .bname a || .name || a', field('name.fallback'))
       }
       name = cleanBookTitle(name)
 
       // 2. 书籍详情链接
-      let rawBookUrl = parseString(item, rule.bookUrl || '')
+      let rawBookUrl = await parseStringAsync(item, rule.bookUrl || '', field('bookUrl'))
       if (!rawBookUrl && typeof item === 'object') {
-        rawBookUrl = parseString(item, 'h5 a@href || h3 a@href || h4 a@href || h2 a@href || .title a@href || a@href')
+        rawBookUrl = await parseStringAsync(item, 'h5 a@href || h3 a@href || h4 a@href || h2 a@href || .title a@href || a@href', field('bookUrl.fallback'))
       }
       const finalBookUrl = resolveAbsoluteUrl(rawBookUrl, baseUrl)
 
       // 3. 封面
-      let rawCoverUrl = parseString(item, rule.coverUrl || '')
+      let rawCoverUrl = await parseStringAsync(item, rule.coverUrl || '', field('coverUrl'))
       if (!rawCoverUrl && typeof item === 'object') {
-        rawCoverUrl = parseString(item, 'img@src')
+        rawCoverUrl = await parseStringAsync(item, 'img@src', field('coverUrl.fallback'))
       }
       const finalCoverUrl = resolveAbsoluteUrl(rawCoverUrl, baseUrl)
 
       // 4. 作者
-      let author = parseString(item, rule.author || '')
+      let author = await parseStringAsync(item, rule.author || '', field('author'))
       if (!author && typeof item === 'object') {
-        author = parseString(item, '.bauthor || [class*="author"] || .text-muted a || .author')
+        author = await parseStringAsync(item, '.bauthor || [class*="author"] || .text-muted a || .author', field('author.fallback'))
       }
       if (author.startsWith('作者：') || author.startsWith('作者:')) {
         author = author.substring(3).trim()
       }
 
       // 5. 简介
-      let intro = parseString(item, rule.intro || '')
+      let intro = await parseStringAsync(item, rule.intro || '', field('intro'))
       if (!intro && typeof item === 'object') {
-        intro = parseString(item, '.content-txt || .intro || .desc || p.l-p2 || p')
+        intro = await parseStringAsync(item, '.content-txt || .intro || .desc || p.l-p2 || p', field('intro.fallback'))
       }
 
       // 6. 分类与最新章节
-      let kind = parseString(item, rule.kind || '')
-      let lastChapter = parseString(item, rule.lastChapter || '')
+      const kind = await parseStringAsync(item, rule.kind || '', field('kind'))
+      const lastChapter = await parseStringAsync(item, rule.lastChapter || '', field('lastChapter'))
 
       return {
         name,
@@ -65,6 +69,6 @@ export function parseSearchResults(
         sourceName: source?.bookSourceName || '',
         sourceUrl: source?.bookSourceUrl || baseUrl,
       }
-    })
-    .filter(b => Boolean(b.name && b.name.trim()))
+    }))
+  return results.filter(book => Boolean(book.name && book.name.trim()))
 }

@@ -121,6 +121,8 @@ export interface ChapterCacheSummary {
   bookAuthor: string
   chapterCount: number
   size: number
+  imageCount?: number
+  imageSize?: number
 }
 
 export interface StorageErrorPayload {
@@ -256,6 +258,7 @@ export interface StorageBackend {
   getChapterCacheSummaries(): Promise<ChapterCacheSummary[]>
   deleteBookChapterContents(bookId: string): Promise<void>
   clearChapterContents(): Promise<void>
+  clearChapterImages(bookId?: string): Promise<void>
 
   // Settings
   saveSettings(settings: ReadSettings): Promise<void>

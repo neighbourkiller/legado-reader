@@ -231,6 +231,8 @@ impl StorageDb {
         // 显式删除该书章节缓存，但保留书签、高亮和阅读记录
         tx.execute("DELETE FROM chapter_contents WHERE book_id = ?1", params![id])
             .map_err(|e| StorageErrorPayload::new("IO", "delete_book_chapters", e.to_string()))?;
+        tx.execute("DELETE FROM chapter_image_cache WHERE book_id = ?1", params![id])
+            .map_err(|e| StorageErrorPayload::new("IO", "delete_book_images", e.to_string()))?;
 
         tx.commit()
             .map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_delete_book", e.to_string()))?;
@@ -852,8 +854,11 @@ impl StorageDb {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare(
-                "SELECT c.book_id, COUNT(*) AS chapter_count, SUM(c.size_bytes) AS total_size,
-                        COALESCE(b.name, '') AS book_name, COALESCE(b.author, '') AS book_author
+                "SELECT c.book_id, COUNT(*) AS chapter_count,
+                        SUM(c.size_bytes) + COALESCE((SELECT SUM(i.size_bytes) FROM chapter_image_cache i WHERE i.book_id = c.book_id), 0) AS total_size,
+                        COALESCE(b.name, '') AS book_name, COALESCE(b.author, '') AS book_author,
+                        COALESCE((SELECT COUNT(*) FROM chapter_image_cache i WHERE i.book_id = c.book_id), 0) AS image_count,
+                        COALESCE((SELECT SUM(i.size_bytes) FROM chapter_image_cache i WHERE i.book_id = c.book_id), 0) AS image_size
                  FROM chapter_contents c
                  LEFT JOIN books b ON c.book_id = b.id
                  GROUP BY c.book_id
@@ -865,12 +870,16 @@ impl StorageDb {
             .query_map([], |row| {
                 let count: i64 = row.get(1)?;
                 let size: i64 = row.get(2)?;
+                let image_count: i64 = row.get(5)?;
+                let image_size: i64 = row.get(6)?;
                 Ok(ChapterCacheSummary {
                     book_id: row.get(0)?,
                     chapter_count: count.max(0) as usize,
                     size: size.max(0) as usize,
                     book_name: row.get(3)?,
                     book_author: row.get(4)?,
+                    image_count: Some(image_count.max(0) as usize),
+                    image_size: Some(image_size.max(0) as usize),
                 })
             })
             .map_err(|e| StorageErrorPayload::new("IO", "query_cache_summaries", e.to_string()))?;
@@ -883,17 +892,82 @@ impl StorageDb {
     }
 
     pub fn delete_book_chapter_contents(&self, book_id: &str) -> Result<(), StorageErrorPayload> {
-        let conn = self.lock()?;
-        conn.execute("DELETE FROM chapter_contents WHERE book_id = ?1", params![book_id])
-            .map_err(|e| StorageErrorPayload::new("IO", "delete_book_chapter_contents", e.to_string()))?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()
+            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "begin_delete_book_cache", e.to_string()))?;
+        tx.execute("DELETE FROM chapter_contents WHERE book_id = ?1", params![book_id])
+            .map_err(|e| StorageErrorPayload::new("IO", "delete_book_chapters", e.to_string()))?;
+        tx.execute("DELETE FROM chapter_image_cache WHERE book_id = ?1", params![book_id])
+            .map_err(|e| StorageErrorPayload::new("IO", "delete_book_images", e.to_string()))?;
+        tx.commit().map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_delete_book_cache", e.to_string()))?;
         Ok(())
     }
 
     pub fn clear_chapter_contents(&self) -> Result<(), StorageErrorPayload> {
-        let conn = self.lock()?;
-        conn.execute("DELETE FROM chapter_contents", [])
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()
+            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "begin_clear_chapter_cache", e.to_string()))?;
+        tx.execute("DELETE FROM chapter_contents", [])
             .map_err(|e| StorageErrorPayload::new("IO", "clear_chapter_contents", e.to_string()))?;
+        tx.execute("DELETE FROM chapter_image_cache", [])
+            .map_err(|e| StorageErrorPayload::new("IO", "clear_chapter_image_cache", e.to_string()))?;
+        tx.commit().map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_clear_chapter_cache", e.to_string()))?;
         Ok(())
+    }
+
+    pub fn clear_chapter_image_cache(&self, book_id: Option<&str>) -> Result<(), StorageErrorPayload> {
+        let conn = self.lock()?;
+        if let Some(id) = book_id {
+            conn.execute("DELETE FROM chapter_image_cache WHERE book_id = ?1", params![id])
+                .map_err(|e| StorageErrorPayload::new("IO", "delete_book_chapter_images", e.to_string()))?;
+        } else {
+            conn.execute("DELETE FROM chapter_image_cache", [])
+                .map_err(|e| StorageErrorPayload::new("IO", "clear_all_chapter_images", e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn replace_chapter_images(&self, images: &[ChapterImageCacheRecord]) -> Result<(), StorageErrorPayload> {
+        let first = images.first().ok_or_else(||
+            StorageErrorPayload::new("INVALID_DATA", "replace_chapter_images", "图片列表不能为空"))?;
+        if images.iter().any(|item| item.book_id != first.book_id || item.chapter_index != first.chapter_index) {
+            return Err(StorageErrorPayload::new("INVALID_DATA", "replace_chapter_images", "一次事务只能写入同一章节"));
+        }
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()
+            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "begin_replace_chapter_images", e.to_string()))?;
+        tx.execute(
+            "DELETE FROM chapter_image_cache WHERE book_id = ?1 AND chapter_index = ?2",
+            params![first.book_id, first.chapter_index],
+        ).map_err(|e| StorageErrorPayload::new("IO", "delete_old_chapter_images", e.to_string()))?;
+        for image in images {
+            tx.execute(
+                "INSERT INTO chapter_image_cache (
+                    book_id, chapter_index, image_index, source_url, mime, content_hash, size_bytes, data
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![image.book_id, image.chapter_index, image.image_index, image.source_url,
+                    image.mime, image.content_hash, image.data.len(), image.data],
+            ).map_err(|e| StorageErrorPayload::new("IO", "insert_chapter_image", e.to_string()))?;
+        }
+        tx.commit().map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_replace_chapter_images", e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn get_chapter_images(&self, book_id: &str, chapter_index: i64) -> Result<Vec<ChapterImageCacheRecord>, StorageErrorPayload> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT book_id, chapter_index, image_index, source_url, mime, content_hash, data
+             FROM chapter_image_cache WHERE book_id = ?1 AND chapter_index = ?2 ORDER BY image_index ASC"
+        ).map_err(|e| StorageErrorPayload::new("IO", "prepare_get_chapter_images", e.to_string()))?;
+        let rows = stmt.query_map(params![book_id, chapter_index], |row| Ok(ChapterImageCacheRecord {
+            book_id: row.get(0)?, chapter_index: row.get(1)?, image_index: row.get(2)?,
+            source_url: row.get(3)?, mime: row.get(4)?, content_hash: row.get(5)?, data: row.get(6)?,
+        })).map_err(|e| StorageErrorPayload::new("IO", "query_chapter_images", e.to_string()))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|e| StorageErrorPayload::new("IO", "read_chapter_image", e.to_string()))?);
+        }
+        Ok(result)
     }
 
     // --- Settings ---

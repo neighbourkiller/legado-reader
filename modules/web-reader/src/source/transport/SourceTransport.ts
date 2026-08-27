@@ -1,7 +1,7 @@
 export interface SourceRequest {
   sourceId: string
   url: string
-  method: 'GET' | 'POST'
+  method: 'GET' | 'POST' | 'HEAD'
   headers?: Record<string, string>
   body?: string
   charset?: string

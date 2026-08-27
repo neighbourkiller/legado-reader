@@ -14,9 +14,41 @@
           ref="paragraphRef"
           :data-chapterpos="index"
         >
-          <p :style="{ fontFamily, fontSize }">{{ para }}</p>
+          <div v-if="isImageParagraph(para)" class="embedded-source-image-wrap">
+            <img
+              class="embedded-source-image"
+              :src="getImageParagraphUrl(para)"
+              :alt="`插图 ${index + 1}`"
+              loading="lazy"
+            />
+          </div>
+          <p v-else :style="{ fontFamily, fontSize }">{{ para }}</p>
         </div>
+        <img
+          v-for="image in orphanEmbeddedImages"
+          :key="`embedded:${image.index}:${image.url}`"
+          class="embedded-source-image"
+          :src="image.url"
+          :alt="image.alt || ''"
+          loading="lazy"
+        />
       </template>
+
+      <div v-else-if="format === 'images'" class="image-chapter" data-reader-image-chapter>
+        <figure v-for="image in imageContents" :key="`${image.index}:${image.url}`" class="chapter-image-wrap">
+          <img
+            :src="image.url"
+            :alt="image.alt || `第 ${image.index + 1} 张图片`"
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade"
+            @error="onImageError(image.index)"
+            @load="failedImages.delete(image.index)"
+          />
+          <button v-if="failedImages.has(image.index)" type="button" class="image-retry" @click.stop="retryImage($event)">
+            第 {{ image.index + 1 }} 张图片加载失败，点击重试
+          </button>
+        </figure>
+      </div>
 
       <!-- EPUB 富文本 HTML 渲染 -->
       <template v-else>
@@ -34,18 +66,20 @@
 import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import type { SpacingConfig } from '@/parsers/types'
 import type { HighlightRecord } from '@/storage/db'
+import type { ImageReference } from '@/source/types/BookSource'
 import { resolveTextAnchor } from '@/utils/textSelection'
 import jump from '@/plugins/jump'
 
 const props = defineProps<{
-  contents: string[] | string
+  contents: string[] | string | ImageReference[]
   title: string
-  format: 'txt' | 'epub'
+  format: 'txt' | 'epub' | 'images'
   spacing: SpacingConfig
   fontFamily: string
   fontSize: string
   chapterIndex: number
   highlights?: HighlightRecord[]
+  embeddedImages?: ImageReference[]
 }>()
 
 const emit = defineEmits<{
@@ -53,8 +87,38 @@ const emit = defineEmits<{
 }>()
 
 const epubHtml = computed(() => {
-  return typeof props.contents === 'string' ? props.contents : props.contents.join('')
+  return typeof props.contents === 'string' ? props.contents
+    : props.format === 'epub' ? (props.contents as string[]).join('') : ''
 })
+const imageContents = computed(() => props.format === 'images' ? props.contents as ImageReference[] : [])
+
+const isImageParagraph = (para: unknown): boolean => {
+  return typeof para === 'string' && /^<img\s+[^>]*src=["']([^"']+)["'][^>]*>$/i.test(para.trim())
+}
+
+const getImageParagraphUrl = (para: unknown): string => {
+  if (typeof para !== 'string') return ''
+  const match = para.trim().match(/<img\s+[^>]*src=["']([^"']+)["'][^>]*>/i)
+  return match ? match[1] : ''
+}
+
+const orphanEmbeddedImages = computed(() => {
+  if (!props.embeddedImages || props.embeddedImages.length === 0) return []
+  if (!Array.isArray(props.contents)) return props.embeddedImages
+  const contentsArray = props.contents as unknown[]
+  return props.embeddedImages.filter(img =>
+    !contentsArray.some(p => typeof p === 'string' && p.includes(img.url))
+  )
+})
+const failedImages = ref(new Set<number>())
+const onImageError = (index: number) => failedImages.value = new Set(failedImages.value).add(index)
+const retryImage = (event: MouseEvent) => {
+  const image = (event.currentTarget as HTMLElement).previousElementSibling as HTMLImageElement | null
+  if (!image) return
+  const url = new URL(image.src)
+  url.searchParams.set('_legado_retry', String(Date.now()))
+  image.src = url.href
+}
 
 const paragraphRef = ref<HTMLElement[]>()
 const bodyRef = ref<HTMLElement>()
@@ -77,7 +141,7 @@ const annotateEpubParagraphs = () => {
 
 const applyHighlights = () => {
   const root = bodyRef.value
-  if (!root) return
+  if (!root || props.format === 'images') return
   clearHighlightMarks()
   annotateEpubParagraphs()
   const fullText = root.textContent || ''
@@ -208,9 +272,9 @@ p {
   word-wrap: break-word;
   overflow-wrap: break-word;
   color: inherit;
-  letter-spacing: calc(v-bind('props.spacing.letter') * 1em);
-  line-height: calc(1 + v-bind('props.spacing.line'));
-  margin: calc(v-bind('props.spacing.paragraph') * 1em) 0;
+  letter-spacing: var(--reader-letter-spacing, calc(v-bind('props.spacing.letter') * 1em));
+  line-height: var(--reader-line-height, calc(1 + v-bind('props.spacing.line')));
+  margin: var(--reader-paragraph-margin, calc(v-bind('props.spacing.paragraph') * 1em) 0);
 
   :deep(img) {
     max-width: 100%;
@@ -222,15 +286,15 @@ p {
 
 .epub-html-content {
   color: inherit;
-  letter-spacing: calc(v-bind('props.spacing.letter') * 1em);
-  line-height: calc(1 + v-bind('props.spacing.line'));
+  letter-spacing: var(--reader-letter-spacing, calc(v-bind('props.spacing.letter') * 1em));
+  line-height: var(--reader-line-height, calc(1 + v-bind('props.spacing.line')));
 
   :deep(p) {
     text-indent: 2em;
     text-align: justify;
     word-wrap: break-word;
     color: inherit;
-    margin: calc(v-bind('props.spacing.paragraph') * 1em) 0;
+    margin: var(--reader-paragraph-margin, calc(v-bind('props.spacing.paragraph') * 1em) 0);
   }
 
   :deep(img) {
@@ -250,5 +314,45 @@ p {
     font-weight: bold;
     line-height: 1.4;
   }
+}
+
+.image-chapter {
+  user-select: none;
+}
+
+.embedded-source-image-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 16px 0;
+}
+
+.embedded-source-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 12px auto;
+  border-radius: 4px;
+}
+
+.chapter-image-wrap {
+  margin: 0 0 16px;
+  text-align: center;
+
+  img {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+  }
+}
+
+.image-retry {
+  width: 100%;
+  min-height: 88px;
+  border: 1px dashed currentColor;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
 }
 </style>

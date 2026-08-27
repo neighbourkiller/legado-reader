@@ -16,14 +16,18 @@ import {
 } from '@/storage/db'
 import { useBookSourceStore } from '@/stores/bookSource'
 import { SourceEngine } from '@/source/engine/SourceEngine'
+import { deserializeOnlineChapterPayload, serializeOnlineChapterPayload } from '@/source/engine/ChapterPayload'
+import type { ImageReference } from '@/source/types/BookSource'
 import { characterOffsetToParagraphIndex } from '@/backup/compat'
 import { platform } from '@/platform/capabilities'
+import { downloadAndCacheChapterImages, loadCachedChapterImages } from '@/platform/sourceImages'
 
 export interface ChapterPayload {
   index: number
   title: string
-  content: string[] | string
-  format: 'txt' | 'epub'
+  content: string[] | string | ImageReference[]
+  format: 'txt' | 'epub' | 'images'
+  embeddedImages?: ImageReference[]
 }
 
 export function resolveSyncedReaderTheme(currentTheme: number, dark: boolean): number {
@@ -32,6 +36,13 @@ export function resolveSyncedReaderTheme(currentTheme: number, dark: boolean): n
 }
 
 const SETTINGS_KEY = 'legado_web_reader_settings'
+const READER_PAGE_ANIMATIONS = new Set<ReadSettings['pageAnimation']>([
+  'cover',
+  'slide',
+  'simulation',
+  'scroll',
+  'none',
+])
 
 function normalizeSettings(
   ...sources: Array<Partial<ReadSettings> | null | undefined>
@@ -40,13 +51,20 @@ function normalizeSettings(
     (source): source is Partial<ReadSettings> => Boolean(source)
   )
 
-  return {
+  const normalized = {
     ...DEFAULT_READ_SETTINGS,
     ...Object.assign({}, ...availableSources),
     spacing: {
       ...DEFAULT_READ_SETTINGS.spacing,
       ...Object.assign({}, ...availableSources.map(source => source.spacing || {})),
     },
+  }
+
+  return {
+    ...normalized,
+    pageAnimation: READER_PAGE_ANIMATIONS.has(normalized.pageAnimation)
+      ? normalized.pageAnimation
+      : DEFAULT_READ_SETTINGS.pageAnimation,
   }
 }
 
@@ -213,6 +231,11 @@ export const useReadingStore = defineStore('reading', () => {
           index,
           title: chapter.name,
           href: chapter.url,
+          isVolume: chapter.isVolume,
+          isVip: chapter.isVip,
+          isPay: chapter.isPay,
+          updateTime: chapter.updateTime,
+          contentType: source.bookSourceType === 2 ? 'images' : 'text',
         }))
         stored.meta.tocUrl = tocUrl
         stored.meta.totalChapters = stored.chapters.length
@@ -265,16 +288,45 @@ export const useReadingStore = defineStore('reading', () => {
           chapterHref,
         )
         if (cached) {
+          const cachedPayload = deserializeOnlineChapterPayload(cached)
+          if (cachedPayload.type === 'images') {
+            const materialized = await loadCachedChapterImages(
+              currentBook.value.id, index, cachedPayload.images.length,
+            )
+            if (materialized) {
+              activeBlobUrls.push(...materialized.blobUrls)
+              return {
+                index, title: cachedPayload.title || chapter.title,
+                content: materialized.images, format: 'images',
+              }
+            }
+          }
+          let embeddedImages: ImageReference[] | undefined
+          if (cachedPayload.type === 'text' && cachedPayload.embeddedImages?.length) {
+            const materialized = await loadCachedChapterImages(
+              currentBook.value.id, index, cachedPayload.embeddedImages.length,
+            )
+            if (materialized) {
+              activeBlobUrls.push(...materialized.blobUrls)
+              embeddedImages = materialized.images
+            } else if (platform.isDesktop) {
+              // 清单存在而 BLOB 缺失时重新走网络，不把章节误判为完整离线。
+              embeddedImages = undefined
+            }
+          }
+          if (cachedPayload.type === 'text' && (!cachedPayload.embeddedImages?.length || embeddedImages)) {
           await resolveImportedBookmarkPositions(
             currentBook.value.id,
             index,
-            normalizeOnlineContent(cached, chapter.title).join('\n'),
+            normalizeOnlineContent(cachedPayload.text, chapter.title).join('\n'),
           )
           return {
             index,
             title: chapter.title,
-            content: normalizeOnlineContent(cached, chapter.title),
+            content: normalizeOnlineContent(cachedPayload.text, chapter.title),
             format: 'txt',
+            embeddedImages,
+          }
           }
         }
       }
@@ -295,36 +347,62 @@ export const useReadingStore = defineStore('reading', () => {
 
       try {
         const engine = new SourceEngine()
-        const rawContent = await engine.getContent(source, chapterHref)
-        if (rawContent.trim()) {
+        const onlinePayload = await engine.getContent(source, chapterHref)
+        if (onlinePayload.type === 'images') {
+          const materialized = await downloadAndCacheChapterImages(
+            engine, source, currentBook.value.id, index, onlinePayload,
+          )
+          activeBlobUrls.push(...materialized.blobUrls)
           await saveChapterContent({
             bookId: currentBook.value.id,
             chapterIndex: index,
             title: chapter.title,
-            content: rawContent,
+            content: serializeOnlineChapterPayload(onlinePayload),
+            sourceUrl,
+            chapterUrl: chapterHref,
+          })
+          return {
+            index, title: onlinePayload.title || chapter.title,
+            content: materialized.images, format: 'images',
+          }
+        }
+        const serialized = serializeOnlineChapterPayload(onlinePayload)
+        let embeddedImages = onlinePayload.embeddedImages
+        if (embeddedImages?.length) {
+          const materialized = await downloadAndCacheChapterImages(engine, source, currentBook.value.id, index, {
+            type: 'images', images: embeddedImages, sourceUrl: chapterHref,
+          })
+          activeBlobUrls.push(...materialized.blobUrls)
+          embeddedImages = materialized.images
+        }
+        if (onlinePayload.text.trim()) {
+          await saveChapterContent({
+            bookId: currentBook.value.id,
+            chapterIndex: index,
+            title: chapter.title,
+            content: serialized,
             sourceUrl,
             chapterUrl: chapterHref,
           })
         }
 
-        await resolveImportedBookmarkPositions(
-          currentBook.value.id,
-          index,
-          normalizeOnlineContent(rawContent, chapter.title).join('\n'),
-        )
+        await resolveImportedBookmarkPositions(currentBook.value.id, index,
+          normalizeOnlineContent(onlinePayload.text, chapter.title).join('\n'))
 
         return {
           index,
           title: chapter.title,
-          content: normalizeOnlineContent(rawContent, chapter.title),
+          content: normalizeOnlineContent(onlinePayload.text, chapter.title),
           format: 'txt',
+          embeddedImages,
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (options.forceRefresh) throw err
+        const message = err instanceof Error ? err.message : String(err)
         return {
           index,
           title: chapter.title,
-          content: [`[章节正文加载失败: ${err.message || err}]`],
+          content: [`[章节正文加载失败: ${message}]`],
           format: 'txt',
         }
       }
@@ -518,6 +596,10 @@ export const useReadingStore = defineStore('reading', () => {
     fileData.value = null
   }
 
+  function revokeChapterAssets() {
+    revokeActiveBlobUrls()
+  }
+
   return {
     currentBook,
     chapters,
@@ -540,5 +622,6 @@ export const useReadingStore = defineStore('reading', () => {
     syncThemeWithGlobal,
     setMiniInterface,
     cleanup,
+    revokeChapterAssets,
   }
 })

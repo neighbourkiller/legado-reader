@@ -9,7 +9,7 @@ mod tests {
         let db = StorageDb::open_in_memory().expect("打开内存数据库失败");
         let conn = db.lock().unwrap();
         let version: i32 = conn.query_row("PRAGMA user_version;", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, crate::storage::schema::CURRENT_DB_VERSION);
     }
 
     #[test]
@@ -142,6 +142,35 @@ mod tests {
         assert_eq!(summaries[0].book_name, "缓存统计测试书");
         assert_eq!(summaries[0].chapter_count, 2);
         assert!(summaries[0].size > 0);
+    }
+
+    #[test]
+    fn test_chapter_images_are_replaced_atomically_and_cleared_with_book_cache() {
+        let db = StorageDb::open_in_memory().expect("打开内存数据库失败");
+        let make_image = |index: i64, bytes: &[u8]| ChapterImageCacheRecord {
+            book_id: "image-book".to_string(),
+            chapter_index: 3,
+            image_index: index,
+            source_url: format!("https://example.com/{index}.jpg"),
+            mime: "image/jpeg".to_string(),
+            content_hash: format!("hash-{index}"),
+            data: bytes.to_vec(),
+        };
+        db.replace_chapter_images(&[make_image(0, &[1, 2]), make_image(1, &[3, 4])]).unwrap();
+        let first = db.get_chapter_images("image-book", 3).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[1].data, vec![3, 4]);
+
+        let duplicate = vec![make_image(0, &[7]), make_image(0, &[8])];
+        assert!(db.replace_chapter_images(&duplicate).is_err());
+        let after_rollback = db.get_chapter_images("image-book", 3).unwrap();
+        assert_eq!(after_rollback.len(), 2, "部分写入失败必须回滚整章图片");
+        assert_eq!(after_rollback[0].data, vec![1, 2]);
+
+        db.replace_chapter_images(&[make_image(0, &[9])]).unwrap();
+        assert_eq!(db.get_chapter_images("image-book", 3).unwrap().len(), 1);
+        db.delete_book_chapter_contents("image-book").unwrap();
+        assert!(db.get_chapter_images("image-book", 3).unwrap().is_empty());
     }
 
     #[test]

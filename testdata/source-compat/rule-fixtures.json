@@ -1,0 +1,94 @@
+[
+  {
+    "id": "yingshu-reverse-axis-first",
+    "html": "<div id=\"list\"><dl><dt>最新章节</dt><dd><a href=\"/latest.html\">最新</a></dd><dt>《测试》正文</dt><dd><a href=\"/1.html\">第一章</a></dd><dd><a href=\"/2.html\">第二章</a></dd></dl></div>",
+    "rule": "//*[@id='list']/dl/dd[preceding-sibling::dt[1][contains(.,'正文')]]",
+    "androidExpected": [],
+    "standardExpected": ["第一章", "第二章"]
+  },
+  {
+    "id": "portable-following-sibling",
+    "html": "<div id=\"list\"><dl><dt>最新章节</dt><dd><a href=\"/latest.html\">最新</a></dd><dt>《测试》正文</dt><dd><a href=\"/1.html\">第一章</a></dd><dd><a href=\"/2.html\">第二章</a></dd></dl></div>",
+    "rule": "//*[@id='list']/dl/dt[contains(.,'正文')]/following-sibling::dd/a",
+    "androidExpected": ["第一章", "第二章"],
+    "standardExpected": ["第一章", "第二章"]
+  },
+  {
+    "id": "rule-prefix-css",
+    "html": "<div class=\"book-card\"><span class=\"title\">斗破苍穹</span><span class=\"author\">天蚕土豆</span></div>",
+    "rule": "@CSS:.book-card .title@text",
+    "androidExpected": ["斗破苍穹"],
+    "standardExpected": ["斗破苍穹"],
+    "mode": "string"
+  },
+  {
+    "id": "rule-prefix-xpath",
+    "html": "<div class=\"book-card\"><span class=\"title\">凡人修仙传</span></div>",
+    "rule": "@XPath://span[@class='title']/text()",
+    "androidExpected": ["凡人修仙传"],
+    "standardExpected": ["凡人修仙传"],
+    "mode": "string"
+  },
+  {
+    "id": "rule-chaining",
+    "html": "<div class=\"box\"><ul class=\"list\"><li>章节一</li><li>章节二</li></ul></div>",
+    "rule": "class.box@class.list@tag.li",
+    "androidExpected": ["章节一", "章节二"],
+    "standardExpected": ["章节一", "章节二"]
+  },
+  {
+    "id": "operator-and-and",
+    "html": "<div class=\"info\"><span class=\"author\">辰东</span><span class=\"status\">连载中</span></div>",
+    "rule": "class.author@text&&class.status@text",
+    "androidExpected": ["辰东\n连载中"],
+    "standardExpected": ["辰东\n连载中"],
+    "mode": "string"
+  },
+  {
+    "id": "operator-or-or",
+    "html": "<div class=\"info\"><span class=\"real\">完美世界</span></div>",
+    "rule": "class.fake@text||class.real@text",
+    "androidExpected": ["完美世界"],
+    "standardExpected": ["完美世界"],
+    "mode": "string"
+  },
+  {
+    "id": "index-exclude-and-negative",
+    "html": "<ul class=\"catalog\"><li>第0章</li><li>第1章</li><li>第2章</li><li>第3章</li></ul>",
+    "rule": "class.catalog@tag.li!0",
+    "androidExpected": ["第1章", "第2章", "第3章"],
+    "standardExpected": ["第1章", "第2章", "第3章"]
+  },
+  {
+    "id": "index-negative-last",
+    "html": "<ul class=\"catalog\"><li>第0章</li><li>第1章</li><li>第2章</li><li>第3章</li></ul>",
+    "rule": "class.catalog@tag.li.-1@text",
+    "androidExpected": ["第3章"],
+    "standardExpected": ["第3章"],
+    "mode": "string"
+  },
+  {
+    "id": "attribute-extraction",
+    "html": "<div class=\"cover\"><img src=\"https://example.com/cover.jpg\" alt=\"封面\"/></div>",
+    "rule": "class.cover@tag.img@src",
+    "androidExpected": ["https://example.com/cover.jpg"],
+    "standardExpected": ["https://example.com/cover.jpg"],
+    "mode": "string"
+  },
+  {
+    "id": "regex-replacement",
+    "html": "<div class=\"title\">【精品全本】遮天</div>",
+    "rule": "class.title@text##^【.*】##",
+    "androidExpected": ["遮天"],
+    "standardExpected": ["遮天"],
+    "mode": "string"
+  },
+  {
+    "id": "jsonpath-filtering",
+    "html": "{\"books\":[{\"name\":\"全职高手\",\"score\":9.5},{\"name\":\"普通书\",\"score\":6.0}]}",
+    "rule": "@Json:$.books[?(@.score > 8.0)].name",
+    "androidExpected": ["全职高手"],
+    "standardExpected": ["全职高手"],
+    "mode": "string"
+  }
+]

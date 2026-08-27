@@ -204,23 +204,20 @@
           </div>
         </li>
 
-        <!-- 无限加载 -->
-        <li class="infinite-loading">
-          <i>无限加载</i>
-          <span
-            class="infinite-loading-item"
-            :class="{ selected: !settings.infiniteLoading }"
-            @click="setInfiniteLoading(false)"
-          >
-            关闭
-          </span>
-          <span
-            class="infinite-loading-item"
-            :class="{ selected: settings.infiniteLoading }"
-            @click="setInfiniteLoading(true)"
-          >
-            开启
-          </span>
+        <!-- 翻页动画 -->
+        <li class="page-animation">
+          <i>翻页动画</i>
+          <div class="page-animation-items">
+            <span
+              v-for="animation in pageAnimations"
+              :key="animation.value"
+              class="page-animation-item"
+              :class="{ selected: settings.pageAnimation === animation.value }"
+              @click="setPageAnimation(animation.value)"
+            >
+              {{ animation.label }}
+            </span>
+          </div>
         </li>
       </ul>
     </div>
@@ -242,6 +239,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useDebounceFn } from '@vueuse/shared'
 import { useReadingStore } from '@/stores/reading'
+import type { ReaderPageAnimation } from '@/parsers/types'
 import themeConfig from '@/config/themeConfig'
 import SystemFontDialog from './SystemFontDialog.vue'
 import '@/assets/fonts/popfont.css'
@@ -256,6 +254,14 @@ const saveDebounced = useDebounceFn(() => {
 
 const isNight = computed(() => settings.value.theme === 6)
 const moonIcon = computed(() => (settings.value.theme === 6 ? '' : ''))
+
+const pageAnimations: Array<{ label: string; value: ReaderPageAnimation }> = [
+  { label: '覆盖', value: 'cover' },
+  { label: '滑动', value: 'slide' },
+  { label: '仿真', value: 'simulation' },
+  { label: '滚动', value: 'scroll' },
+  { label: '无动画', value: 'none' },
+]
 
 const themeColors = [
   { background: 'rgba(250, 245, 235, 0.8)' },
@@ -498,9 +504,8 @@ const lessJumpDuration = () => {
   saveDebounced()
 }
 
-// 无限加载
-const setInfiniteLoading = (val: boolean) => {
-  settings.value.infiniteLoading = val
+const setPageAnimation = (animation: ReaderPageAnimation) => {
+  settings.value.pageAnimation = animation
   saveDebounced()
 }
 </script>
@@ -653,14 +658,25 @@ const setInfiniteLoading = (val: boolean) => {
         }
       }
 
-      .infinite-loading {
+      .page-animation {
         margin-top: 22px;
+        align-items: flex-start;
 
-        .infinite-loading-item {
+        i {
+          line-height: 32px;
+        }
+
+        .page-animation-items {
+          display: flex;
+          flex: 1;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .page-animation-item {
           width: 72px;
           height: 32px;
           cursor: pointer;
-          margin-right: 12px;
           border-radius: 2px;
           text-align: center;
           vertical-align: middle;
@@ -681,7 +697,7 @@ const setInfiniteLoading = (val: boolean) => {
           font-weight: bold;
         }
 
-        .infinite-loading-item:hover {
+        .page-animation-item:hover {
           border: 1px solid #ed4259;
           color: #ed4259;
         }
@@ -751,14 +767,11 @@ const setInfiniteLoading = (val: boolean) => {
     color: #ed4259;
   }
 
-  :deep(.font-list),
-  .infinite-loading {
-    .font-item,
-    .infinite-loading-item {
-      border: 1px solid #555;
-      background: rgba(45, 45, 45, 0.6);
-      color: #ddd;
-    }
+  :deep(.font-list) .font-item,
+  .page-animation .page-animation-item {
+    border: 1px solid #555;
+    background: rgba(45, 45, 45, 0.6);
+    color: #ddd;
   }
 
   :deep(.resize) {
@@ -787,14 +800,11 @@ const setInfiniteLoading = (val: boolean) => {
     color: rgba(255, 255, 255, 0.4);
   }
 
-  :deep(.font-list),
-  .infinite-loading {
-    .font-item,
-    .infinite-loading-item {
-      background: rgba(255, 255, 255, 0.6);
-      border: 1px solid rgba(0, 0, 0, 0.12);
-      color: #333;
-    }
+  :deep(.font-list) .font-item,
+  .page-animation .page-animation-item {
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    color: #333;
   }
 
   :deep(.resize) {

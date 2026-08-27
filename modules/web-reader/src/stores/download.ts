@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { BookChapter, BookMeta } from '@/parsers/types'
-import type { BookSource } from '@/source/types/BookSource'
+import type { BookSource, OnlineChapterPayload } from '@/source/types/BookSource'
 import { SourceEngine } from '@/source/engine/SourceEngine'
+import { serializeOnlineChapterPayload } from '@/source/engine/ChapterPayload'
+import { downloadAndCacheChapterImages } from '@/platform/sourceImages'
 import {
   getBookChapterContents,
   saveChapterContent,
@@ -65,14 +67,15 @@ export const useDownloadStore = defineStore('download', () => {
     source: BookSource,
     href: string,
     cancelFlag: { cancelled: boolean },
-  ): Promise<string> {
+  ): Promise<OnlineChapterPayload> {
     let lastError: unknown
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       if (cancelFlag.cancelled) throw new Error('下载已停止')
       try {
-        const content = (await engine.getContent(source, href)).trim()
-        if (!content) throw new Error('章节正文为空')
-        return content
+        const payload = await engine.getContent(source, href)
+        if (payload.type === 'text' && !payload.text.trim()) throw new Error('章节正文为空')
+        if (payload.type === 'images' && payload.images.length === 0) throw new Error('图片章节为空')
+        return payload
       } catch (error) {
         lastError = error
         if (attempt < MAX_ATTEMPTS && !cancelFlag.cancelled) {
@@ -142,13 +145,20 @@ export const useDownloadStore = defineStore('download', () => {
         activeTask.currentTitle = chapter.title
         try {
           if (!chapter.href) throw new Error('章节链接为空')
-          const content = await fetchWithRetry(engine, source, chapter.href, cancelFlag)
+          const payload = await fetchWithRetry(engine, source, chapter.href, cancelFlag)
           if (cancelFlag.cancelled) return
+          if (payload.type === 'images') {
+            await downloadAndCacheChapterImages(engine, source, book.id, chapter.index, payload)
+          } else if (payload.embeddedImages?.length) {
+            await downloadAndCacheChapterImages(engine, source, book.id, chapter.index, {
+              type: 'images', images: payload.embeddedImages, sourceUrl: chapter.href,
+            })
+          }
           await saveChapterContent({
             bookId: book.id,
             chapterIndex: chapter.index,
             title: chapter.title,
-            content,
+            content: serializeOnlineChapterPayload(payload),
             sourceUrl: source.bookSourceUrl,
             chapterUrl: chapter.href,
           })

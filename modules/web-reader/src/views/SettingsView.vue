@@ -104,6 +104,19 @@
               <el-radio-button value="independent">不同步</el-radio-button>
             </el-radio-group>
           </div>
+          <div class="preference-row">
+            <div class="preference-copy">
+              <strong>滚动阅读</strong>
+              <small>翻页动画选择“滚动”时，是否自动加载下一章</small>
+            </div>
+            <el-radio-group
+              :model-value="appSettingsStore.readerScrollInfiniteLoading"
+              @update:model-value="handleReaderInfiniteLoadingChange"
+            >
+              <el-radio-button :value="true">无限加载</el-radio-button>
+              <el-radio-button :value="false">仅当前章</el-radio-button>
+            </el-radio-group>
+          </div>
         </div>
 
         <ThemeSettingsPanel v-else-if="selectedKey === 'theme'" />
@@ -263,6 +276,12 @@ const handleThemeSyncPreferenceChange = (value: string | number | boolean | unde
 const handleSearchEngineChange = (value: string | number | boolean | undefined) => {
   if (value === 'bing' || value === 'baidu' || value === 'google') {
     appSettingsStore.setSearchEngine(value as SearchEngine)
+  }
+}
+
+const handleReaderInfiniteLoadingChange = (value: string | number | boolean | undefined) => {
+  if (typeof value === 'boolean') {
+    appSettingsStore.setReaderScrollInfiniteLoading(value)
   }
 }
 </script>

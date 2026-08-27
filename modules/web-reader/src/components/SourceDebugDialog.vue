@@ -16,6 +16,7 @@
           <span class="meta-name">{{ source.bookSourceName }}</span>
           <span class="meta-group" v-if="source.bookSourceGroup">{{ source.bookSourceGroup }}</span>
           <span class="meta-url" :title="source.bookSourceUrl">{{ source.bookSourceUrl }}</span>
+          <el-tag size="small" effect="plain">{{ source.webReaderCompatibilityMode || 'legado' }} 模式</el-tag>
         </div>
         <div class="search-debug-bar">
           <el-input
@@ -187,6 +188,8 @@ import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import type { TocItem } from '@/source/engine/TocParser'
 import { SourceEngine, parseSearchUrl, CloudflareChallengeError } from '@/source/engine/SourceEngine'
 import SourceAuthDialog from './SourceAuthDialog.vue'
+import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
+import { RuleExecutionError } from '@/source/engine/RuleTypes'
 
 const props = defineProps<{
   visible: boolean
@@ -219,6 +222,16 @@ interface LogItem {
 }
 
 const logs = ref<LogItem[]>([])
+
+function errorMessage(error: unknown): string {
+  if (error instanceof RuleExecutionError) {
+    return `[${error.code}] 阶段=${error.stage || 'unknown'} 字段=${error.field || 'unknown'} 模式=${error.compatibilityMode} 规则=${error.rule}: ${error.message}`
+  }
+  if (typeof error === 'object' && error !== null && 'code' in error && 'message' in error) {
+    return `[${String(error.code)}] ${String(error.message)}`
+  }
+  return error instanceof Error ? error.message : String(error)
+}
 
 const stepStatus = reactive<{
   search: 'idle' | 'running' | 'success' | 'failed'
@@ -288,7 +301,12 @@ const startDebug = async () => {
 
   appendLog('INIT', `开始调试书源: ${props.source.bookSourceName} (${props.source.bookSourceUrl})`)
   appendLog('INIT', `调试关键词: "${kw}"`)
+  appendLog('INIT', `规则编译模式: ${props.source.webReaderCompatibilityMode || 'legado'}`)
   appendLog('INIT', `WebView 通道: ${props.source.useWebView ? '已启用' : '未启用'}`)
+  const compatibility = inspectSourceCompatibility(props.source)
+  appendLog('COMPAT', `兼容状态: ${compatibility.status}，发现 ${compatibility.issues.length} 个问题`,
+    compatibility.status === 'supported' ? 'success' : 'warn')
+  compatibility.issues.forEach(issue => appendLog('COMPAT', `[${issue.code}] ${issue.path}: ${issue.message}`, 'warn'))
 
   const engine = new SourceEngine()
 
@@ -305,9 +323,9 @@ const startDebug = async () => {
       httpInfo = info
       const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
       appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
-    }).catch(err => {
+    }).catch((err: unknown) => {
       stepStatus.search = 'failed'
-      appendLog('ERROR', `网络请求或解析异常: ${err.message || err}`, 'error')
+      appendLog('ERROR', `网络请求或解析异常: ${errorMessage(err)}`, 'error')
       if (err instanceof CloudflareChallengeError) {
         appendLog('CF_CHALLENGE', '【诊断结果】源站要求浏览器完成 Cloudflare 访问验证。', 'warn')
         if (err.diagnostics.cfRay) {
@@ -319,7 +337,7 @@ const startDebug = async () => {
         if (!props.source?.useWebView) {
           appendLog('CF_CHALLENGE', '建议：请在「网页验证」中启用 WebView 通道，让请求通过真实浏览器会话执行。', 'warn')
         }
-      } else if (err.message?.includes('404') || err.message?.includes('403') || err.message?.includes('500')) {
+      } else if (errorMessage(err).includes('404') || errorMessage(err).includes('403') || errorMessage(err).includes('500')) {
         appendLog('DIAGNOSE', `【诊断结果】源站服务返回异常状态码，此书源的搜索接口可能已失效或被目标站拦截。`, 'warn')
       }
       throw err
@@ -362,9 +380,9 @@ const startDebug = async () => {
           time: infoTime,
         }
         appendLog('BOOK_INFO', `详情解析成功: 《${info.name}》 目录URL: ${info.tocUrl || '默认原地址'} (${infoTime}ms)`, 'success')
-      } catch (err: any) {
+      } catch (err: unknown) {
         stepStatus.bookInfo = 'failed'
-        appendLog('BOOK_INFO', `详情解析失败: ${err.message || err}`, 'error')
+        appendLog('BOOK_INFO', `详情解析失败: ${errorMessage(err)}`, 'error')
       }
     } else {
       stepStatus.bookInfo = 'success'
@@ -377,7 +395,9 @@ const startDebug = async () => {
       appendLog('TOC', `请求目录页: ${tocUrl}`)
       const tocStart = Date.now()
       try {
-        const chapters = await engine.getToc(props.source, tocUrl)
+        const chapters = await engine.getToc(props.source, tocUrl, (pageInfo) => {
+          appendLog('TOC', `目录分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url} (本页解析出 ${pageInfo.count} 章)`)
+        })
         const tocTime = Date.now() - tocStart
         if (chapters && chapters.length > 0) {
           stepStatus.toc = 'success'
@@ -398,7 +418,12 @@ const startDebug = async () => {
             appendLog('CONTENT', `请求首章正文: ${firstChapterUrl}`)
             const contentStart = Date.now()
             try {
-              const text = await engine.getContent(props.source, firstChapterUrl)
+              const payload = await engine.getContent(props.source, firstChapterUrl, (pageInfo) => {
+                appendLog('CONTENT', `正文分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url}`)
+              })
+              const text = payload.type === 'text'
+                ? payload.text
+                : payload.images.map(image => image.url).join('\n')
               const contentTime = Date.now() - contentStart
               stepStatus.content = 'success'
               stepResults.content = {
@@ -406,27 +431,29 @@ const startDebug = async () => {
                 preview: text.slice(0, 200) + (text.length > 200 ? '...' : ''),
                 time: contentTime,
               }
-              appendLog('CONTENT', `正文解析成功! 字数: ${text.length} (${contentTime}ms)`, 'success')
+              appendLog('CONTENT', payload.type === 'images'
+                ? `图片解析成功! 共 ${payload.images.length} 张 (${contentTime}ms)`
+                : `正文解析成功! 字数: ${text.length} (${contentTime}ms)`, 'success')
               appendLog('CONTENT', `正文预览:\n${text.slice(0, 120)}...`)
-            } catch (err: any) {
+            } catch (err: unknown) {
               stepStatus.content = 'failed'
-              appendLog('CONTENT', `正文解析失败: ${err.message || err}`, 'error')
+              appendLog('CONTENT', `正文解析失败: ${errorMessage(err)}`, 'error')
             }
           }
         } else {
           stepStatus.toc = 'failed'
           appendLog('TOC', `未解析到任何目录章节 (${tocTime}ms)`, 'warn')
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         stepStatus.toc = 'failed'
-        appendLog('TOC', `目录解析失败: ${err.message || err}`, 'error')
+        appendLog('TOC', `目录解析失败: ${errorMessage(err)}`, 'error')
       }
     }
 
     appendLog('DONE', '书源全流程调试完成!', 'success')
     ElMessage.success('调试完成')
-  } catch (err: any) {
-    appendLog('FATAL', `调试中止: ${err.message || err}`, 'error')
+  } catch (err: unknown) {
+    appendLog('FATAL', `调试中止: ${errorMessage(err)}`, 'error')
   } finally {
     isDebugging.value = false
   }

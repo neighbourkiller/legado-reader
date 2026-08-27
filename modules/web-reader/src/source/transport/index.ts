@@ -18,3 +18,7 @@ export async function getTransport(): Promise<SourceTransport> {
 
   return transportInstance
 }
+
+export function setTransport(transport: SourceTransport | null): void {
+  transportInstance = transport
+}

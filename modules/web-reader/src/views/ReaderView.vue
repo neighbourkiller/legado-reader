@@ -2,7 +2,11 @@
   <div
     class="chapter-wrapper"
     :style="bodyTheme"
-    :class="{ night: isNight, day: !isNight }"
+    :class="{
+      night: isNight,
+      day: !isNight,
+      'pagination-mode': isPaginationMode,
+    }"
     @click="handleWrapperClick"
   >
     <!-- 左侧经典浮动工具栏 -->
@@ -16,6 +20,7 @@
           :show-arrow="false"
           v-model:visible="popCataVisible"
           popper-class="pop-cata"
+          :popper-options="readerPopoverOptions"
         >
           <PopCatalog @getContent="getContent" class="popup" />
           <template #reference>
@@ -34,6 +39,7 @@
           :show-arrow="false"
           v-model:visible="readSettingsVisible"
           popper-class="pop-setting"
+          :popper-options="readerPopoverOptions"
         >
           <ReadSettings class="popup" />
           <template #reference>
@@ -134,32 +140,57 @@
     </div>
 
     <!-- 正文阅读区域 -->
-    <div class="chapter" ref="contentRef" :style="chapterTheme">
-      <div class="content">
-        <div class="top-bar" ref="topRef"></div>
+    <div
+      class="chapter"
+      :class="[pageTransitionClass, { 'pagination-chapter': isPaginationMode }]"
+      ref="contentRef"
+      :style="[chapterTheme, pageTransitionTheme]"
+      :title="isPaginationMode ? '点击左侧上一页，右侧下一页' : undefined"
+      @click="handleChapterClick"
+    >
+      <div class="page-viewport" ref="pageViewportRef">
+        <div class="content" ref="pageContentRef" :style="paginationContentStyle">
+          <div class="top-bar" ref="topRef"></div>
 
-        <div
-          v-for="data in chapterData"
-          :key="data.index"
-          :data-chapter-index="data.index"
-        >
-          <ChapterContent
-            :key="`${data.index}:${renderRevision}`"
-            :contents="data.content"
-            :title="data.title"
-            :format="data.format"
-            :spacing="settings.spacing"
-            :fontSize="fontSizeStr"
-            :fontFamily="fontFamilyStr"
-            :chapterIndex="data.index"
-            :highlights="highlightsForChapter(data.index)"
-            @highlight-click="openHighlightEditor"
-          />
+          <div
+            v-for="data in chapterData"
+            :key="data.index"
+            :data-chapter-index="data.index"
+          >
+            <ChapterContent
+              :key="`${data.index}:${renderRevision}`"
+              :contents="data.content"
+              :title="data.title"
+              :format="data.format"
+              :embedded-images="data.embeddedImages"
+              :spacing="settings.spacing"
+              :fontSize="fontSizeStr"
+              :fontFamily="fontFamilyStr"
+              :chapterIndex="data.index"
+              :highlights="highlightsForChapter(data.index)"
+              @highlight-click="openHighlightEditor"
+            />
+          </div>
+
+          <!-- 触底无限加载指示器 -->
+          <div class="loading" ref="loadingRef" v-if="infiniteLoading"></div>
+          <div class="bottom-bar" ref="bottomRef"></div>
         </div>
 
-        <!-- 触底无限加载指示器 -->
-        <div class="loading" ref="loadingRef" v-if="infiniteLoading"></div>
-        <div class="bottom-bar" ref="bottomRef"></div>
+        <!-- 覆盖 / 仿真翻页过渡图层 -->
+        <div
+          v-if="pageOverlay"
+          class="page-transition-overlay"
+          :class="pageOverlay.className"
+          :style="pageOverlay.style"
+        >
+          <div
+            class="content page-transition-overlay-content"
+            :style="pageOverlay.contentStyle"
+            v-html="pageOverlay.html"
+          ></div>
+          <div v-if="pageOverlay.showShadow" class="page-transition-shadow-gradient"></div>
+        </div>
       </div>
     </div>
 
@@ -228,6 +259,8 @@ import {
   CollectionTag as BookmarkIcon,
 } from '@element-plus/icons-vue'
 import { useReadingStore, type ChapterPayload } from '@/stores/reading'
+import { useBookshelfStore } from '@/stores/bookshelf'
+import type { ReaderPageAnimation } from '@/parsers/types'
 import { useFullscreen } from '@/composables/useFullscreen'
 import PopCatalog from '@/components/PopCatalog.vue'
 import ReadSettings from '@/components/ReadSettings.vue'
@@ -243,6 +276,7 @@ import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
 import {
   addReadingTime,
   deleteBookmark,
+  deleteBookFromDB,
   getBookmarksByBookId,
   getBookmarkAt,
   getAllReplaceRules,
@@ -251,6 +285,7 @@ import {
   saveHighlight,
   saveReplaceRule,
   deleteHighlight,
+  updateBookMeta,
 } from '@/storage/db'
 import type {
   BookmarkRecord,
@@ -269,8 +304,17 @@ import '@/assets/fonts/iconfont.css'
 const route = useRoute()
 const router = useRouter()
 const store = useReadingStore()
+const bookshelfStore = useBookshelfStore()
 const appSettings = useAppSettingsStore()
 const { isFullscreen, toggleFullscreen } = useFullscreen()
+
+const isBookInShelf = computed(() => {
+  if (!currentBook.value) return true
+  // 本地书（txt/epub）默认在书架中
+  if (currentBook.value.format !== 'online') return true
+  if (currentBook.value.inShelf === false) return false
+  return bookshelfStore.books.some(b => b.id === currentBook.value?.id)
+})
 
 const {
   currentBook,
@@ -307,6 +351,21 @@ const bookmarkDrawerPosition = ref<ReadingPosition | null>(null)
 const currentPositionKey = ref('')
 const bookmarkedPositionKey = ref('')
 const supportsBookDetail = import.meta.env.VITE_APP_TARGET === 'desktop'
+const readerPopoverOptions = computed(() => ({
+  modifiers: [
+    {
+      name: 'preventOverflow',
+      options: {
+        padding: {
+          top: supportsBookDetail && !isFullscreen.value ? 36 : 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+      },
+    },
+  ],
+}))
 let contentGeneration = 0
 let scrollObserver: IntersectionObserver | null = null
 
@@ -314,6 +373,8 @@ const topRef = ref<HTMLElement>()
 const bottomRef = ref<HTMLElement>()
 const loadingRef = ref<HTMLElement>()
 const contentRef = ref<HTMLElement>()
+const pageViewportRef = ref<HTMLElement>()
+const pageContentRef = ref<HTMLElement>()
 let readingSessionStartedAt = 0
 
 // 章节状态
@@ -360,6 +421,258 @@ const chapterTheme = computed(() => ({
   background: chapterColor.value,
   width: readWidth.value,
 }))
+
+type PageTransitionDirection = 'forward' | 'backward'
+
+interface PageOverlayState {
+  className: string
+  style: Record<string, string>
+  contentStyle: Record<string, string>
+  html: string
+  showShadow?: boolean
+  onComplete?: () => void
+}
+
+const isPaginationMode = computed(() => settings.value.pageAnimation !== 'scroll')
+const pageTransitionClass = ref('')
+const pageOverlay = ref<PageOverlayState | null>(null)
+const suppressPageTransition = ref(false)
+let pageTransitionTimer: number | undefined
+let paginationMeasureFrame: number | undefined
+const paginationPageIndex = ref(0)
+const paginationPageCount = ref(1)
+const paginationPageWidth = ref(0)
+
+const pageTransitionDuration = computed(() => {
+  if (settings.value.pageAnimation === 'none') return 0
+  const duration = settings.value.jumpDuration
+  if (duration <= 0) return 0
+  return Math.min(500, Math.max(150, Math.round(duration * 0.35)))
+})
+
+const pageTransitionTheme = computed(() => {
+  const lineSpacing = settings.value.spacing?.line ?? 1.0
+  const paragraphSpacing = settings.value.spacing?.paragraph ?? 1.0
+  const letterSpacing = settings.value.spacing?.letter ?? 0
+  return {
+    '--reader-page-transition-duration': `${pageTransitionDuration.value}ms`,
+    '--reader-chapter-bg': chapterColor.value,
+    '--reader-line-height': `calc(1 + ${lineSpacing})`,
+    '--reader-paragraph-margin': `calc(${paragraphSpacing} * 1em) 0`,
+    '--reader-letter-spacing': `calc(${letterSpacing} * 1em)`,
+  }
+})
+
+const paginationContentStyle = computed(() => {
+  if (!isPaginationMode.value) return {}
+  const pageWidth = paginationPageWidth.value || pageViewportRef.value?.clientWidth || 1
+  const disableTransition =
+    settings.value.pageAnimation !== 'slide' ||
+    pageTransitionDuration.value === 0 ||
+    suppressPageTransition.value
+  return {
+    '--reader-pagination-page-width': `${pageWidth}px`,
+    transform: `translateX(-${paginationPageIndex.value * paginationPageWidth.value}px)`,
+    transition: disableTransition ? 'none' : undefined,
+  }
+})
+
+const clearPageOverlay = () => {
+  if (pageTransitionTimer !== undefined) {
+    window.clearTimeout(pageTransitionTimer)
+    pageTransitionTimer = undefined
+  }
+  if (pageOverlay.value?.onComplete) {
+    pageOverlay.value.onComplete()
+  }
+  pageOverlay.value = null
+}
+
+const measurePagination = () => {
+  if (!isPaginationMode.value || !pageViewportRef.value || !pageContentRef.value) return
+  const width = pageViewportRef.value.clientWidth
+  if (width === 0) return
+
+  paginationPageWidth.value = width
+  paginationPageCount.value = Math.max(1, Math.ceil(pageContentRef.value.scrollWidth / width))
+  paginationPageIndex.value = Math.min(paginationPageIndex.value, paginationPageCount.value - 1)
+}
+
+const schedulePaginationMeasurement = () => {
+  if (!isPaginationMode.value) return
+  if (paginationMeasureFrame !== undefined) window.cancelAnimationFrame(paginationMeasureFrame)
+  nextTick(() => {
+    paginationMeasureFrame = window.requestAnimationFrame(() => {
+      paginationMeasureFrame = undefined
+      measurePagination()
+    })
+  })
+}
+
+const revealPaginationTarget = async (target: HTMLElement) => {
+  if (!isPaginationMode.value || !pageViewportRef.value || paginationPageWidth.value === 0) {
+    return false
+  }
+  clearPageOverlay()
+  const viewportLeft = pageViewportRef.value.getBoundingClientRect().left
+  const targetOffset = target.getBoundingClientRect().left - viewportLeft
+    + paginationPageIndex.value * paginationPageWidth.value
+  paginationPageIndex.value = Math.max(
+    0,
+    Math.min(paginationPageCount.value - 1, Math.floor(targetOffset / paginationPageWidth.value)),
+  )
+  await nextTick()
+  return true
+}
+
+const playChapterTransition = async (direction?: PageTransitionDirection) => {
+  if (!direction || settings.value.pageAnimation === 'none' || pageTransitionDuration.value === 0) {
+    return
+  }
+
+  if (pageTransitionTimer !== undefined) window.clearTimeout(pageTransitionTimer)
+  pageTransitionClass.value = ''
+  await nextTick()
+  pageTransitionClass.value = 'page-transition--chapter-fade'
+  pageTransitionTimer = window.setTimeout(() => {
+    pageTransitionClass.value = ''
+    pageTransitionTimer = undefined
+  }, 200)
+}
+
+const turnPaginationPage = async (direction: PageTransitionDirection) => {
+  if (!isPaginationMode.value || chapterLoading.value) return false
+  measurePagination()
+  const oldIndex = paginationPageIndex.value
+  const nextIndex = oldIndex + (direction === 'forward' ? 1 : -1)
+  if (nextIndex < 0 || nextIndex >= paginationPageCount.value) return false
+
+  const animation = settings.value.pageAnimation
+  const duration = pageTransitionDuration.value
+  const width = paginationPageWidth.value || pageViewportRef.value?.clientWidth || 1
+  const html = pageContentRef.value?.innerHTML || ''
+
+  clearPageOverlay()
+
+  if (animation === 'none' || duration === 0) {
+    paginationPageIndex.value = nextIndex
+    await nextTick()
+    updateReadingProgress()
+    return true
+  }
+
+  if (animation === 'slide') {
+    paginationPageIndex.value = nextIndex
+    await nextTick()
+    updateReadingProgress()
+    return true
+  }
+
+  if (animation === 'cover') {
+    if (direction === 'forward') {
+      pageOverlay.value = {
+        className: 'page-transition--cover-forward',
+        style: {
+          background: chapterColor.value,
+        },
+        contentStyle: {
+          '--reader-pagination-page-width': `${width}px`,
+          transform: `translateX(-${nextIndex * width}px)`,
+        },
+        html,
+        showShadow: true,
+        onComplete: () => {
+          paginationPageIndex.value = nextIndex
+        },
+      }
+      pageTransitionTimer = window.setTimeout(() => {
+        if (pageOverlay.value) {
+          paginationPageIndex.value = nextIndex
+          pageOverlay.value = null
+          pageTransitionTimer = undefined
+          updateReadingProgress()
+        }
+      }, duration)
+    } else {
+      paginationPageIndex.value = nextIndex
+      pageOverlay.value = {
+        className: 'page-transition--cover-backward',
+        style: {
+          background: chapterColor.value,
+        },
+        contentStyle: {
+          '--reader-pagination-page-width': `${width}px`,
+          transform: `translateX(-${oldIndex * width}px)`,
+        },
+        html,
+        showShadow: true,
+      }
+      pageTransitionTimer = window.setTimeout(() => {
+        if (pageOverlay.value) {
+          pageOverlay.value = null
+          pageTransitionTimer = undefined
+          updateReadingProgress()
+        }
+      }, duration)
+    }
+    return true
+  }
+
+  if (animation === 'simulation') {
+    if (direction === 'forward') {
+      paginationPageIndex.value = nextIndex
+      pageOverlay.value = {
+        className: 'page-transition--sim-forward',
+        style: {
+          background: chapterColor.value,
+        },
+        contentStyle: {
+          '--reader-pagination-page-width': `${width}px`,
+          transform: `translateX(-${oldIndex * width}px)`,
+        },
+        html,
+        showShadow: true,
+      }
+      pageTransitionTimer = window.setTimeout(() => {
+        if (pageOverlay.value) {
+          pageOverlay.value = null
+          pageTransitionTimer = undefined
+          updateReadingProgress()
+        }
+      }, duration)
+    } else {
+      pageOverlay.value = {
+        className: 'page-transition--sim-backward',
+        style: {
+          background: chapterColor.value,
+        },
+        contentStyle: {
+          '--reader-pagination-page-width': `${width}px`,
+          transform: `translateX(-${nextIndex * width}px)`,
+        },
+        html,
+        showShadow: true,
+        onComplete: () => {
+          paginationPageIndex.value = nextIndex
+        },
+      }
+      pageTransitionTimer = window.setTimeout(() => {
+        if (pageOverlay.value) {
+          paginationPageIndex.value = nextIndex
+          pageOverlay.value = null
+          pageTransitionTimer = undefined
+          updateReadingProgress()
+        }
+      }, duration)
+    }
+    return true
+  }
+
+  paginationPageIndex.value = nextIndex
+  await nextTick()
+  updateReadingProgress()
+  return true
+}
 
 // 左侧工具栏贴紧正文左边缘
 const leftBarTheme = computed(() => ({
@@ -446,7 +759,9 @@ const fontFamilyStr = computed(() => {
 
 const fontSizeStr = computed(() => `${settings.value.fontSize || 18}px`)
 
-const infiniteLoading = computed(() => settings.value.infiniteLoading)
+const infiniteLoading = computed(
+  () => settings.value.pageAnimation === 'scroll' && appSettings.readerScrollInfiniteLoading,
+)
 const isCurrentPositionBookmarked = computed(
   () => currentPositionKey.value !== '' && currentPositionKey.value === bookmarkedPositionKey.value,
 )
@@ -630,7 +945,11 @@ const jumpToBookmark = async (bookmark: BookmarkRecord) => {
     ? findTextRange(body, resolvedAnchor.startOffset, resolvedAnchor.endOffset)
     : null
   const exactTarget = exactRange?.startContainer.parentElement || target
-  jump(exactTarget, { duration: 0 })
+  if (isPaginationMode.value) {
+    await revealPaginationTarget(exactTarget)
+  } else {
+    jump(exactTarget, { duration: 0 })
+  }
   await store.saveProgress(bookmark.chapterIndex, bookmark.chapterPos).catch(console.error)
   currentPositionKey.value = bookmark.id
   bookmarkedPositionKey.value = bookmark.id
@@ -674,7 +993,13 @@ const jumpToHighlight = async (highlight: HighlightRecord) => {
     return
   }
   const target = range.startContainer.parentElement
-  if (target) jump(target, { duration: 0 })
+  if (target) {
+    if (isPaginationMode.value) {
+      await revealPaginationTarget(target)
+    } else {
+      jump(target, { duration: 0 })
+    }
+  }
   await store.saveProgress(highlight.chapterIndex, highlight.startParagraph).catch(console.error)
 }
 
@@ -723,11 +1048,23 @@ const clearSelectionMenu = (clearNativeSelection = true) => {
   if (clearNativeSelection) window.getSelection()?.removeAllRanges()
 }
 
+const isImageChapter = (chapterIndex?: number) => {
+  if (chapterIndex !== undefined) {
+    const ch = chapterData.value.find(c => c.index === chapterIndex)
+    if (ch?.format === 'images') return true
+  }
+  return chapterData.value.some(c => c.format === 'images')
+}
+
 const showSelectionMenu = () => {
   if (!supportsBookDetail || replaceDialogVisible.value || highlightEditVisible.value) return
   const snapshot = captureReaderSelection(window.getSelection())
   if (!snapshot) {
     selectionSnapshot.value = null
+    return
+  }
+  if (isImageChapter(snapshot.anchor?.chapterIndex)) {
+    clearSelectionMenu()
     return
   }
   const menuWidth = 322
@@ -742,6 +1079,10 @@ const showSelectionMenu = () => {
 }
 
 const onSelectionPointerUp = (event: PointerEvent) => {
+  if (isImageChapter()) {
+    clearSelectionMenu()
+    return
+  }
   if ((event.target as Element | null)?.closest('.reader-selection-menu')) return
   window.setTimeout(showSelectionMenu, 0)
 }
@@ -797,7 +1138,7 @@ const bookmarkSelection = async () => {
 
 const highlightSelection = async (style: HighlightStyleRecord) => {
   const anchor = selectionSnapshot.value?.anchor
-  if (!anchor || !currentBook.value) return
+  if (!anchor || !currentBook.value || isImageChapter(anchor.chapterIndex)) return
   const chapter = chapters.value[anchor.chapterIndex]
   const record: HighlightRecord = {
     id: `${currentBook.value.id}:${anchor.chapterIndex}:${anchor.startOffset}:${Date.now()}`,
@@ -866,6 +1207,27 @@ const handleWrapperClick = () => {
   }
 }
 
+const handleChapterClick = async (event: MouseEvent) => {
+  if (!isPaginationMode.value || chapterLoading.value) return
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return
+  const target = event.target as Element | null
+  if (target?.closest('a, button, input, textarea, select, [data-reader-highlight]')) return
+  const chapter = contentRef.value
+  if (!chapter) return
+
+  const { left, width } = chapter.getBoundingClientRect()
+  if (width === 0) return
+  const offsetX = event.clientX - left
+  if (offsetX <= width / 3) {
+    event.stopPropagation()
+    if (!await turnPaginationPage('backward')) await toPreChapter('end')
+  } else if (offsetX >= (width * 2) / 3) {
+    event.stopPropagation()
+    if (!await turnPaginationPage('forward')) await toNextChapter()
+  }
+}
+
 const replaceContext = () => ({
   bookName: currentBook.value?.name || '',
   sourceUrl: currentBook.value?.sourceUrl,
@@ -909,17 +1271,23 @@ const getContent = async (
   index: number,
   reloadChapter = true,
   forceRefresh = false,
+  pageTransitionDirection?: PageTransitionDirection,
+  paginationTargetPage: 'start' | 'end' = 'start',
 ): Promise<boolean> => {
   if (index < 0 || index >= chapters.value.length) return false
 
+  clearPageOverlay()
   const generation = reloadChapter ? ++contentGeneration : contentGeneration
   chapterLoading.value = true
 
   if (reloadChapter && !forceRefresh) {
     window.scrollTo(0, 0)
+    store.revokeChapterAssets()
     chapterData.value = []
     rawChapterData.value = []
-    await store.saveProgress(index).catch(console.error)
+    if (!isPaginationMode.value || paginationTargetPage !== 'end') {
+      await store.saveProgress(index).catch(console.error)
+    }
   } else if (!reloadChapter) {
     chapterData.value = trimChapterWindowBeforeAppend(chapterData.value)
     rawChapterData.value = trimChapterWindowBeforeAppend(rawChapterData.value)
@@ -941,6 +1309,8 @@ const getContent = async (
       if (reloadChapter && store.currentBook) {
         store.currentBook.currentChapter = index
         if (
+          paginationTargetPage !== 'end' &&
+          payload.format !== 'images' &&
           store.currentBook.legacyChapterCharPos !== undefined &&
           store.currentBook.legacyChapterCharPos >= 0
         ) {
@@ -955,6 +1325,18 @@ const getContent = async (
           await store.saveProgress(index, store.currentBook.currentChapterPos).catch(console.error)
         }
       }
+      if (reloadChapter && isPaginationMode.value) {
+        suppressPageTransition.value = true
+        await nextTick()
+        measurePagination()
+        paginationPageIndex.value = paginationTargetPage === 'end'
+          ? Math.max(0, paginationPageCount.value - 1)
+          : 0
+        await nextTick()
+        suppressPageTransition.value = false
+        updateReadingProgress()
+      }
+      await playChapterTransition(pageTransitionDirection)
       return true
     }
     return false
@@ -1005,11 +1387,24 @@ watchEffect(() => {
 })
 
 // 顶部 / 底部跳转
-const toTop = () => {
+const toTop = async () => {
+  if (isPaginationMode.value) {
+    paginationPageIndex.value = 0
+    await nextTick()
+    updateReadingProgress()
+    return
+  }
   if (topRef.value) jump(topRef.value, { duration: settings.value.jumpDuration })
 }
 
-const toBottom = () => {
+const toBottom = async () => {
+  if (isPaginationMode.value) {
+    measurePagination()
+    paginationPageIndex.value = paginationPageCount.value - 1
+    await nextTick()
+    updateReadingProgress()
+    return
+  }
   if (bottomRef.value) jump(bottomRef.value, { duration: settings.value.jumpDuration })
 }
 
@@ -1021,17 +1416,30 @@ const toBookDetail = () => {
   if (!currentBook.value) return
   router.push({
     path: '/book-detail',
-    query: { id: currentBook.value.id },
+    query: {
+      id: currentBook.value.id,
+      name: currentBook.value.name,
+      author: currentBook.value.author,
+      bookUrl: currentBook.value.bookUrl,
+      coverUrl: currentBook.value.coverUrl,
+      intro: currentBook.value.intro,
+      kind: currentBook.value.kind,
+      latestChapter: currentBook.value.latestChapterTitle,
+      sourceUrl: currentBook.value.sourceUrl,
+      sourceName: currentBook.value.sourceName,
+      tocUrl: currentBook.value.tocUrl,
+    },
   })
 }
 
 // 章节前后切换
-const toPreChapter = async () => {
+const toPreChapter = async (targetPage: 'start' | 'end' | MouseEvent = 'start') => {
+  const resolvedTarget = targetPage === 'end' ? 'end' : 'start'
   if (isFirstChapter.value) {
     ElMessage.warning('已经是第一章')
     return
   }
-  await getContent(currentChapterIndex.value - 1, true)
+  await getContent(currentChapterIndex.value - 1, true, false, 'backward', resolvedTarget)
 }
 
 const toNextChapter = async () => {
@@ -1039,12 +1447,12 @@ const toNextChapter = async () => {
     ElMessage.warning('已经是最后一章')
     return
   }
-  await getContent(currentChapterIndex.value + 1, true)
+  await getContent(currentChapterIndex.value + 1, true, false, 'forward', 'start')
 }
 
 // 键盘事件
 let canJump = true
-const handleKeyPress = (event: KeyboardEvent) => {
+const handleKeyPress = async (event: KeyboardEvent) => {
   if (event.key === 'Escape' && selectionSnapshot.value) {
     event.stopPropagation()
     clearSelectionMenu()
@@ -1055,7 +1463,7 @@ const handleKeyPress = (event: KeyboardEvent) => {
     case 'ArrowLeft':
       event.stopPropagation()
       event.preventDefault()
-      toPreChapter()
+      toPreChapter('start')
       break
     case 'ArrowRight':
       event.stopPropagation()
@@ -1065,6 +1473,10 @@ const handleKeyPress = (event: KeyboardEvent) => {
     case 'ArrowUp':
       event.stopPropagation()
       event.preventDefault()
+      if (isPaginationMode.value) {
+        if (!await turnPaginationPage('backward')) await toPreChapter('end')
+        break
+      }
       if (document.documentElement.scrollTop === 0) {
         ElMessage.warning('已到达页面顶部')
       } else {
@@ -1078,6 +1490,10 @@ const handleKeyPress = (event: KeyboardEvent) => {
     case 'ArrowDown':
       event.stopPropagation()
       event.preventDefault()
+      if (isPaginationMode.value) {
+        if (!await turnPaginationPage('forward')) await toNextChapter()
+        break
+      }
       if (
         document.documentElement.clientHeight +
           document.documentElement.scrollTop >=
@@ -1134,7 +1550,36 @@ const onResize = () => {
       settings.value.readWidth = Math.max(640, window.innerWidth - 160)
     }
   }
+  schedulePaginationMeasurement()
 }
+
+watch(isPaginationMode, enabled => {
+  clearPageOverlay()
+  if (enabled) {
+    if (chapterData.value.length > 1) {
+      const currentIndex = currentChapterIndex.value
+      const visibleChapter = chapterData.value.find(chapter => chapter.index === currentIndex)
+        ?? chapterData.value[chapterData.value.length - 1]
+      const rawChapter = rawChapterData.value.find(chapter => chapter.index === visibleChapter?.index)
+      chapterData.value = visibleChapter ? [visibleChapter] : []
+      rawChapterData.value = rawChapter ? [rawChapter] : []
+    }
+    paginationPageIndex.value = 0
+    schedulePaginationMeasurement()
+  }
+})
+
+watch(
+  () => [
+    settings.value.fontSize,
+    settings.value.readWidth,
+    settings.value.spacing.letter,
+    settings.value.spacing.line,
+    settings.value.spacing.paragraph,
+    renderRevision.value,
+  ],
+  schedulePaginationMeasurement,
+)
 
 // 页面标题更新
 watchEffect(() => {
@@ -1163,6 +1608,9 @@ onMounted(async () => {
   }
 
   try {
+    if (bookshelfStore.books.length === 0) {
+      await bookshelfStore.loadBooks().catch(console.error)
+    }
     await store.loadBook(bookId)
     if (supportsBookDetail) {
       replaceRules.value = await getAllReplaceRules().catch(() => [])
@@ -1190,6 +1638,7 @@ onMounted(async () => {
           .load()
           .then(loaded => {
             document.fonts.add(loaded)
+            schedulePaginationMeasurement()
           })
           .catch(err => {
             console.warn('自动重新挂载自定义网络字体失败:', err)
@@ -1223,7 +1672,13 @@ onMounted(async () => {
       const target = document.querySelector<HTMLElement>(
         `[data-chapter-index="${initialChapter}"] [data-chapterpos="${Number(requestedPosition)}"]`,
       )
-      if (target) jump(target, { duration: 0 })
+      if (target) {
+        if (isPaginationMode.value) {
+          await revealPaginationTarget(target)
+        } else {
+          jump(target, { duration: 0 })
+        }
+      }
     }
     if (supportsBookDetail) await syncBookmarkState()
 
@@ -1249,6 +1704,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearPageOverlay()
   flushReadingSession(false).catch(console.error)
   window.removeEventListener('keyup', handleKeyPress)
   window.removeEventListener('keydown', ignoreKeyPress)
@@ -1257,6 +1713,7 @@ onUnmounted(() => {
   document.removeEventListener('pointerup', onSelectionPointerUp)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (progressFrame !== null) window.cancelAnimationFrame(progressFrame)
+  if (paginationMeasureFrame !== undefined) window.cancelAnimationFrame(paginationMeasureFrame)
   popCataVisible.value = false
   readSettingsVisible.value = false
   scrollObserver?.disconnect()
@@ -1265,30 +1722,64 @@ onUnmounted(() => {
   store.cleanup()
 })
 
-onBeforeRouteLeave(() => {
+let isLeavingConfirmed = false
+
+onBeforeRouteLeave(async (to, from) => {
+  // 如果只是在当前阅读器内部切换 query（如跳转到特定书签或章节位置），不触发离开逻辑
+  if (to.name === 'reader' && to.params.id === from.params.id) {
+    return true
+  }
+
+  if (!isLeavingConfirmed && currentBook.value?.format === 'online' && !isBookInShelf.value) {
+    try {
+      await ElMessageBox.confirm(
+        `是否把《${currentBook.value.name}》加入到书架？`,
+        '提示',
+        {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'info',
+          distinguishCancelAndClose: true,
+        }
+      )
+      // 用户点击“确定”：加入书架
+      currentBook.value.inShelf = true
+      await updateBookMeta(currentBook.value.id, { inShelf: true })
+      await bookshelfStore.loadBooks().catch(console.warn)
+      ElMessage.success('已加入书架')
+    } catch (action) {
+      if (action === 'cancel') {
+        // 用户点击“取消”：不加入书架，清理试读产生的临时书籍数据
+        const bookId = currentBook.value.id
+        await deleteBookFromDB(bookId).catch(console.warn)
+        await bookshelfStore.loadBooks().catch(console.warn)
+      } else {
+        // 用户点击右上角 X、遮罩层或按 ESC：取消退出，留在当前阅读界面
+        return false
+      }
+    }
+  }
+
+  isLeavingConfirmed = true
   window.removeEventListener('keyup', handleKeyPress)
   document.removeEventListener('pointerup', onSelectionPointerUp)
-  if (currentBook.value) {
+  if (currentBook.value && isBookInShelf.value) {
     store.saveProgress(undefined, undefined, true).catch(console.error)
     flushReadingSession(false).catch(console.error)
   }
+  return true
 })
 </script>
 
 <style lang="scss" scoped>
-:deep(.pop-setting) {
-  margin-left: 68px;
-  top: 0;
-}
-
-:deep(.pop-cata) {
-  margin-left: 10px;
-}
-
 // App.vue 为桌面端路由根节点设置了 height: 100%。此选择器必须比该规则
 // 更具体，阅读正文超出首屏时才能按内容撑开，不露出全局主题背景。
 :global(.desktop-app .app-content > .chapter-wrapper.chapter-wrapper) {
   height: auto !important;
+}
+
+:global(.desktop-app .app-content > .chapter-wrapper.chapter-wrapper.pagination-mode) {
+  height: 100% !important;
 }
 
 .chapter-wrapper {
@@ -1296,6 +1787,87 @@ onBeforeRouteLeave(() => {
   width: 100%;
   min-height: 100vh;
   position: relative;
+
+  &.pagination-mode {
+    height: 100vh;
+    min-height: 0;
+    overflow: hidden;
+
+    .chapter.pagination-chapter {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+
+      .page-viewport {
+        height: 100%;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .content {
+        height: 100%;
+        column-width: var(--reader-pagination-page-width);
+        column-gap: 0;
+        column-fill: auto;
+        transition: transform var(--reader-page-transition-duration) cubic-bezier(0.25, 1, 0.5, 1);
+        will-change: transform;
+      }
+
+      .page-transition-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        pointer-events: none;
+        background-color: var(--reader-chapter-bg, inherit);
+        z-index: 10;
+        will-change: transform, opacity;
+
+        .page-transition-overlay-content {
+          height: 100%;
+          column-width: var(--reader-pagination-page-width);
+          column-gap: 0;
+          column-fill: auto;
+          pointer-events: none;
+          transition: none !important;
+        }
+
+        &.page-transition--cover-forward {
+          box-shadow: -8px 0 24px rgba(0, 0, 0, 0.22);
+          animation: reader-page-cover-forward var(--reader-page-transition-duration) cubic-bezier(0.25, 1, 0.5, 1) both;
+        }
+
+        &.page-transition--cover-backward {
+          box-shadow: -8px 0 24px rgba(0, 0, 0, 0.22);
+          animation: reader-page-cover-backward var(--reader-page-transition-duration) cubic-bezier(0.25, 1, 0.5, 1) both;
+        }
+
+        &.page-transition--sim-forward {
+          transform-origin: left center;
+          backface-visibility: hidden;
+          animation: reader-page-sim-forward var(--reader-page-transition-duration) cubic-bezier(0.25, 1, 0.5, 1) both;
+        }
+
+        &.page-transition--sim-backward {
+          transform-origin: left center;
+          backface-visibility: hidden;
+          animation: reader-page-sim-backward var(--reader-page-transition-duration) cubic-bezier(0.25, 1, 0.5, 1) both;
+        }
+
+        .page-transition-shadow-gradient {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          pointer-events: none;
+          background: linear-gradient(to right, rgba(0, 0, 0, 0.16) 0%, rgba(0, 0, 0, 0.04) 15%, transparent 40%);
+        }
+      }
+    }
+  }
 
   .tool-bar {
     position: fixed;
@@ -1431,9 +2003,14 @@ onBeforeRouteLeave(() => {
     margin: 0 auto;
     box-sizing: border-box;
 
-    .content {
+    &.page-transition--chapter-fade {
+      animation: reader-chapter-fade 200ms ease-out both;
+    }
+
+    .content,
+    .page-transition-overlay-content {
       font-size: 18px;
-      line-height: 1.8;
+      line-height: var(--reader-line-height, 1.8);
 
       .top-bar,
       .bottom-bar {
@@ -1444,6 +2021,67 @@ onBeforeRouteLeave(() => {
         height: 40px;
       }
     }
+  }
+}
+
+@keyframes reader-page-cover-forward {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0%);
+  }
+}
+
+@keyframes reader-page-cover-backward {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes reader-page-sim-forward {
+  from {
+    transform: perspective(1600px) rotateY(0deg);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+  to {
+    transform: perspective(1600px) rotateY(-88deg) scale(0.96);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.3);
+    opacity: 0.15;
+  }
+}
+
+@keyframes reader-page-sim-backward {
+  from {
+    transform: perspective(1600px) rotateY(-88deg) scale(0.96);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.3);
+    opacity: 0.15;
+  }
+  to {
+    transform: perspective(1600px) rotateY(0deg) scale(1);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    opacity: 1;
+  }
+}
+
+@keyframes reader-chapter-fade {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-transition-overlay,
+  .chapter.pagination-chapter .content,
+  .chapter[class*='page-transition--'] {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
   }
 }
 
