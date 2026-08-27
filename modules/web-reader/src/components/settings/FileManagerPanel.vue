@@ -120,6 +120,15 @@
             仅清理图片缓存 ({{ formatSize(totalImageSize) }})
           </el-button>
           <el-button
+            type="primary"
+            plain
+            :disabled="cacheSummaries.length === 0"
+            :loading="exportingAll"
+            @click="openBatchExportDialog"
+          >
+            批量导出
+          </el-button>
+          <el-button
             type="danger"
             plain
             :disabled="cacheSummaries.length === 0"
@@ -155,7 +164,15 @@
           </span>
           <span>{{ cache.chapterCount }} 章</span>
           <span>{{ formatSize(cache.size) }}</span>
-          <span>
+          <span class="cache-row-actions">
+            <el-button
+              text
+              type="primary"
+              :loading="exportingBookId === cache.bookId"
+              @click="exportBookCache(cache)"
+            >
+              导出
+            </el-button>
             <el-button
               text
               type="danger"
@@ -169,6 +186,60 @@
         <el-empty v-if="cacheSummaries.length === 0" description="暂无离线章节缓存" />
       </div>
     </section>
+
+    <!-- 批量导出对话框 -->
+    <el-dialog
+      v-model="batchExportDialogVisible"
+      title="批量导出离线章节"
+      width="480px"
+      :close-on-click-modal="!exportingAll"
+      :close-on-press-escape="!exportingAll"
+      :show-close="!exportingAll"
+    >
+      <div class="batch-export-dialog">
+        <p class="batch-export-desc">
+          将批量导出已缓存的 <strong>{{ cacheSummaries.length }}</strong> 本书籍（共 <strong>{{ totalCachedChapters }}</strong> 章正文）。
+        </p>
+
+        <el-form label-position="top">
+          <el-form-item label="保存方式">
+            <el-radio-group v-model="batchExportMode" :disabled="exportingAll">
+              <el-radio value="zip">
+                <div class="mode-radio-content">
+                  <div><strong>ZIP 压缩包</strong></div>
+                  <div class="mode-tip">将所有书籍打包为一个 ZIP 压缩文件，便于备份与传输</div>
+                </div>
+              </el-radio>
+              <el-radio value="folder" :disabled="!platform.isDesktop">
+                <div class="mode-radio-content">
+                  <div>
+                    <strong>导出到指定文件夹</strong>
+                    <span v-if="!platform.isDesktop" class="disabled-tip"> (仅桌面端支持)</span>
+                  </div>
+                  <div class="mode-tip">选择本地文件夹，将每本书直接输出为单独的 .txt 文件</div>
+                </div>
+              </el-radio>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
+
+        <div v-if="exportingAll" class="batch-export-progress">
+          <el-progress :percentage="batchProgressPercent" :status="batchProgressStatus" />
+          <span class="progress-tip">{{ batchProgressTip }}</span>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button :disabled="exportingAll" @click="batchExportDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="exportingAll"
+          @click="startBatchExport"
+        >
+          开始导出
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -182,9 +253,22 @@ import {
   clearChapterImages,
   deleteBookChapterContents,
   getAllStoredBookFiles,
+  getBook,
+  getBookChapterContents,
   getChapterCacheSummaries,
 } from '@/storage/db'
 import type { ChapterCacheSummary, StoredBookFileInfo } from '@/storage/db'
+import {
+  buildBookTxtFileName,
+  createBatchNovelZip,
+  generateBookTxtContent,
+  type NovelExportItem,
+} from '@/utils/exportNovel'
+import {
+  exportMultipleTextFilesToDirectory,
+  saveTextFile,
+  saveZipFile,
+} from '@/platform/exportFiles'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import { platform } from '@/platform/capabilities'
 import { openAppDataDirectory } from '@/platform/appFiles'
@@ -198,6 +282,13 @@ const openingAppDirectory = ref(false)
 const clearingAllCaches = ref(false)
 const clearingOnlyImages = ref(false)
 const clearingBookId = ref('')
+const exportingBookId = ref('')
+const exportingAll = ref(false)
+const batchExportDialogVisible = ref(false)
+const batchExportMode = ref<'zip' | 'folder'>('zip')
+const batchProgressPercent = ref(0)
+const batchProgressTip = ref('')
+const batchProgressStatus = ref<'' | 'success' | 'warning' | 'exception'>('')
 const keyword = ref('')
 const currentDirectory = ref<Directory>('root')
 const files = ref<StoredBookFileInfo[]>([])
@@ -335,6 +426,136 @@ const clearAllImages = async () => {
   }
 }
 
+const exportBookCache = async (cache: ChapterCacheSummary) => {
+  exportingBookId.value = cache.bookId
+  try {
+    const [chapters, storedBook] = await Promise.all([
+      getBookChapterContents(cache.bookId),
+      getBook(cache.bookId),
+    ])
+
+    if (!chapters || chapters.length === 0) {
+      ElMessage.warning(`《${cache.bookName || '该书籍'}》暂无离线章节可导出`)
+      return
+    }
+
+    const bookName = storedBook?.meta?.name || cache.bookName || '未知书籍'
+    const author = storedBook?.meta?.author || cache.bookAuthor || ''
+    const intro = storedBook?.meta?.intro || ''
+
+    const content = generateBookTxtContent({ name: bookName, author, intro }, chapters)
+    const defaultFileName = buildBookTxtFileName(bookName, author)
+
+    const savedPath = await saveTextFile(content, defaultFileName)
+    if (savedPath) {
+      ElMessage.success(`《${bookName}》已成功导出`)
+    }
+  } catch (error) {
+    console.error('导出单本书籍缓存失败', error)
+    ElMessage.error(error instanceof Error ? error.message : '导出书籍失败')
+  } finally {
+    exportingBookId.value = ''
+  }
+}
+
+const openBatchExportDialog = () => {
+  batchExportMode.value = 'zip'
+  batchProgressPercent.value = 0
+  batchProgressTip.value = ''
+  batchProgressStatus.value = ''
+  batchExportDialogVisible.value = true
+}
+
+const startBatchExport = async () => {
+  if (cacheSummaries.value.length === 0) return
+
+  exportingAll.value = true
+  batchProgressPercent.value = 0
+  batchProgressStatus.value = ''
+  batchProgressTip.value = '正在准备导出数据…'
+
+  try {
+    const total = cacheSummaries.value.length
+    const exportItems: NovelExportItem[] = []
+    let successCount = 0
+
+    for (let i = 0; i < total; i++) {
+      const cache = cacheSummaries.value[i]
+      const currentNum = i + 1
+      batchProgressPercent.value = Math.round((currentNum / (total + 1)) * 80)
+      batchProgressTip.value = `正在生成 (${currentNum}/${total})：《${cache.bookName || '未知书籍'}》…`
+
+      try {
+        const [chapters, storedBook] = await Promise.all([
+          getBookChapterContents(cache.bookId),
+          getBook(cache.bookId),
+        ])
+
+        if (chapters && chapters.length > 0) {
+          const bookName = storedBook?.meta?.name || cache.bookName || '未知书籍'
+          const author = storedBook?.meta?.author || cache.bookAuthor || ''
+          const intro = storedBook?.meta?.intro || ''
+          const content = generateBookTxtContent({ name: bookName, author, intro }, chapters)
+          const fileName = buildBookTxtFileName(bookName, author)
+          exportItems.push({ fileName, content })
+          successCount++
+        }
+      } catch (err) {
+        console.warn(`处理书籍《${cache.bookName}》缓存失败:`, err)
+      }
+    }
+
+    if (exportItems.length === 0) {
+      ElMessage.warning('没有可导出的离线章节内容')
+      batchExportDialogVisible.value = false
+      return
+    }
+
+    batchProgressPercent.value = 90
+
+    if (batchExportMode.value === 'folder' && platform.isDesktop) {
+      batchProgressTip.value = '请在弹出的系统对话框中选择保存目录…'
+      const exportFiles = exportItems.map(item => ({ name: item.fileName, content: item.content }))
+      const result = await exportMultipleTextFilesToDirectory(exportFiles)
+      if (!result) {
+        ElMessage.info('已取消选择导出目录')
+        return
+      }
+      batchProgressPercent.value = 100
+      batchProgressStatus.value = 'success'
+      batchProgressTip.value = `成功导出 ${result.count} 本书籍到文件夹`
+      ElMessage.success(`成功导出 ${result.count} 本书籍到目录：${result.directory}`)
+      batchExportDialogVisible.value = false
+    } else {
+      batchProgressTip.value = '正在压缩打包 ZIP 文件…'
+      const zipBytes = await createBatchNovelZip(exportItems)
+      const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const timeStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`
+      const zipName = `小说离线缓存批量导出_${timeStr}.zip`
+
+      batchProgressTip.value = '请选择 ZIP 文件保存位置…'
+      const savedPath = await saveZipFile(zipBytes, zipName)
+      if (!savedPath) {
+        ElMessage.info('已取消保存 ZIP 文件')
+        return
+      }
+      batchProgressPercent.value = 100
+      batchProgressStatus.value = 'success'
+      batchProgressTip.value = `成功导出 ${successCount} 本书籍至 ZIP 压缩包`
+      ElMessage.success(`成功导出 ${successCount} 本书籍至 ZIP 压缩包`)
+      batchExportDialogVisible.value = false
+    }
+  } catch (error) {
+    console.error('批量导出离线缓存失败', error)
+    batchProgressStatus.value = 'exception'
+    batchProgressTip.value = '批量导出失败'
+    ElMessage.error(error instanceof Error ? error.message : '批量导出失败')
+  } finally {
+    exportingAll.value = false
+  }
+}
+
 const removeFile = async (file: StoredBookFileInfo) => {
   try {
     await ElMessageBox.confirm(
@@ -414,17 +635,28 @@ button.name-cell { padding: 0; cursor: pointer; }
 .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .image-cache-tag { width: fit-content; margin-top: 2px; }
 .cache-summary { display: flex; gap: 18px; padding: 11px 16px; border: 1px solid var(--el-border-color-lighter); border-bottom: 0; border-radius: 10px 10px 0 0; color: var(--el-text-color-secondary); background: var(--el-fill-color-light); font-size: 12px; }
-.cache-list-header, .cache-row { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 140px 80px; align-items: center; column-gap: 12px; }
+.cache-list-header, .cache-row { display: grid; grid-template-columns: minmax(220px, 1fr) 100px 130px 125px; align-items: center; column-gap: 12px; }
 .cache-list-header { padding: 9px 16px; border: 1px solid var(--el-border-color-lighter); border-bottom: 0; color: var(--el-text-color-secondary); font-size: 12px; }
 .cache-list { overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 0 0 10px 10px; background: var(--el-bg-color-overlay); }
 .cache-row { min-height: 62px; padding: 8px 16px; border-bottom: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-secondary); font-size: 12px; }
 .cache-row:last-of-type { border-bottom: 0; }
 .cache-row:hover { background: var(--el-fill-color-light); }
+.cache-row-actions { display: flex; align-items: center; gap: 4px; }
 .cache-book { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
 .cache-book strong, .cache-book small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cache-book strong { color: var(--el-text-color-primary); font-size: 14px; font-weight: 500; }
 .cache-book small { color: var(--el-text-color-secondary); }
 .cache-list :deep(.el-empty) { padding: 30px 0; }
+
+.batch-export-dialog { display: flex; flex-direction: column; gap: 14px; }
+.batch-export-desc { margin: 0; color: var(--el-text-color-regular); font-size: 14px; line-height: 1.6; }
+.mode-radio-content { display: flex; flex-direction: column; gap: 2px; }
+.batch-export-dialog :deep(.el-radio) { display: flex; align-items: flex-start; height: auto; margin-bottom: 12px; white-space: normal; }
+.batch-export-dialog :deep(.el-radio__label) { margin-top: -2px; }
+.mode-tip { color: var(--el-text-color-secondary); font-size: 12px; }
+.disabled-tip { color: var(--el-text-color-placeholder); font-size: 12px; font-weight: normal; }
+.batch-export-progress { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.progress-tip { color: var(--el-text-color-secondary); font-size: 12px; }
 
 @media screen and (max-width: 900px) {
   .list-header, .file-row { grid-template-columns: minmax(220px, 1fr) 72px 80px 110px; }

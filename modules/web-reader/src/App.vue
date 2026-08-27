@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
@@ -35,6 +35,18 @@ const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 useTheme()
 
 const { isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen()
+
+const syncDesktopTitlebarClass = (fullscreen: boolean) => {
+  if (typeof document === 'undefined') return
+  document.documentElement.classList.toggle(
+    'desktop-with-titlebar',
+    isDesktop && !fullscreen,
+  )
+}
+
+const stopWatchingFullscreen = watch(isFullscreen, syncDesktopTitlebarClass, {
+  immediate: true,
+})
 
 const handleGlobalKeyDown = async (e: KeyboardEvent) => {
   if (e.key === 'F11') {
@@ -53,6 +65,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeyDown)
+  stopWatchingFullscreen()
+  document.documentElement.classList.remove('desktop-with-titlebar')
 })
 </script>
 
@@ -66,6 +80,11 @@ html, body, #app {
 
 *, *::before, *::after {
   box-sizing: border-box;
+}
+
+/* ElMessage 会直接挂到 body，需为桌面自绘标题栏预留安全区。 */
+html.desktop-with-titlebar .el-message:not(.is-bottom) {
+  margin-top: 36px;
 }
 </style>
 
