@@ -10,7 +10,7 @@ use app_files::open_app_data_dir;
 use source_http::{
     check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
     open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
-    execute_webview_script,
+    execute_webview_script, solve_webview_challenge,
     toggle_fullscreen, webview_fetch, AppState,
 };
 use source_script::execute_source_script;
@@ -94,6 +94,7 @@ pub fn run() {
             sync_webview_cookies,
             check_cf_clearance,
             webview_fetch,
+            solve_webview_challenge,
             toggle_fullscreen,
             exit_fullscreen,
             open_app_data_dir,

@@ -68,6 +68,21 @@ export class TauriTransport implements SourceTransport {
     }
   }
 
+  async solveChallenge(sourceId: string, url: string, timeoutMs?: number): Promise<{
+    success: boolean
+    html?: string
+    cookies: string[]
+    requiresManualInteraction: boolean
+  }> {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return await invoke<{
+      success: boolean
+      html?: string
+      cookies: string[]
+      requiresManualInteraction: boolean
+    }>('solve_webview_challenge', { sourceId, url, timeoutMs })
+  }
+
   async syncWebviewCookies(sourceId: string, url: string): Promise<{
     cookieCount: number
     cookieNames: string[]

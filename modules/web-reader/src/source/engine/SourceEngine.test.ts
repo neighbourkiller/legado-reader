@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SourceEngine, parseSearchUrl, parseSearchUrlAsync, detectSecurityChallenge, SecurityChallengeError } from './SourceEngine'
 import { deserializeOnlineChapterPayload, serializeOnlineChapterPayload } from './ChapterPayload'
-import { applyTextReplaceRule } from './RuleParser'
+import { applyTextReplaceRule, applyTextReplaceRuleAsync } from './RuleParser'
 import type { BookSource } from '@/source/types/BookSource'
 import { setTransport } from '@/source/transport'
 import type { SourceRequest, SourceResponse, SourceTransport } from '@/source/transport/SourceTransport'
@@ -366,4 +366,149 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     expect(chapters[1].name).toBe('第2章 神秘系统 (bid=30848)')
     expect(chapters[1].url).toBe('https://ixdzs8.com/read/30848/p2.html')
   })
+
+  it('当开启 useWebView 时遇到 JS 质询能自动调用 solveChallenge 穿透并解析正文', async () => {
+    const challengeHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head><title>正在验证浏览器</title></head>
+      <body><p>請稍等，正在進行安全驗證...</p></body>
+      </html>
+    `
+    const solvedHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head><title>第1章 异世降临</title></head>
+      <body>
+        <article class="page-content">
+          <section>
+            <p>第一行忽略</p>
+            <p>这是穿透后成功获取到的正文内容！</p>
+          </section>
+        </article>
+      </body>
+      </html>
+    `
+
+    const webviewSource: BookSource = {
+      ...source,
+      useWebView: true,
+      ruleContent: {
+        content: '//section/p[position()>1]/text()',
+      },
+    }
+    const engine = new SourceEngine()
+    const encoder = new TextEncoder()
+    const mockTransport: SourceTransport = {
+      request: vi.fn(),
+      webviewFetch: vi.fn(async (options: SourceRequest): Promise<SourceResponse> => ({
+        status: 200,
+        headers: {},
+        body: encoder.encode(challengeHtml),
+        finalUrl: options.url,
+        charset: 'utf-8',
+        channel: 'webview',
+      })),
+      solveChallenge: vi.fn(async () => ({
+        success: true,
+        html: solvedHtml,
+        cookies: ['PHPSESSID=test123456'],
+        requiresManualInteraction: false,
+      })),
+    }
+    setTransport(mockTransport)
+
+    const payload = await engine.getContent(webviewSource, 'https://example.com/read/1/p1.html')
+    expect(mockTransport.solveChallenge).toHaveBeenCalledWith(
+      webviewSource.bookSourceUrl,
+      'https://example.com/read/1/p1.html',
+      5000,
+    )
+    expect(payload.type).toBe('text')
+    if (payload.type === 'text') {
+      expect(payload.text).toContain('这是穿透后成功获取到的正文内容！')
+    }
+  })
+
+  it('当开启 useWebView 且 solveChallenge 失败/超时，抛出包含 requiresManualInteraction 的 SecurityChallengeError', async () => {
+    const challengeHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head><title>安全验证</title></head>
+      <body><p>请完成滑动拼图验证...</p></body>
+      </html>
+    `
+    const webviewSource: BookSource = {
+      ...source,
+      useWebView: true,
+      ruleContent: {
+        content: '//section/p/text()',
+      },
+    }
+    const engine = new SourceEngine()
+    const encoder = new TextEncoder()
+    const mockTransport: SourceTransport = {
+      request: vi.fn(),
+      webviewFetch: vi.fn(async (options: SourceRequest): Promise<SourceResponse> => ({
+        status: 200,
+        headers: {},
+        body: encoder.encode(challengeHtml),
+        finalUrl: options.url,
+        charset: 'utf-8',
+        channel: 'webview',
+      })),
+      solveChallenge: vi.fn(async () => ({
+        success: false,
+        html: undefined,
+        cookies: [],
+        requiresManualInteraction: true,
+      })),
+    }
+    setTransport(mockTransport)
+
+    try {
+      await engine.getContent(webviewSource, 'https://example.com/read/1/p1.html')
+      expect.fail('应该抛出 SecurityChallengeError')
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(SecurityChallengeError)
+      if (err instanceof SecurityChallengeError) {
+        expect(err.diagnostics.requiresManualInteraction).toBe(true)
+        expect(err.diagnostics.challengeUrl).toBe('https://example.com/read/1/p1.html')
+        expect(err.message).toContain('自动穿透未通过')
+      }
+    }
+  })
+
+  it('executeSourceJavaScript 自动注入书源定义的公共 jsLib', async () => {
+    const jsLibSource: BookSource = {
+      ...source,
+      jsLib: 'function dec(val) { return "decoded_" + val; }',
+    }
+    const engine = new SourceEngine()
+    const spy = vi.spyOn(sourceScripts, 'executeSourceJavaScript').mockResolvedValue({
+      result: 'decoded_123',
+      logs: [],
+    })
+
+    const context = (engine as any).createRuleContext(jsLibSource, 'search')
+    const result = await sourceScripts.executeSourceJavaScript('test', 'dec(result)', context, '123')
+    expect(result.result).toBe('decoded_123')
+    spy.mockRestore()
+  })
+
+  it('applyTextReplaceRuleAsync 支持 @js: 脚本清洗', async () => {
+    const raw = '第1章 系统来早了\n正文内容 速读谷 (本章完)'
+    const jsRule = "@js:result.replace(/^第\\d+章.*\\n?/gm, '').replace(/速读谷|\\(本章完\\)/g, '').trim()"
+    const spy = vi.spyOn(sourceScripts, 'executeSourceJavaScript').mockImplementation(async (_sourceId, code, _context, input) => {
+      const result = input
+      const res = eval(code)
+      return { result: res, logs: [] }
+    })
+
+    const cleaned = await applyTextReplaceRuleAsync(raw, jsRule)
+    expect(cleaned).toBe('正文内容')
+    spy.mockRestore()
+  })
 })
+
+

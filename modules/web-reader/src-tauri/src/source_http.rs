@@ -848,6 +848,145 @@ pub async fn webview_fetch(
     })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SolveChallengeResult {
+    pub success: bool,
+    pub html: Option<String>,
+    pub cookies: Vec<String>,
+    pub requires_manual_interaction: bool,
+}
+
+#[tauri::command]
+pub async fn solve_webview_challenge(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    url: String,
+    timeout_ms: Option<u64>,
+) -> Result<SolveChallengeResult, String> {
+    validate_url(&url)?;
+    let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(5000).clamp(1000, 15000));
+
+    let webview = ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(10)).await?;
+
+    // 让后台隐藏 WebView 导航到具体的章节/目标页面 URL
+    let target_url_json = serde_json::to_string(&url).map_err(|e| e.to_string())?;
+    let target_path_json = serde_json::to_string(parsed_url.path()).map_err(|e| e.to_string())?;
+    let navigate_js = format!("window.location.href = {};", target_url_json);
+    let _ = webview.eval(&navigate_js);
+
+    let check_js = format!(
+        r#"(() => {{
+        const state = document.readyState;
+        const title = (document.title || '').toLowerCase();
+        const text = (document.body ? document.body.innerText : '').slice(0, 500).toLowerCase();
+        const currentUrl = window.location.href;
+        const currentPath = window.location.pathname;
+        const targetUrl = {target_url_json};
+        const targetPath = {target_path_json};
+
+        // 确保已真正导航至目标页面（或路径包含目标章节路径）
+        const urlMatched = targetPath === '/' || currentPath === targetPath || currentUrl.includes(targetPath);
+
+        const isChallenge = [
+            '正在验证浏览器',
+            '正在進行安全驗證',
+            '正在进行安全验证',
+            '安全验证',
+            '请稍等',
+            'checking your browser',
+            'just a moment',
+            'attention required',
+            'ddos protection'
+        ].some(kw => title.includes(kw) || text.includes(kw));
+
+        const isCaptcha = [
+            '滑动验证',
+            '人机安全验证',
+            '点击完成验证',
+            'geetest',
+            '极验',
+            '请输入验证码'
+        ].some(kw => text.includes(kw));
+
+        // 已经脱离 challenge，目标 URL 已匹配，且 DOM 就绪 (interactive 或 complete)
+        const isReady = urlMatched && (state === 'interactive' || state === 'complete') && !isChallenge;
+        const html = isReady ? document.documentElement.outerHTML : null;
+
+        return JSON.stringify({{
+            ready: isReady,
+            isChallenge: isChallenge,
+            isCaptcha: isCaptcha,
+            url: currentUrl,
+            html: html
+        }});
+    }})()"#
+    );
+
+    let deadline = Instant::now() + timeout;
+    let mut last_html: Option<String> = None;
+
+    while Instant::now() < deadline {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
+        if webview.eval_with_callback(&check_js, move |result| {
+            if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
+                let _ = tx.send(result);
+            }
+        }).is_ok() {
+            if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), rx).await {
+                if let Some(val_str) = decode_webview_callback_value(raw) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&val_str) {
+                        let ready = val.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if ready {
+                            if let Some(html) = val.get("html").and_then(|v| v.as_str()) {
+                                if !html.is_empty() {
+                                    last_html = Some(html.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let updated_cookies = webview.cookies_for_url(parsed_url)
+        .map_err(|e| format!("Failed to read WebView response cookies: {e}"))?;
+    let mut cookie_list = Vec::new();
+    if !updated_cookies.is_empty() {
+        let cookie_header = updated_cookies.iter()
+            .map(|cookie| {
+                let item = format!("{}={}", cookie.name(), cookie.value());
+                cookie_list.push(item.clone());
+                item
+            })
+            .collect::<Vec<_>>().join("; ");
+        let mut manager = state.cookie_manager.lock().await;
+        manager.set_cookies(&source_id, &url, &cookie_header)?;
+    }
+
+    if let Some(html) = last_html {
+        Ok(SolveChallengeResult {
+            success: true,
+            html: Some(html),
+            cookies: cookie_list,
+            requires_manual_interaction: false,
+        })
+    } else {
+        Ok(SolveChallengeResult {
+            success: false,
+            html: None,
+            cookies: cookie_list,
+            requires_manual_interaction: true,
+        })
+    }
+}
+
 #[tauri::command]
 pub async fn toggle_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
     let is_fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;

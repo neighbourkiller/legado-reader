@@ -115,6 +115,60 @@ function applyIndexSpec<T>(items: T[], spec: IndexSpec | undefined, bracketSynta
   return indexes.map(i => items[i]).filter((item): item is T => item !== undefined)
 }
 
+export interface NormalizedCssSelector {
+  selector: string
+  textFilter?: string
+}
+
+/**
+ * 标准化和转译非标准 Jsoup/jQuery CSS 选择器（如 :eq(n)、内联 tag.数字、:contains(text)）
+ */
+export function normalizeCssSelector(rawSelector: string): NormalizedCssSelector {
+  let result = rawSelector.trim()
+  let textFilter: string | undefined
+
+  // 1. 提取并转译 :contains(text)
+  const containsMatch = result.match(/:contains\((['"]?)(.*?)\1\)/i)
+  if (containsMatch) {
+    textFilter = containsMatch[2]
+    result = result.replace(/:contains\((['"]?)(.*?)\1\)/gi, '')
+  }
+
+  // 2. 转译 :eq(n)
+  // 带 tag 的 :eq(n): 例如 p:eq(1), li:eq(-1)
+  result = result.replace(/([a-zA-Z0-9_-]+):eq\((-?\d+)\)/gi, (_, tag: string, numStr: string) => {
+    const n = Number.parseInt(numStr, 10)
+    if (n === -1) return `${tag}:last-of-type`
+    if (n < -1) return `${tag}:nth-last-of-type(${Math.abs(n)})`
+    return `${tag}:nth-of-type(${n + 1})`
+  })
+  // 不带 tag 的 :eq(n): 例如 :eq(0), :eq(-1)
+  result = result.replace(/:eq\((-?\d+)\)/gi, (_, numStr: string) => {
+    const n = Number.parseInt(numStr, 10)
+    if (n === -1) return ':last-child'
+    if (n < -1) return `:nth-last-child(${Math.abs(n)})`
+    return `:nth-child(${n + 1})`
+  })
+
+  // 3. 转译内联点索引：例如 li.1 a, p.0 a, div.item.1 h3, ul li.1
+  // 匹配类似 tag.数字 或 class.数字
+  result = result.replace(/([a-zA-Z0-9_-]+)\.(-?\d+)(?=[ >+~:.\s]|$)/g, (match, prefix: string, numStr: string) => {
+    const n = Number.parseInt(numStr, 10)
+    if (/^\d+$/.test(prefix)) return match
+    const isTag = /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(prefix)
+    if (isTag) {
+      if (n === -1) return `${prefix}:last-of-type`
+      if (n < -1) return `${prefix}:nth-last-of-type(${Math.abs(n)})`
+      return `${prefix}:nth-of-type(${n + 1})`
+    }
+    if (n === -1) return `${prefix}:last-child`
+    if (n < -1) return `${prefix}:nth-last-child(${Math.abs(n)})`
+    return `${prefix}:nth-child(${n + 1})`
+  })
+
+  return { selector: result.trim() || '*', textFilter }
+}
+
 function queryLegacyStep(
   root: Element | Document,
   rawSelector: string,
@@ -144,7 +198,11 @@ function queryLegacyStep(
     const expected = selector.slice(5)
     elements = Array.from(root.querySelectorAll('*')).filter(item => ownText(item).includes(expected))
   } else {
-    elements = Array.from(root.querySelectorAll(selector))
+    const normalized = normalizeCssSelector(selector)
+    elements = Array.from(root.querySelectorAll(normalized.selector))
+    if (normalized.textFilter) {
+      elements = elements.filter(item => (item.textContent || '').includes(normalized.textFilter!))
+    }
   }
 
   return applyIndexSpec(elements, extracted.spec, isBracket)
@@ -217,8 +275,12 @@ function evaluateLegacyNodes(
 function evaluateCssNodes(root: Element | Document, expression: string): RuleNode[] {
   const lastAt = expression.lastIndexOf('@')
   const hasDirective = lastAt > 0 && isValueDirective(expression.slice(lastAt + 1))
-  const selector = hasDirective ? expression.slice(0, lastAt) : expression
-  const elements = Array.from(root.querySelectorAll(selector))
+  const rawSelector = hasDirective ? expression.slice(0, lastAt) : expression
+  const normalized = normalizeCssSelector(rawSelector)
+  let elements = Array.from(root.querySelectorAll(normalized.selector))
+  if (normalized.textFilter) {
+    elements = elements.filter(item => (item.textContent || '').includes(normalized.textFilter!))
+  }
   return hasDirective ? extractElements(elements, expression.slice(lastAt + 1)) : elements
 }
 
@@ -329,7 +391,11 @@ function evaluateSingleStep(
       }
     } else if (step.mode === 'css') {
       const root = input instanceof Element || input instanceof Document ? input : parseDocument(String(input ?? ''))
-      let nodes: Element[] = Array.from(root.querySelectorAll(expression))
+      const normalized = normalizeCssSelector(expression)
+      let nodes: Element[] = Array.from(root.querySelectorAll(normalized.selector))
+      if (normalized.textFilter) {
+        nodes = nodes.filter(item => (item.textContent || '').includes(normalized.textFilter!))
+      }
       if (step.spec) nodes = applyIndexSpec(nodes, step.spec, step.bracketSyntax || false)
       values = nodes
     } else if (step.mode === 'xpath') {

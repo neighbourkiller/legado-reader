@@ -55,6 +55,50 @@ export function applyTextReplaceRule(content: string, rule?: string): string {
   return current
 }
 
+/**
+ * 异步正文文本替换规则解析，同时支持：
+ * 1. 传统以换行或 && 拼接的多条正则替换规则（##pattern##replacement）
+ * 2. 以 @js: 或 <js>...</js> 声明的 JavaScript 清洗脚本（绑定 result 为正文内容）
+ */
+export async function applyTextReplaceRuleAsync(
+  content: string,
+  rule?: string,
+  context?: RuleExecutionContext,
+): Promise<string> {
+  if (!rule || !rule.trim()) return content
+  const trimmed = rule.trim()
+
+  // 1. 检查是否为 JavaScript 脚本替换规则
+  if (/@js:|<js>|<\/js>/i.test(trimmed)) {
+    const jsPattern = /@js:([\s\S]+)$|<js>([\s\S]*?)<\/js>/i
+    const match = trimmed.match(jsPattern)
+    if (match) {
+      const code = match[1] || match[2] || ''
+      const jsContext: RuleExecutionContext = context || {
+        compatibilityMode: 'legado',
+        stage: 'content',
+        baseUrl: '',
+      }
+      try {
+        const sourceUrl = String(context?.source?.bookSourceUrl || context?.baseUrl || 'replace-rule')
+        const jsResult = (await executeSourceJavaScript(sourceUrl, code, jsContext, content)).result
+        return typeof jsResult === 'string' ? jsResult : String(jsResult ?? '')
+      } catch (cause) {
+        throw new RuleExecutionError('替换规则 JavaScript 脚本执行失败', {
+          code: 'UNSUPPORTED_JAVASCRIPT',
+          rule: trimmed,
+          mode: 'legado',
+          stage: 'content',
+          cause,
+        })
+      }
+    }
+  }
+
+  // 2. 纯正则替换规则快速通道
+  return applyTextReplaceRule(content, rule)
+}
+
 export function resolveAbsoluteUrl(rawUrl: string, baseUrl?: string): string {
   if (!rawUrl) return ''
   const target = rawUrl.trim()

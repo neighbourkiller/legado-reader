@@ -693,6 +693,16 @@ fn execute_script(
               setCookie: (url, value) => __hostSetCookie(String(url), String(value)),
               removeCookie: (url, name) => __hostSetCookie(String(url), String(name) + '=; Max-Age=0')
             }});
+            globalThis.source = Object.assign(Object.create(null), __bindings.source || {{}}, {{
+              get: key => __hostCacheGet(String(key)),
+              put: (key, value) => {{ __hostCachePut(String(key), String(value)); return value; }},
+              getLoginHeader: () => '',
+              getLoginInfoMap: () => ({{}}),
+              putLoginInfo: () => {{}},
+              putLoginHeader: () => {{}},
+              removeLoginHeader: () => {{}},
+              login: () => {{}},
+            }});
             globalThis.console = Object.freeze({{ log: (...args) => __hostLog(args.map(String).join(' ')) }});
             const __code = {code_json};
             let __result;

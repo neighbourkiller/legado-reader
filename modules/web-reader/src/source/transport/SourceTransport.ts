@@ -42,11 +42,21 @@ export interface CfDiagnostics {
   cfMitigated?: string
 }
 
+export interface SolveChallengeResponse {
+  success: boolean
+  html?: string
+  cookies: string[]
+  requiresManualInteraction: boolean
+}
+
 export interface SourceTransport {
   request(req: SourceRequest): Promise<SourceResponse>
 
   /** 通过 WebView 发起请求（共享浏览器会话、Cookie、指纹） */
   webviewFetch?(req: SourceRequest): Promise<SourceResponse>
+
+  /** 后台隐藏 WebView 自动导航目标 URL 解决 JS 挑战盾 */
+  solveChallenge?(sourceId: string, url: string, timeoutMs?: number): Promise<SolveChallengeResponse>
 
   /** 自动从 WebView 验证窗口同步 Cookie 到 reqwest CookieJar */
   syncWebviewCookies?(sourceId: string, url: string): Promise<{

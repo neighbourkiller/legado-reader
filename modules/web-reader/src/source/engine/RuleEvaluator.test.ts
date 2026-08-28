@@ -355,4 +355,59 @@ describe('G2: 跨语法链式管道', () => {
     const result = await evaluateRuleListAsync(html, rule, { compatibilityMode: 'legado' }, runner)
     expect(result).toEqual(['https://example.com/read/1', 'https://example.com/read/2'])
   })
+
+  it('支持 Jsoup/jQuery :eq(n) 伪类转译与提取', () => {
+    const html = `
+      <div class="itemtxt">
+        <h2><a href="/1/">书名</a></h2>
+        <p class="status">连载中</p>
+        <p class="author"><a href="/zuozhe/1">作者：七月封阳</a></p>
+        <p class="intro">小说简介内容</p>
+      </div>
+    `
+    // p:eq(1) -> 第二个 p
+    const rule1 = '.itemtxt p:eq(1) a@text'
+    expect(evaluateRuleString(html, rule1)).toBe('作者：七月封阳')
+
+    // p:eq(0) -> 第一个 p
+    const rule2 = '.itemtxt p:eq(0)@text'
+    expect(evaluateRuleString(html, rule2)).toBe('连载中')
+
+    // p:eq(-1) -> 最后一个 p
+    const rule3 = '.itemtxt p:eq(-1)@text'
+    expect(evaluateRuleString(html, rule3)).toBe('小说简介内容')
+  })
+
+  it('支持选择器中间内联点索引 (如 li.1 a, p.1 a)', () => {
+    const html = `
+      <div class="itemtxt">
+        <ul>
+          <li><a href="/c1">第1章</a></li>
+          <li><a href="/c2">第2章</a></li>
+          <li><a href="/c3">第3章</a></li>
+        </ul>
+      </div>
+    `
+    const rule = '.itemtxt ul li.1 a@text'
+    expect(evaluateRuleString(html, rule)).toBe('第2章')
+
+    const firstRule = '.itemtxt ul li.0 a@text'
+    expect(evaluateRuleString(html, firstRule)).toBe('第1章')
+
+    const lastRule = '.itemtxt ul li.-1 a@text'
+    expect(evaluateRuleString(html, lastRule)).toBe('第3章')
+  })
+
+  it('支持 :contains(text) 过滤', () => {
+    const html = `
+      <div class="book-detail-info">
+        <p>书名：测试小说</p>
+        <p>作者：天蚕土豆</p>
+        <p>字数：100万字</p>
+      </div>
+    `
+    const rule = 'div.book-detail-info p:contains(作者)@text'
+    expect(evaluateRuleString(html, rule)).toBe('作者：天蚕土豆')
+  })
 })
+

@@ -30,8 +30,10 @@ export async function executeSourceJavaScript(
 ): Promise<SourceScriptResult> {
   if (!platform.isDesktop) throw new Error('UNSUPPORTED_JAVASCRIPT: JavaScript 书源仅在 Tauri 客户端执行')
   const { invoke } = await import('@tauri-apps/api/core')
+  const jsLib = typeof context.source?.jsLib === 'string' ? context.source.jsLib.trim() : ''
+  const effectiveCode = jsLib && !code.startsWith(jsLib) ? `${jsLib}\n${code}` : code
   const response = await invoke<SourceScriptResult>('execute_source_script', {
-    request: { sourceId, code, bindings: bindings(context, result), timeoutMs: 3000 },
+    request: { sourceId, code: effectiveCode, bindings: bindings(context, result), timeoutMs: 3000 },
   })
   if (response.variables && context.variables) {
     for (const [k, v] of Object.entries(response.variables)) {
@@ -50,8 +52,11 @@ export async function executeSourceWebJavaScript(
   if (!platform.isDesktop) throw new Error('UNSUPPORTED_WEBJS: webJs 仅在 Tauri 客户端执行')
   if (!context.baseUrl) throw new Error('UNSUPPORTED_WEBJS: webJs 缺少页面 URL')
   const { invoke } = await import('@tauri-apps/api/core')
+  const jsLib = typeof context.source?.jsLib === 'string' ? context.source.jsLib.trim() : ''
+  const effectiveCode = jsLib && !code.startsWith(jsLib) ? `${jsLib}\n${code}` : code
   const response = await invoke<{ result: unknown }>('execute_webview_script', {
-    sourceId, url: context.baseUrl, code, bindings: bindings(context, result), timeoutMs: 10000,
+    sourceId, url: context.baseUrl, code: effectiveCode, bindings: bindings(context, result), timeoutMs: 10000,
   })
   return { result: response.result, logs: [] }
 }
+

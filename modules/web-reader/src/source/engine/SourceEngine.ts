@@ -5,7 +5,7 @@ import { parseSearchResults } from './SearchParser'
 import { parseBookInfo, type BookInfo } from './BookInfoParser'
 import { parseToc, type TocItem } from './TocParser'
 import { parseContent, parseImageContent, type ContentResult } from './ContentParser'
-import { applyTextReplaceRule, parseString, parseStringAsync, resolveAbsoluteUrl } from './RuleParser'
+import { applyTextReplaceRule, applyTextReplaceRuleAsync, parseString, parseStringAsync, resolveAbsoluteUrl } from './RuleParser'
 import { RuleExecutionError, type RuleExecutionContext } from './RuleTypes'
 import { executeSourceJavaScript, executeSourceWebJavaScript } from '@/platform/sourceScripts'
 import { saveBookSource } from '@/storage/db'
@@ -32,6 +32,8 @@ export interface SecurityDiagnostics {
   snippet?: string
   cfRay?: string
   cfMitigated?: string
+  requiresManualInteraction?: boolean
+  challengeUrl?: string
 }
 
 /** 启发式检测页面是否为防爬验证/浏览器质询拦截页 */
@@ -669,7 +671,7 @@ export class SourceEngine {
     const loginUrl = resolveAbsoluteUrl(source.loginUrl || source.bookSourceUrl, source.bookSourceUrl)
     const context = this.createRuleContext(source, 'login', { baseUrl: loginUrl })
     const value = (await executeSourceJavaScript(
-      source.bookSourceUrl, `${source.jsLib || ''}\n${source.loginCheckJs}`, context, loginUrl,
+      source.bookSourceUrl, source.loginCheckJs, context, loginUrl,
     )).result
     await this.commitRuleContext(source, context)
     const loggedIn = typeof value === 'boolean'
@@ -1036,7 +1038,7 @@ export class SourceEngine {
   async getContent(
     source: BookSource,
     contentOrChapter: string | ({ url?: string; chapterUrl?: string; variableMap?: Record<string, string> }),
-    onProgress?: (info: { page: number; url: string; currentLength: number }) => void,
+    onProgress?: (info: { page: number; url: string; currentLength: number; challengeSolved?: boolean; challengeTitle?: string }) => void,
     book?: Record<string, unknown>,
   ): Promise<OnlineChapterPayload> {
     this.assertRunnableSource(source)
@@ -1092,13 +1094,32 @@ export class SourceEngine {
       const effectiveBaseUrl = response.finalUrl || requestUrl.href
       Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
 
-      // 在非 WebView 模式下，检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
-      if (!source.useWebView) {
-        const challenge = detectSecurityChallenge(html, response)
-        if (challenge.isChallenge) {
+      // 检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
+      const challenge = detectSecurityChallenge(html, response)
+      if (challenge.isChallenge) {
+        const transport = await getTransport()
+        if (source.useWebView && transport.solveChallenge) {
+          const solveResult = await transport.solveChallenge(source.bookSourceUrl, currentUrl, 5000)
+          if (solveResult.success && solveResult.html) {
+            html = solveResult.html
+            onProgress?.({
+              page,
+              url: currentUrl,
+              currentLength: 0,
+              challengeSolved: true,
+              challengeTitle: challenge.title || '浏览器安全质询',
+            })
+          } else {
+            throw new SecurityChallengeError(
+              `目标网站触发安全访问验证（${challenge.title || '浏览器安全质询'}），自动穿透未通过。请完成网页验证。`,
+              { ...challenge, requiresManualInteraction: true, challengeUrl: currentUrl },
+              response,
+            )
+          }
+        } else {
           throw new SecurityChallengeError(
             `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}），普通 HTTP 请求未能获取到有效正文。请开启 WebView 通道或先完成网页验证。`,
-            challenge,
+            { ...challenge, requiresManualInteraction: false, challengeUrl: currentUrl },
             response,
           )
         }
@@ -1164,9 +1185,10 @@ export class SourceEngine {
         decodeRule: source.ruleContent.imageDecode,
       }
     }
+    const cleanedText = (await applyTextReplaceRuleAsync(fullContent, source.ruleContent.replaceRegex, context)).trim()
     const payload: OnlineChapterPayload = {
       type: 'text',
-      text: applyTextReplaceRule(fullContent, source.ruleContent.replaceRegex).trim(),
+      text: cleanedText,
       title: payloadTitle,
       embeddedImages: embeddedImages.length > 0 ? embeddedImages : undefined,
     }
