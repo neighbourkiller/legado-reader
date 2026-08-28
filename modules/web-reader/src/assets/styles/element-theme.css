@@ -191,3 +191,36 @@ html:not(.dark) .delete-action-item:hover {
   background-color: rgba(245, 108, 108, 0.08) !important;
   color: #f56c6c !important;
 }
+
+/* ================= Global Table (el-table) Sharp Design ================= */
+.el-table,
+.el-table__inner-wrapper,
+.el-table__header-wrapper,
+.el-table__body-wrapper,
+.el-table__footer-wrapper,
+.el-table th.el-table__cell,
+.el-table td.el-table__cell,
+.el-table .el-table__cell,
+.el-table--border,
+.el-table__empty-block {
+  border-radius: 0 !important;
+}
+
+/* ================= Sharp Design Utilities ================= */
+.sharp-container,
+.sharp-card,
+.sharp-btn,
+.sharp-tag,
+.sharp-dropdown,
+.sharp-dialog,
+.sharp-dialog .el-dialog {
+  border-radius: 0 !important;
+}
+
+.sharp-input .el-input__wrapper,
+.sharp-textarea .el-textarea__inner,
+.sharp-radio-group .el-radio-button__inner,
+.sharp-collapse .el-collapse-item__header,
+.sharp-collapse .el-collapse-item__wrap {
+  border-radius: 0 !important;
+}

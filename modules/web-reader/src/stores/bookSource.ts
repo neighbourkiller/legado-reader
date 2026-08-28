@@ -232,7 +232,10 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     return sources.value.filter(s => s.enabled)
   }
 
-  async function updateSource(source: BookSource) {
+  async function updateSource(source: BookSource, originalUrl?: string) {
+    if (originalUrl && originalUrl !== source.bookSourceUrl) {
+      await deleteBookSourceFromDB(originalUrl)
+    }
     await saveBookSource(source as unknown as Record<string, unknown>)
     await loadSources()
   }
