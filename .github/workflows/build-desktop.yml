@@ -20,23 +20,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
+          # Linux x86_64 (deb, rpm, tar.gz)
           - name: Linux x64
             platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            args: ""
+            args: "--bundles deb,rpm"
 
-          # Windows x86_64
+          # Windows x86_64 (msi, portable exe)
           - name: Windows x64
             platform: windows-latest
             target: x86_64-pc-windows-msvc
-            args: ""
-
-          # macOS Apple Silicon
-          - name: macOS ARM64
-            platform: macos-latest
-            target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
+            args: "--bundles msi"
 
     runs-on: ${{ matrix.platform }}
 
@@ -85,7 +79,7 @@ jobs:
 
       # ------------------------------------------------------------
       # Linux dependencies
-      # Tauri 2 使用 WebKitGTK 4.1
+      # Tauri 2 使用 WebKitGTK 4.1，打包 rpm 需要 rpm 工具
       # ------------------------------------------------------------
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -97,7 +91,8 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            rpm
 
       # ------------------------------------------------------------
       # Frontend dependencies
@@ -116,24 +111,15 @@ jobs:
           # GitHub 自动提供，无需自己创建 Secret
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # Linux AppImage 构建时禁止 strip
-          # 避免部分 Runner / linuxdeploy 环境下 strip ELF 失败
+          # Linux 构建时禁止 strip
+          # 避免部分 Runner 环境下 strip ELF 失败
           NO_STRIP: ${{ runner.os == 'Linux' && 'true' || '' }}
-
-          # macOS 没有 Apple Developer Certificate 时
-          # 使用 ad-hoc signing
-          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
 
         with:
           # 当前仓库是 monorepo，Tauri 项目不在仓库根目录
           projectPath: modules/web-reader
 
           # __VERSION__ 自动读取 tauri.conf.json 中的 version
-          #
-          # 例如：
-          # "version": "1.0.1"
-          #
-          # => reader-v1.0.1
           tagName: reader-v__VERSION__
 
           # GitHub Release 名称
@@ -143,26 +129,51 @@ jobs:
           generateReleaseNotes: true
 
           # false = 构建成功后直接公开发布
-          # true  = 只创建 Draft，需要手动 Publish
           releaseDraft: false
 
           # 正式版
           prerelease: false
 
-          # macOS ARM64 会传：
-          # --target aarch64-apple-darwin
-          #
-          # Linux / Windows 为空，使用当前 Runner 默认 target
+          # Linux: --bundles deb,rpm
+          # Windows: --bundles msi
           args: ${{ matrix.args }}
 
       # ------------------------------------------------------------
+      # Linux tar.gz archive
+      # ------------------------------------------------------------
+      - name: Prepare Linux tar.gz archive
+        if: runner.os == 'Linux'
+        id: linux-archive
+        run: |
+          VERSION=$(jq -r .version modules/web-reader/src-tauri/tauri.conf.json)
+          SOURCE="modules/web-reader/src-tauri/target/release/legado-reader"
+          OUTPUT="Legado.Reader_${VERSION}_linux-x64.tar.gz"
+
+          if [ ! -f "$SOURCE" ]; then
+            echo "Binary not found: $SOURCE"
+            exit 1
+          fi
+
+          tar -czvf "$OUTPUT" -C "modules/web-reader/src-tauri/target/release" legado-reader
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "file=$OUTPUT" >> $GITHUB_OUTPUT
+
+      # ------------------------------------------------------------
+      # Upload Linux tar.gz archive
+      # 上传到 tauri-action 创建的同一个 GitHub Release
+      # ------------------------------------------------------------
+      - name: Upload Linux tar.gz archive
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload \
+            "reader-v${{ steps.linux-archive.outputs.version }}" \
+            "${{ steps.linux-archive.outputs.file }}" \
+            --clobber
+
+      # ------------------------------------------------------------
       # Windows portable executable
-      #
-      # Tauri 构建结束后，Windows Runner 中会存在：
-      #
-      # modules/web-reader/src-tauri/target/release/legado-reader.exe
-      #
-      # 这个 exe 就是无需 MSI / NSIS 安装即可直接运行的程序。
       # ------------------------------------------------------------
       - name: Prepare Windows portable executable
         if: runner.os == 'Windows'

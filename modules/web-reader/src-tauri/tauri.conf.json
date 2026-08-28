@@ -1,7 +1,7 @@
 {
   "productName": "legado-reader",
   "identifier": "io.legado.reader",
-  "version": "1.26.8291",
+  "version": "1.26.8292",
   "build": {
     "beforeDevCommand": "pnpm dev:desktop-ui",
     "devUrl": "http://localhost:1420",
