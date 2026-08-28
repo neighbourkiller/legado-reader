@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="visible"
     title="书源调试控制台"
-    width="800px"
+    width="860px"
     center
     align-center
     destroy-on-close
@@ -19,13 +19,84 @@
           <el-tag size="small" effect="plain">{{ source.webReaderCompatibilityMode || 'legado' }} 模式</el-tag>
         </div>
         <div class="search-debug-bar">
-          <el-input
-            v-model="debugKeyword"
-            placeholder="输入调试关键词..."
-            clearable
-            style="width: 260px"
-            @keyup.enter="startDebug"
-          />
+          <div class="input-wrapper">
+            <el-input
+              v-model="debugKeyword"
+              placeholder="关键词 / 详情URL / ++目录URL / --正文URL / 分类::发现URL"
+              clearable
+              class="debug-dialog-input"
+              @keyup.enter="!isDebugging && startDebug()"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+
+            <!-- 帮助提示气泡 -->
+            <el-popover
+              placement="bottom-start"
+              :width="360"
+              trigger="hover"
+              popper-class="debug-help-popper"
+            >
+              <template #reference>
+                <el-button text circle class="help-btn">
+                  <el-icon><QuestionFilled /></el-icon>
+                </el-button>
+              </template>
+              <div class="debug-help-content">
+                <div class="help-title">调试指令语法说明</div>
+                <ul class="help-list">
+                  <li>
+                    <span class="help-badge search">搜索</span>
+                    <span class="help-desc">普通文本：如 <code>系统</code>、<code>校园</code></span>
+                  </li>
+                  <li>
+                    <span class="help-badge explore">发现</span>
+                    <span class="help-desc">含 <code>::</code>：如 <code>月票榜::/rank/yuepiao</code></span>
+                  </li>
+                  <li>
+                    <span class="help-badge info">详情</span>
+                    <span class="help-desc">普通网址：如 <code>https://example.com/book/123</code></span>
+                  </li>
+                  <li>
+                    <span class="help-badge toc">目录</span>
+                    <span class="help-desc">以 <code>++</code> 开头：如 <code>++https://example.com/read/123</code></span>
+                  </li>
+                  <li>
+                    <span class="help-badge content">正文</span>
+                    <span class="help-desc">以 <code>--</code> 开头：如 <code>--https://example.com/ch/123/1</code></span>
+                  </li>
+                </ul>
+              </div>
+            </el-popover>
+
+            <!-- 发现分类下拉 -->
+            <el-dropdown
+              v-if="exploreOptions.length > 0"
+              trigger="click"
+              @command="handleSelectExplore"
+            >
+              <el-button size="default" title="选择书源预设的发现分类">
+                <el-icon><Compass /></el-icon>
+                <span>发现分类</span>
+                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="explore-dropdown-menu">
+                  <el-dropdown-item
+                    v-for="(item, idx) in exploreOptions"
+                    :key="idx"
+                    :command="item.fullKey"
+                  >
+                    <span class="explore-item-title">{{ item.title }}</span>
+                    <span class="explore-item-url">{{ item.url }}</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+
           <el-button type="warning" plain @click="showAuthDialog = true">
             <el-icon><Key /></el-icon>
             <span>网页验证 (CF盾)</span>
@@ -43,7 +114,7 @@
           <div class="step-header">
             <div class="step-title">
               <span class="step-num">1</span>
-              <span>搜索书籍 (Search)</span>
+              <span>{{ currentDebugMode === 'explore' ? '发现书籍 (Explore)' : '搜索书籍 (Search)' }}</span>
             </div>
             <span class="step-status">{{ getStepStatusText('search') }}</span>
           </div>
@@ -181,15 +252,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { VideoPlay, Key } from '@element-plus/icons-vue'
+import { VideoPlay, Key, Search, QuestionFilled, Compass, ArrowDown } from '@element-plus/icons-vue'
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import type { TocItem } from '@/source/engine/TocParser'
 import { SourceEngine, parseSearchUrl, CloudflareChallengeError, SecurityChallengeError } from '@/source/engine/SourceEngine'
+import { parseDebugInput, parseExploreUrlOptions, type DebugInputType } from '@/source/engine/SourceDebugHelper'
 import SourceAuthDialog from './SourceAuthDialog.vue'
 import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
 import { RuleExecutionError } from '@/source/engine/RuleTypes'
+import { copyTextToClipboard } from '@/platform/clipboard'
 
 const props = defineProps<{
   visible: boolean
@@ -210,9 +283,19 @@ function onDialogVisibleChange(val: boolean) {
   emit('update:visible', val)
 }
 
-const debugKeyword = ref('剑来')
+const debugKeyword = ref('系统')
+const currentDebugMode = ref<DebugInputType>('search')
 const isDebugging = ref(false)
 const consoleBoxRef = ref<HTMLElement | null>(null)
+
+const exploreOptions = computed(() => {
+  return parseExploreUrlOptions(props.source?.exploreUrl)
+})
+
+function handleSelectExplore(fullKey: string) {
+  debugKeyword.value = fullKey
+  ElMessage.success(`已填入发现分类: ${fullKey}`)
+}
 
 interface LogItem {
   time: string
@@ -222,6 +305,8 @@ interface LogItem {
 }
 
 const logs = ref<LogItem[]>([])
+
+type StepStatus = 'idle' | 'running' | 'success' | 'failed' | 'skipped'
 
 function errorMessage(error: unknown): string {
   if (error instanceof RuleExecutionError) {
@@ -234,10 +319,10 @@ function errorMessage(error: unknown): string {
 }
 
 const stepStatus = reactive<{
-  search: 'idle' | 'running' | 'success' | 'failed'
-  bookInfo: 'idle' | 'running' | 'success' | 'failed'
-  toc: 'idle' | 'running' | 'success' | 'failed'
-  content: 'idle' | 'running' | 'success' | 'failed'
+  search: StepStatus
+  bookInfo: StepStatus
+  toc: StepStatus
+  content: StepStatus
 }>({
   search: 'idle',
   bookInfo: 'idle',
@@ -275,6 +360,8 @@ function getStepStatusText(step: 'search' | 'bookInfo' | 'toc' | 'content') {
       return '✓ 成功'
     case 'failed':
       return '✕ 失败'
+    case 'skipped':
+      return '已跳过'
     default:
       return '未执行'
   }
@@ -282,11 +369,14 @@ function getStepStatusText(step: 'search' | 'bookInfo' | 'toc' | 'content') {
 
 const startDebug = async () => {
   if (!props.source) return
-  const kw = debugKeyword.value.trim()
-  if (!kw) {
-    ElMessage.warning('请输入调试关键词')
+  const rawInput = debugKeyword.value.trim()
+  if (!rawInput) {
+    ElMessage.warning('请输入调试内容')
     return
   }
+
+  const parsed = parseDebugInput(rawInput)
+  currentDebugMode.value = parsed.type
 
   isDebugging.value = true
   logs.value = []
@@ -300,7 +390,7 @@ const startDebug = async () => {
   stepResults.content = undefined
 
   appendLog('INIT', `开始调试书源: ${props.source.bookSourceName} (${props.source.bookSourceUrl})`)
-  appendLog('INIT', `调试关键词: "${kw}"`)
+  appendLog('INIT', `调试输入: "${rawInput}" (模式: ${parsed.type})`)
   appendLog('INIT', `规则编译模式: ${props.source.webReaderCompatibilityMode || 'legado'}`)
   appendLog('INIT', `WebView 通道: ${props.source.useWebView ? '已启用' : '未启用'}`)
   const compatibility = inspectSourceCompatibility(props.source)
@@ -309,187 +399,235 @@ const startDebug = async () => {
   compatibility.issues.forEach(issue => appendLog('COMPAT', `[${issue.code}] ${issue.path}: ${issue.message}`, 'warn'))
 
   const engine = new SourceEngine()
+  const targetSource = props.source
 
   try {
-    // 1. 搜索测试
-    stepStatus.search = 'running'
-    const parsedReq = parseSearchUrl(props.source.searchUrl || '', kw, props.source)
-    appendLog('SEARCH', `发起 ${parsedReq.method} 搜索请求 => ${parsedReq.url}`)
+    let targetBookUrl = ''
+    let targetTocUrl = ''
+    let targetChapterUrl = ''
 
-    const searchStart = Date.now()
-    let httpInfo: { status: number; finalUrl: string; bodyLength: number; channel?: string } | null = null
+    // 1. 搜索或发现
+    if (parsed.type === 'search') {
+      const kw = parsed.payload.keyword || rawInput
+      stepStatus.search = 'running'
+      const parsedReq = parseSearchUrl(targetSource.searchUrl || '', kw, targetSource)
+      appendLog('SEARCH', `发起 ${parsedReq.method} 搜索请求 => ${parsedReq.url}`)
 
-    const searchResults = await engine.search(props.source, kw, (info) => {
-      httpInfo = info
-      const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
-      appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
-    }).catch((err: unknown) => {
-      stepStatus.search = 'failed'
-      appendLog('ERROR', `网络请求或解析异常: ${errorMessage(err)}`, 'error')
-      if (err instanceof SecurityChallengeError) {
-        appendLog('CHALLENGE', `【诊断结果】源站要求浏览器完成安全访问验证（${err.diagnostics.title || err.diagnostics.type}）。`, 'warn')
-        if (err.diagnostics.cfRay) {
-          appendLog('CF_CHALLENGE', `cf-ray: ${err.diagnostics.cfRay}`, 'warn')
-        }
-        if (err.diagnostics.cfMitigated) {
-          appendLog('CF_CHALLENGE', `cf-mitigated: ${err.diagnostics.cfMitigated}`, 'warn')
-        }
-        if (!props.source?.useWebView) {
-          appendLog('CF_CHALLENGE', '建议：请在「网页验证」中启用 WebView 通道，让请求通过真实浏览器会话执行。', 'warn')
-        }
-      } else if (err instanceof CloudflareChallengeError) {
-        appendLog('CF_CHALLENGE', '【诊断结果】源站要求浏览器完成 Cloudflare 访问验证。', 'warn')
-        if (err.diagnostics.cfRay) {
-          appendLog('CF_CHALLENGE', `cf-ray: ${err.diagnostics.cfRay}`, 'warn')
-        }
-        if (err.diagnostics.cfMitigated) {
-          appendLog('CF_CHALLENGE', `cf-mitigated: ${err.diagnostics.cfMitigated}`, 'warn')
-        }
-        if (!props.source?.useWebView) {
-          appendLog('CF_CHALLENGE', '建议：请在「网页验证」中启用 WebView 通道，让请求通过真实浏览器会话执行。', 'warn')
-        }
-      } else if (errorMessage(err).includes('404') || errorMessage(err).includes('403') || errorMessage(err).includes('500')) {
-        appendLog('DIAGNOSE', `【诊断结果】源站服务返回异常状态码，此书源的搜索接口可能已失效或被目标站拦截。`, 'warn')
-      }
-      throw err
-    })
-
-    const searchTime = Date.now() - searchStart
-
-    if (searchResults && searchResults.length > 0) {
-      stepStatus.search = 'success'
-      stepResults.search = { count: searchResults.length, time: searchTime, books: searchResults }
-      appendLog('SEARCH', `搜索成功! 共解析出 ${searchResults.length} 本书籍 (${searchTime}ms)`, 'success')
-      searchResults.slice(0, 3).forEach((b, i) => {
-        appendLog('SEARCH', `[${i + 1}] 《${b.name}》 ${b.author ? '作者:' + b.author : ''} => ${b.bookUrl}`)
+      const searchStart = Date.now()
+      const searchResults = await engine.search(targetSource, kw, (info) => {
+        const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
+        appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
+      }).catch((err: unknown) => {
+        stepStatus.search = 'failed'
+        handleErrorChallenge(err, targetSource)
+        throw err
       })
+
+      const searchTime = Date.now() - searchStart
+
+      if (searchResults && searchResults.length > 0) {
+        stepStatus.search = 'success'
+        stepResults.search = { count: searchResults.length, time: searchTime, books: searchResults }
+        appendLog('SEARCH', `搜索成功! 共解析出 ${searchResults.length} 本书籍 (${searchTime}ms)`, 'success')
+        searchResults.slice(0, 3).forEach((b, i) => {
+          appendLog('SEARCH', `[${i + 1}] 《${b.name}》 ${b.author ? '作者:' + b.author : ''} => ${b.bookUrl}`)
+        })
+        targetBookUrl = searchResults[0].bookUrl
+        const possibleTocUrl = (searchResults[0] as unknown as { tocUrl?: string }).tocUrl
+        if (possibleTocUrl) {
+          targetTocUrl = possibleTocUrl
+        }
+      } else {
+        stepStatus.search = 'failed'
+        appendLog('SEARCH', `搜索完成，但未能解析到任何书籍 (${searchTime}ms)`, 'warn')
+        appendLog('DIAGNOSE', `【诊断结果】网站请求返回成功，但解析规则未能提取出书籍列表（可能是无相关搜索结果，或该书源的 bookList 规则与当前网页结构不匹配）。`, 'info')
+        return
+      }
+    } else if (parsed.type === 'explore') {
+      const exploreUrl = parsed.payload.exploreUrl || ''
+      const exploreName = parsed.payload.exploreName || '发现'
+      stepStatus.search = 'running'
+      appendLog('EXPLORE', `开始访问发现页 [${exploreName}]: ${exploreUrl}`)
+
+      const exploreStart = Date.now()
+      const exploreResults = await engine.explore(targetSource, exploreUrl, 1, (info) => {
+        const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
+        appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
+      }).catch((err: unknown) => {
+        stepStatus.search = 'failed'
+        handleErrorChallenge(err, targetSource)
+        throw err
+      })
+
+      const exploreTime = Date.now() - exploreStart
+
+      if (exploreResults && exploreResults.length > 0) {
+        stepStatus.search = 'success'
+        stepResults.search = { count: exploreResults.length, time: exploreTime, books: exploreResults }
+        appendLog('EXPLORE', `发现页解析成功! 共解析出 ${exploreResults.length} 本书籍 (${exploreTime}ms)`, 'success')
+        exploreResults.slice(0, 3).forEach((b, i) => {
+          appendLog('EXPLORE', `[${i + 1}] 《${b.name}》 ${b.author ? '作者:' + b.author : ''} => ${b.bookUrl}`)
+        })
+        targetBookUrl = exploreResults[0].bookUrl
+        const possibleTocUrl = (exploreResults[0] as unknown as { tocUrl?: string }).tocUrl
+        if (possibleTocUrl) {
+          targetTocUrl = possibleTocUrl
+        }
+      } else {
+        stepStatus.search = 'failed'
+        appendLog('EXPLORE', `发现页解析完成，但未能提取到书籍列表 (${exploreTime}ms)`, 'warn')
+        return
+      }
     } else {
-      stepStatus.search = 'failed'
-      appendLog('SEARCH', `搜索完成，但未能解析到任何书籍 (${searchTime}ms)`, 'warn')
-      appendLog('DIAGNOSE', `【诊断结果】网站请求返回成功，但解析规则未能提取出书籍列表（可能是无相关搜索结果，或该书源的 bookList 规则与当前网页结构不匹配）。`, 'info')
-      return
+      stepStatus.search = 'skipped'
+      if (parsed.type === 'bookInfo') {
+        targetBookUrl = parsed.payload.bookUrl!
+      } else if (parsed.type === 'toc') {
+        targetTocUrl = parsed.payload.tocUrl!
+      } else if (parsed.type === 'content') {
+        targetChapterUrl = parsed.payload.chapterUrl!
+      }
     }
 
-    const firstBook = searchResults[0]
-    let tocUrl = firstBook.bookUrl
-
-    // 2. 详情页测试 (如果存在详情页规则)
-    if (props.source.ruleBookInfo && firstBook.bookUrl) {
-      stepStatus.bookInfo = 'running'
-      appendLog('BOOK_INFO', `请求详情页: ${firstBook.bookUrl}`)
-      const infoStart = Date.now()
-      try {
-        const info = await engine.getBookInfo(props.source, firstBook.bookUrl)
-        const infoTime = Date.now() - infoStart
-        stepStatus.bookInfo = 'success'
-        if (info.tocUrl) tocUrl = info.tocUrl
-        stepResults.bookInfo = {
-          name: info.name || firstBook.name,
-          author: info.author || firstBook.author,
-          intro: info.intro || '',
-          tocUrl: info.tocUrl || firstBook.bookUrl,
-          time: infoTime,
+    // 2. 详情页测试
+    if (parsed.type === 'search' || parsed.type === 'explore' || parsed.type === 'bookInfo') {
+      if (targetBookUrl) {
+        stepStatus.bookInfo = 'running'
+        appendLog('BOOK_INFO', `请求详情页: ${targetBookUrl}`)
+        const infoStart = Date.now()
+        try {
+          const info = await engine.getBookInfo(targetSource, targetBookUrl)
+          const infoTime = Date.now() - infoStart
+          stepStatus.bookInfo = 'success'
+          if (info.tocUrl) {
+            targetTocUrl = info.tocUrl
+          } else if (!targetTocUrl) {
+            targetTocUrl = targetBookUrl
+          }
+          stepResults.bookInfo = {
+            name: info.name || '未知书名',
+            author: info.author || '未知作者',
+            intro: info.intro || '',
+            tocUrl: targetTocUrl,
+            time: infoTime,
+          }
+          appendLog('BOOK_INFO', `详情解析成功: 《${info.name || '未知书名'}》 目录URL: ${targetTocUrl} (${infoTime}ms)`, 'success')
+        } catch (err: unknown) {
+          stepStatus.bookInfo = 'failed'
+          appendLog('BOOK_INFO', `详情解析失败: ${errorMessage(err)}`, 'error')
+          if (!targetTocUrl) return
         }
-        appendLog('BOOK_INFO', `详情解析成功: 《${info.name}》 目录URL: ${info.tocUrl || '默认原地址'} (${infoTime}ms)`, 'success')
-      } catch (err: unknown) {
-        stepStatus.bookInfo = 'failed'
-        appendLog('BOOK_INFO', `详情解析失败: ${errorMessage(err)}`, 'error')
+      } else {
+        stepStatus.bookInfo = 'success'
+        appendLog('BOOK_INFO', '未提供详情页链接，跳过详情解析')
       }
     } else {
-      stepStatus.bookInfo = 'success'
-      appendLog('BOOK_INFO', '未配置详情规则或直接使用搜索结果，跳过详情解析')
+      stepStatus.bookInfo = 'skipped'
     }
 
     // 3. 目录测试
-    if (tocUrl) {
-      stepStatus.toc = 'running'
-      appendLog('TOC', `请求目录页: ${tocUrl}`)
-      const tocStart = Date.now()
-      try {
-        const chapters = await engine.getToc(props.source, tocUrl, (pageInfo) => {
-          appendLog('TOC', `目录分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url} (本页解析出 ${pageInfo.count} 章)`)
-        })
-        const tocTime = Date.now() - tocStart
-        if (chapters && chapters.length > 0) {
-          stepStatus.toc = 'success'
-          stepResults.toc = {
-            totalChapters: chapters.length,
-            firstChapter: chapters[0],
-            lastChapter: chapters[chapters.length - 1],
-            time: tocTime,
-          }
-          appendLog('TOC', `目录解析成功! 共 ${chapters.length} 章 (${tocTime}ms)`, 'success')
-          appendLog('TOC', `首章: ${chapters[0].name} => ${chapters[0].url}`)
-          appendLog('TOC', `末章: ${chapters[chapters.length - 1].name}`)
-
-          // 4. 正文测试
-          const firstChapterUrl = chapters[0].url
-          if (firstChapterUrl) {
-            stepStatus.content = 'running'
-            appendLog('CONTENT', `请求首章正文: ${firstChapterUrl}`)
-            const contentStart = Date.now()
-            try {
-              const payload = await engine.getContent(props.source, firstChapterUrl, (pageInfo) => {
-                appendLog('CONTENT', `正文分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url}`)
-              })
-              const text = payload.type === 'text'
-                ? payload.text
-                : payload.images.map(image => image.url).join('\n')
-              const contentTime = Date.now() - contentStart
-              const charCount = text.length
-
-              if (payload.type === 'text' && charCount === 0 && (!payload.embeddedImages || payload.embeddedImages.length === 0)) {
-                stepStatus.content = 'failed'
-                stepResults.content = {
-                  charCount: 0,
-                  preview: '',
-                  time: contentTime,
-                }
-                appendLog('CONTENT', `正文解析未通过: 提取结果为空 (0 字) (${contentTime}ms)`, 'error')
-                appendLog('DIAGNOSE', '【诊断结果】正文规则未能提取出有效文字。可能是正文规则选择器不匹配，或正文需要异步 JavaScript 渲染（建议在书源编辑中启用 WebView 通道）。', 'warn')
-              } else if (payload.type === 'images' && payload.images.length === 0) {
-                stepStatus.content = 'failed'
-                stepResults.content = {
-                  charCount: 0,
-                  preview: '',
-                  time: contentTime,
-                }
-                appendLog('CONTENT', `图片解析未通过: 未提取到任何图片 (${contentTime}ms)`, 'error')
-                appendLog('DIAGNOSE', '【诊断结果】漫画正文规则未能提取出有效图片链接。', 'warn')
-              } else {
-                stepStatus.content = 'success'
-                stepResults.content = {
-                  charCount,
-                  preview: text.slice(0, 200) + (text.length > 200 ? '...' : ''),
-                  time: contentTime,
-                }
-                appendLog('CONTENT', payload.type === 'images'
-                  ? `图片解析成功! 共 ${payload.images.length} 张 (${contentTime}ms)`
-                  : `正文解析成功! 字数: ${charCount} (${contentTime}ms)`, 'success')
-                appendLog('CONTENT', `正文预览:\n${text.slice(0, 120)}...`)
-              }
-            } catch (err: unknown) {
-              stepStatus.content = 'failed'
-              if (err instanceof SecurityChallengeError) {
-                appendLog('CONTENT', `正文解析失败: 触发目标网站安全质询拦截 (${err.diagnostics.title || err.diagnostics.type})`, 'error')
-                appendLog('CHALLENGE', `【诊断结果】源站正文页返回了安全验证页面${err.diagnostics.title ? `（“${err.diagnostics.title}”）` : ''}，普通 HTTP 请求已被拦截。`, 'warn')
-                if (err.diagnostics.snippet) {
-                  appendLog('RAW_PAGE', `拦截页面片段摘要:\n${err.diagnostics.snippet}`, 'info')
-                }
-                appendLog('SUGGEST', '建议：请在「书源编辑」中启用「WebView 通道」，或在「网页验证」中完成浏览器安全验证。', 'warn')
-              } else {
-                appendLog('CONTENT', `正文解析失败: ${errorMessage(err)}`, 'error')
-              }
+    if (parsed.type === 'search' || parsed.type === 'explore' || parsed.type === 'bookInfo' || parsed.type === 'toc') {
+      if (targetTocUrl) {
+        stepStatus.toc = 'running'
+        appendLog('TOC', `请求目录页: ${targetTocUrl}`)
+        const tocStart = Date.now()
+        try {
+          const chapters = await engine.getToc(targetSource, targetTocUrl, (pageInfo) => {
+            appendLog('TOC', `目录分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url} (本页解析出 ${pageInfo.count} 章)`)
+          })
+          const tocTime = Date.now() - tocStart
+          if (chapters && chapters.length > 0) {
+            stepStatus.toc = 'success'
+            stepResults.toc = {
+              totalChapters: chapters.length,
+              firstChapter: chapters[0],
+              lastChapter: chapters[chapters.length - 1],
+              time: tocTime,
             }
+            appendLog('TOC', `目录解析成功! 共 ${chapters.length} 章 (${tocTime}ms)`, 'success')
+            appendLog('TOC', `首章: ${chapters[0].name} => ${chapters[0].url}`)
+            appendLog('TOC', `末章: ${chapters[chapters.length - 1].name}`)
+            targetChapterUrl = chapters[0].url
+          } else {
+            stepStatus.toc = 'failed'
+            appendLog('TOC', `未解析到任何目录章节 (${tocTime}ms)`, 'warn')
+            return
           }
-        } else {
+        } catch (err: unknown) {
           stepStatus.toc = 'failed'
-          appendLog('TOC', `未解析到任何目录章节 (${tocTime}ms)`, 'warn')
+          appendLog('TOC', `目录解析失败: ${errorMessage(err)}`, 'error')
+          return
+        }
+      } else {
+        stepStatus.toc = 'failed'
+        appendLog('TOC', '未获取到目录链接，无法解析目录', 'error')
+        return
+      }
+    } else {
+      stepStatus.toc = 'skipped'
+    }
+
+    // 4. 正文测试
+    if (targetChapterUrl) {
+      stepStatus.content = 'running'
+      appendLog('CONTENT', `请求首章正文: ${targetChapterUrl}`)
+      const contentStart = Date.now()
+      try {
+        const payload = await engine.getContent(targetSource, targetChapterUrl, (pageInfo) => {
+          appendLog('CONTENT', `正文分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url}`)
+        })
+        const text = payload.type === 'text'
+          ? payload.text
+          : payload.images.map(image => image.url).join('\n')
+        const contentTime = Date.now() - contentStart
+        const charCount = text.length
+
+        if (payload.type === 'text' && charCount === 0 && (!payload.embeddedImages || payload.embeddedImages.length === 0)) {
+          stepStatus.content = 'failed'
+          stepResults.content = {
+            charCount: 0,
+            preview: '',
+            time: contentTime,
+          }
+          appendLog('CONTENT', `正文解析未通过: 提取结果为空 (0 字) (${contentTime}ms)`, 'error')
+          appendLog('DIAGNOSE', '【诊断结果】正文规则未能提取出有效文字。可能是正文规则选择器不匹配，或正文需要异步 JavaScript 渲染（建议在书源编辑中启用 WebView 通道）。', 'warn')
+        } else if (payload.type === 'images' && payload.images.length === 0) {
+          stepStatus.content = 'failed'
+          stepResults.content = {
+            charCount: 0,
+            preview: '',
+            time: contentTime,
+          }
+          appendLog('CONTENT', `图片解析未通过: 未提取到任何图片 (${contentTime}ms)`, 'error')
+          appendLog('DIAGNOSE', '【诊断结果】漫画正文规则未能提取出有效图片链接。', 'warn')
+        } else {
+          stepStatus.content = 'success'
+          stepResults.content = {
+            charCount,
+            preview: text.slice(0, 200) + (text.length > 200 ? '...' : ''),
+            time: contentTime,
+          }
+          appendLog('CONTENT', payload.type === 'images'
+            ? `图片解析成功! 共 ${payload.images.length} 张 (${contentTime}ms)`
+            : `正文解析成功! 字数: ${charCount} (${contentTime}ms)`, 'success')
+          appendLog('CONTENT', `正文预览:\n${text.slice(0, 120)}...`)
         }
       } catch (err: unknown) {
-        stepStatus.toc = 'failed'
-        appendLog('TOC', `目录解析失败: ${errorMessage(err)}`, 'error')
+        stepStatus.content = 'failed'
+        if (err instanceof SecurityChallengeError) {
+          appendLog('CONTENT', `正文解析失败: 触发目标网站安全质询拦截 (${err.diagnostics.title || err.diagnostics.type})`, 'error')
+          appendLog('CHALLENGE', `【诊断结果】源站正文页返回了安全验证页面${err.diagnostics.title ? `（“${err.diagnostics.title}”）` : ''}，普通 HTTP 请求已被拦截。`, 'warn')
+          if (err.diagnostics.snippet) {
+            appendLog('RAW_PAGE', `拦截页面片段摘要:\n${err.diagnostics.snippet}`, 'info')
+          }
+          appendLog('SUGGEST', '建议：请在「书源编辑」中启用「WebView 通道」，或在「网页验证」中完成浏览器安全验证。', 'warn')
+        } else {
+          appendLog('CONTENT', `正文解析失败: ${errorMessage(err)}`, 'error')
+        }
       }
+    } else {
+      stepStatus.content = 'failed'
+      appendLog('CONTENT', '未获取到正文章节链接，无法解析正文', 'error')
     }
 
     const failedSteps = Object.entries(stepStatus)
@@ -497,8 +635,8 @@ const startDebug = async () => {
       .map(([step]) => step)
     if (failedSteps.length > 0) {
       const stepNames: Record<string, string> = {
-        search: '搜索',
-        detail: '详情',
+        search: currentDebugMode.value === 'explore' ? '发现' : '搜索',
+        bookInfo: '详情',
         toc: '目录',
         content: '正文',
       }
@@ -516,14 +654,38 @@ const startDebug = async () => {
   }
 }
 
-const copyLogs = () => {
+function handleErrorChallenge(err: unknown, targetSource: BookSource) {
+  if (err instanceof SecurityChallengeError) {
+    appendLog('CHALLENGE', `【诊断结果】源站要求浏览器完成安全访问验证（${err.diagnostics.title || err.diagnostics.type}）。`, 'warn')
+    if (err.diagnostics.cfRay) {
+      appendLog('CHALLENGE', `cf-ray: ${err.diagnostics.cfRay}`, 'warn')
+    }
+    if (err.diagnostics.cfMitigated) {
+      appendLog('CHALLENGE', `cf-mitigated: ${err.diagnostics.cfMitigated}`, 'warn')
+    }
+    if (err.diagnostics.snippet) {
+      appendLog('RAW_PAGE', `拦截页面片段摘要:\n${err.diagnostics.snippet}`, 'info')
+    }
+    if (!targetSource.useWebView) {
+      appendLog('SUGGEST', '建议：请在「书源编辑」中启用「WebView 通道」，或在「网页验证」中完成浏览器安全验证。', 'warn')
+    }
+  } else if (errorMessage(err).includes('404') || errorMessage(err).includes('403') || errorMessage(err).includes('500')) {
+    appendLog('DIAGNOSE', '【诊断结果】源站服务返回异常状态码，此书源的接口可能已失效或被目标站拦截。', 'warn')
+  }
+}
+
+const copyLogs = async () => {
   if (logs.value.length === 0) {
     ElMessage.info('暂无日志')
     return
   }
   const text = logs.value.map(l => `[${l.time}] [${l.tag}] ${l.message}`).join('\n')
-  navigator.clipboard.writeText(text)
-  ElMessage.success('调试日志已复制到剪贴板')
+  try {
+    await copyTextToClipboard(text)
+    ElMessage.success('调试日志已复制到剪贴板')
+  } catch (err: any) {
+    ElMessage.error(err?.message || '复制失败')
+  }
 }
 </script>
 
@@ -581,6 +743,42 @@ const copyLogs = () => {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-dialog-input {
+  width: 320px;
+}
+
+.help-btn {
+  color: var(--el-text-color-secondary);
+  font-size: 16px;
+  padding: 4px;
+}
+
+.help-btn:hover {
+  color: var(--el-color-primary);
+}
+
+.explore-dropdown-menu {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.explore-item-title {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.explore-item-url {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
 }
 
 /* 分步卡片网格 */
@@ -612,6 +810,21 @@ const copyLogs = () => {
 .step-card.step-failed {
   border-color: var(--el-color-danger-light-5);
   background: var(--el-color-danger-light-9);
+}
+
+.step-card.step-skipped {
+  border-color: var(--el-border-color-lighter);
+  background: var(--el-fill-color-lighter);
+  opacity: 0.65;
+}
+
+.step-card.step-skipped .step-num {
+  background: var(--el-text-color-placeholder);
+  color: #fff;
+}
+
+.step-card.step-skipped .step-status {
+  color: var(--el-text-color-placeholder);
 }
 
 .step-header {
@@ -799,26 +1012,21 @@ const copyLogs = () => {
   white-space: pre-wrap;
 }
 
-.log-success .log-msg {
+.log-success .log-tag {
   color: #67c23a;
 }
 
+.log-warn .log-tag {
+  color: #e6a23c;
+}
 .log-warn .log-msg {
   color: #e6a23c;
 }
 
-.log-error .log-msg {
+.log-error .log-tag {
   color: #f56c6c;
 }
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-}
-
-@media screen and (max-width: 650px) {
-  .debug-steps {
-    grid-template-columns: 1fr;
-  }
+.log-error .log-msg {
+  color: #f56c6c;
 }
 </style>
