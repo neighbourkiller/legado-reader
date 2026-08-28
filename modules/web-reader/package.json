@@ -1,6 +1,6 @@
 {
   "name": "legado-web-reader",
-  "version": "1.0.0",
+  "version": "1.26.8291",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
     "build:desktop": "tauri build",
     "preview": "vite preview --mode web",
     "test": "vitest run",
-    "audit:sources": "node scripts/source-compat-audit.mjs"
+    "audit:sources": "node scripts/source-compat-audit.mjs",
+    "bump": "node scripts/bump-version.mjs",
+    "release:desktop": "node scripts/bump-version.mjs --git"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
