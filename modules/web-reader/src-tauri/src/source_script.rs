@@ -98,6 +98,274 @@ fn symmetric_crypto(action: &str, transformation: &str, key: &[u8], iv: &[u8], d
     Ok(result)
 }
 
+#[derive(Clone, Copy)]
+enum XPathCombinator {
+    Descendant,
+    Child,
+}
+
+struct XPathStep {
+    combinator: XPathCombinator,
+    raw: String,
+}
+
+enum XPathDirective {
+    Element,
+    DirectText,
+    DescendantText,
+    Html,
+    Attribute(String),
+}
+
+fn split_xpath_steps(xpath: &str) -> Result<Vec<XPathStep>, String> {
+    let mut clean = xpath.trim();
+    if clean.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("@xpath:")) {
+        clean = clean[7..].trim();
+    } else if clean.get(..6).is_some_and(|prefix| prefix.eq_ignore_ascii_case("xpath:")) {
+        clean = clean[6..].trim();
+    }
+    if let Some(rest) = clean.strip_prefix('.') {
+        clean = rest.trim_start();
+    }
+    if clean.is_empty() {
+        return Err("XPath expression is empty".to_string());
+    }
+
+    let bytes = clean.as_bytes();
+    let mut steps = Vec::new();
+    let mut quote = None;
+    let mut bracket_depth = 0usize;
+    let mut start = 0usize;
+    let mut pending = XPathCombinator::Descendant;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let ch = bytes[index];
+        if let Some(expected) = quote {
+            if ch == expected {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        match ch {
+            b'\'' | b'"' => quote = Some(ch),
+            b'[' => bracket_depth += 1,
+            b']' => {
+                if bracket_depth == 0 {
+                    return Err("unbalanced XPath predicate".to_string());
+                }
+                bracket_depth -= 1;
+            }
+            b'/' if bracket_depth == 0 => {
+                let raw = clean[start..index].trim();
+                if !raw.is_empty() {
+                    steps.push(XPathStep { combinator: pending, raw: raw.to_string() });
+                }
+                if bytes.get(index + 1) == Some(&b'/') {
+                    pending = XPathCombinator::Descendant;
+                    index += 1;
+                } else {
+                    pending = XPathCombinator::Child;
+                }
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    if quote.is_some() || bracket_depth != 0 {
+        return Err("unbalanced XPath expression".to_string());
+    }
+    let raw = clean[start..].trim();
+    if !raw.is_empty() {
+        steps.push(XPathStep { combinator: pending, raw: raw.to_string() });
+    }
+    if steps.is_empty() {
+        return Err("XPath contains no selectable steps".to_string());
+    }
+    Ok(steps)
+}
+
+fn css_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn relative_xpath_to_css(path: &str) -> Result<String, String> {
+    let direct_child = path.trim_start().starts_with("./") && !path.trim_start().starts_with(".//");
+    let steps = split_xpath_steps(path)?;
+    let mut selector = if direct_child { "> ".to_string() } else { String::new() };
+    for (index, step) in steps.iter().enumerate() {
+        if matches!(step.raw.to_ascii_lowercase().as_str(), "text()" | "html()") || step.raw.starts_with('@') {
+            return Err(format!("unsupported relative XPath extraction in predicate: {path}"));
+        }
+        if index > 0 {
+            selector.push_str(match step.combinator {
+                XPathCombinator::Descendant => " ",
+                XPathCombinator::Child => " > ",
+            });
+        }
+        selector.push_str(&xpath_step_to_css(&step.raw)?);
+    }
+    Ok(selector)
+}
+
+fn xpath_predicate_to_css(predicate: &str) -> Result<String, String> {
+    let value = predicate.trim();
+    if value.chars().all(|ch| ch.is_ascii_digit()) && !value.is_empty() {
+        let index = value.parse::<usize>().map_err(|error| error.to_string())?;
+        return if index == 0 {
+            Err("XPath positions are one-based".to_string())
+        } else {
+            Ok(format!(":nth-of-type({index})"))
+        };
+    }
+    if value.eq_ignore_ascii_case("last()") {
+        return Ok(":last-of-type".to_string());
+    }
+
+    let not_relative = Regex::new(r"(?i)^not\s*\(\s*(\.(?://|/).+)\s*\)$").unwrap();
+    if let Some(capture) = not_relative.captures(value) {
+        return Ok(format!(":not(:has({}))", relative_xpath_to_css(&capture[1])?));
+    }
+    if value.starts_with(".//") || value.starts_with("./") {
+        return Ok(format!(":has({})", relative_xpath_to_css(value)?));
+    }
+
+    let and_re = Regex::new(r"(?i)\s+and\s+").unwrap();
+    let parts = and_re.split(value).collect::<Vec<_>>();
+    if parts.len() > 1 {
+        return parts.into_iter().map(xpath_predicate_to_css).collect::<Result<Vec<_>, _>>().map(|parts| parts.join(""));
+    }
+
+    let patterns = [
+        (r#"(?i)^contains\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#, "*="),
+        (r#"(?i)^starts-with\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#, "^="),
+        (r#"(?i)^ends-with\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#, "$="),
+    ];
+    for (pattern, operator) in patterns {
+        let regex = Regex::new(pattern).unwrap();
+        if let Some(capture) = regex.captures(value) {
+            return Ok(format!("[{}{}\"{}\"]", &capture[1], operator, css_string(&capture[2])));
+        }
+    }
+
+    let equality = Regex::new(r#"^@([\w:-]+)\s*(=|!=)\s*['\"]([^'\"]*)['\"]$"#).unwrap();
+    if let Some(capture) = equality.captures(value) {
+        let selector = format!("[{}=\"{}\"]", &capture[1], css_string(&capture[3]));
+        return Ok(if &capture[2] == "!=" { format!(":not({selector})") } else { selector });
+    }
+    let exists = Regex::new(r"^@([\w:-]+)$").unwrap();
+    if let Some(capture) = exists.captures(value) {
+        return Ok(format!("[{}]", &capture[1]));
+    }
+    let not_exists = Regex::new(r"(?i)^not\s*\(\s*@([\w:-]+)\s*\)$").unwrap();
+    if let Some(capture) = not_exists.captures(value) {
+        return Ok(format!(":not([{}])", &capture[1]));
+    }
+    let not_contains = Regex::new(r#"(?i)^not\s*\(\s*contains\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)\s*\)$"#).unwrap();
+    if let Some(capture) = not_contains.captures(value) {
+        return Ok(format!(":not([{}*=\"{}\"])", &capture[1], css_string(&capture[2])));
+    }
+    Err(format!("unsupported XPath predicate: [{value}]"))
+}
+
+fn xpath_step_to_css(step: &str) -> Result<String, String> {
+    let bytes = step.as_bytes();
+    let tag_end = step.find('[').unwrap_or(step.len());
+    let tag = step[..tag_end].trim();
+    if tag != "*" && (tag.is_empty() || !tag.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))) {
+        return Err(format!("unsupported XPath step: {step}"));
+    }
+    let mut selector = if tag == "*" { "*".to_string() } else { tag.to_string() };
+    let mut index = tag_end;
+    while index < bytes.len() {
+        if bytes[index] != b'[' {
+            return Err(format!("invalid XPath step: {step}"));
+        }
+        let start = index + 1;
+        let mut quote = None;
+        let mut depth = 1usize;
+        index += 1;
+        while index < bytes.len() && depth > 0 {
+            let ch = bytes[index];
+            if let Some(expected) = quote {
+                if ch == expected { quote = None; }
+            } else {
+                match ch {
+                    b'\'' | b'"' => quote = Some(ch),
+                    b'[' => depth += 1,
+                    b']' => depth -= 1,
+                    _ => {}
+                }
+            }
+            index += 1;
+        }
+        if depth != 0 {
+            return Err(format!("unbalanced XPath step: {step}"));
+        }
+        selector.push_str(&xpath_predicate_to_css(&step[start..index - 1])?);
+    }
+    Ok(selector)
+}
+
+fn portable_xpath_strings(rule: &str, content: &str) -> Result<Vec<String>, String> {
+    let steps = split_xpath_steps(rule)?;
+    let mut selector = String::new();
+    let mut directive = XPathDirective::Element;
+    for (index, step) in steps.iter().enumerate() {
+        let is_last = index + 1 == steps.len();
+        let lower = step.raw.to_ascii_lowercase();
+        if lower == "text()" || lower == "html()" || step.raw.starts_with('@') {
+            if !is_last || selector.is_empty() {
+                return Err("XPath extraction directive must be the final step".to_string());
+            }
+            directive = if lower == "text()" {
+                match step.combinator {
+                    XPathCombinator::Child => XPathDirective::DirectText,
+                    XPathCombinator::Descendant => XPathDirective::DescendantText,
+                }
+            } else if lower == "html()" {
+                XPathDirective::Html
+            } else {
+                XPathDirective::Attribute(step.raw[1..].to_string())
+            };
+            continue;
+        }
+        if !selector.is_empty() {
+            selector.push_str(match step.combinator {
+                XPathCombinator::Descendant => " ",
+                XPathCombinator::Child => " > ",
+            });
+        }
+        selector.push_str(&xpath_step_to_css(&step.raw)?);
+    }
+    if selector.is_empty() {
+        return Err("XPath selector is empty".to_string());
+    }
+
+    let selector = Selector::parse(&selector).map_err(|error| format!("converted XPath selector is invalid: {error}"))?;
+    let document = Html::parse_document(content);
+    let mut values = Vec::new();
+    for element in document.select(&selector) {
+        match &directive {
+            XPathDirective::Element | XPathDirective::Html => values.push(element.html()),
+            XPathDirective::DirectText => values.extend(element.children()
+                .filter_map(|node| node.value().as_text())
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())),
+            XPathDirective::DescendantText => values.extend(element.text()
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())),
+            XPathDirective::Attribute(name) => {
+                if let Some(value) = element.value().attr(name) {
+                    values.push(value.to_string());
+                }
+            }
+        }
+    }
+    Ok(values)
+}
+
 fn portable_rule_strings(rule: &str, content: &str) -> Result<Vec<String>, String> {
     let trimmed = rule.trim();
     if let Some(pattern) = trimmed.strip_prefix("@Regex:").or_else(|| trimmed.strip_prefix("@regex:")) {
@@ -106,21 +374,25 @@ fn portable_rule_strings(rule: &str, content: &str) -> Result<Vec<String>, Strin
             capture.get(1).or_else(|| capture.get(0)).map(|value| value.as_str().to_string())
         }).collect());
     }
-    if let Some(path) = trimmed.strip_prefix("@Json:").or_else(|| trimmed.strip_prefix("@json:")) {
+    if let Some(path) = trimmed.strip_prefix("@Json:").or_else(|| trimmed.strip_prefix("@json:"))
+        .or_else(|| trimmed.starts_with('$').then_some(trimmed)) {
         let json: Value = serde_json::from_str(content).map_err(|e| e.to_string())?;
         return jsonpath_lib::select(&json, path).map_err(|e| e.to_string()).map(|values| values.into_iter().map(|value| {
             value.as_str().map(ToOwned::to_owned).unwrap_or_else(|| value.to_string())
         }).collect());
     }
-    if trimmed.starts_with("@XPath:") || trimmed.starts_with("@xpath:") {
-        return Err("QuickJS rule bridge does not emulate Android JsoupXpath; use the declarative XPath rule so compatibility mode can be applied".to_string());
+    if trimmed.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("@xpath:"))
+        || trimmed.get(..6).is_some_and(|prefix| prefix.eq_ignore_ascii_case("xpath:"))
+        || trimmed.starts_with("//") || trimmed.starts_with(".//") || trimmed.starts_with("./") || trimmed.starts_with('/') {
+        return portable_xpath_strings(trimmed, content);
     }
     let raw = trimmed.strip_prefix("@CSS:").or_else(|| trimmed.strip_prefix("@css:")).unwrap_or(trimmed);
     let mut pieces = raw.split('@').filter(|part| !part.trim().is_empty()).collect::<Vec<_>>();
-    let directive = pieces.last().copied().unwrap_or("text");
-    let known_directive = matches!(directive.to_ascii_lowercase().as_str(), "text" | "textnodes" | "owntext" | "html" | "all")
-        || (!directive.starts_with("class.") && !directive.starts_with("tag.") && !directive.starts_with("id.") && pieces.len() > 1);
+    let candidate_directive = pieces.last().copied().unwrap_or("text");
+    let known_directive = matches!(candidate_directive.to_ascii_lowercase().as_str(), "text" | "textnodes" | "owntext" | "html" | "all")
+        || (!candidate_directive.starts_with("class.") && !candidate_directive.starts_with("tag.") && !candidate_directive.starts_with("id.") && pieces.len() > 1);
     if known_directive { pieces.pop(); }
+    let directive = if known_directive { candidate_directive } else { "text" };
     let selector_text = pieces.into_iter().map(|piece| {
         if let Some(value) = piece.strip_prefix("class.") { format!(".{value}") }
         else if let Some(value) = piece.strip_prefix("tag.") { value.to_string() }
@@ -481,11 +753,19 @@ pub async fn execute_source_script(
 mod tests {
     use super::*;
 
-    fn run(code: &str, timeout_ms: u64) -> Result<SourceScriptResponse, SourceScriptError> {
+    fn run_with_bindings(
+        code: &str,
+        bindings: Value,
+        timeout_ms: u64,
+    ) -> Result<SourceScriptResponse, SourceScriptError> {
         execute_script(SourceScriptRequest {
-            source_id: "test".to_string(), code: code.to_string(), bindings: serde_json::json!({"key":"abc"}),
+            source_id: "test".to_string(), code: code.to_string(), bindings,
             timeout_ms: Some(timeout_ms), memory_limit_bytes: None, stack_limit_bytes: None,
         }, Arc::new(Jar::default()), Arc::new(Mutex::new(HashMap::new())), Arc::new(None))
+    }
+
+    fn run(code: &str, timeout_ms: u64) -> Result<SourceScriptResponse, SourceScriptError> {
+        run_with_bindings(code, serde_json::json!({"key":"abc"}), timeout_ms)
     }
 
     #[test]
@@ -543,9 +823,40 @@ mod tests {
 
     #[test]
     fn bridges_portable_css_and_regex_rules() {
-        let code = "const html='<div class=\"book\"><span class=\"name\">测试书</span></div>'; [java.getString('class.book@class.name@text', html), java.getString('@Regex:id=(\\\\d+)', 'id=42'), java.getString('@Json:$.book.name', '{\"book\":{\"name\":\"JSON书\"}}')]";
+        let code = "const html='<div class=\"book\"><span class=\"name\">测试书</span></div>'; [java.getString('class.book@class.name@text', html), java.getString('.book .name', html), java.getString('@Regex:id=(\\\\d+)', 'id=42'), java.getString('@Json:$.book.name', '{\"book\":{\"name\":\"JSON书\"}}'), java.getString('$.book.name', '{\"book\":{\"name\":\"自动JSON书\"}}')]";
         let response = run(code, 1_000).unwrap();
-        assert_eq!(response.result, serde_json::json!(["测试书", "42", "JSON书"]));
+        assert_eq!(response.result, serde_json::json!(["测试书", "测试书", "42", "JSON书", "自动JSON书"]));
+    }
+
+    #[test]
+    fn bridges_android_style_xpath_get_string_with_implicit_result() {
+        let html = r#"<div class="list-group-item">
+            <h5><small>连载</small></h5>
+            <p class="text-muted"><a>玄幻</a><a>系统</a></p>
+            <p class="mb-1 text-muted">字数 123.4 万<br>阅读 56.7 万</p>
+        </div>"#;
+        let code = r#"
+            var status = java.getString("//h5/small/text()");
+            var tags = java.getString("//p[@class='text-muted']/a/text()");
+            var views = java.getString("//p[@class='mb-1 text-muted']//text()").match(/\d+?.\d+/g)[1];
+            status + ",👀" + views + "," + tags
+        "#;
+        let response = run_with_bindings(code, serde_json::json!({"result": html}), 1_000).unwrap();
+        assert_eq!(response.result, "连载,👀56.7,玄幻\n系统");
+    }
+
+    #[test]
+    fn bridges_xpath_descendant_absence_predicate_in_book_info_script() {
+        let html = r#"<div class="box_info"><div class="novel_info">
+            <p>作者信息</p><p><a href="/tag">标签</a>排除文本</p><p>字数信息</p>
+        </div></div><div class="jianjie"><p>作品简介</p></div>"#;
+        let code = r#"
+            var info = java.getString("//div[@class='box_info']/div[@class='novel_info']//p[not(.//a)]//text()");
+            var intro = java.getString("//div[@class='jianjie']/p/text()");
+            intro + "\n◤-----------------------------------------------------------------◥\n" + info + "\n◣-----------------------------------------------------------------◢\n"
+        "#;
+        let response = run_with_bindings(code, serde_json::json!({"result": html}), 1_000).unwrap();
+        assert_eq!(response.result, "作品简介\n◤-----------------------------------------------------------------◥\n作者信息\n字数信息\n◣-----------------------------------------------------------------◢\n");
     }
 
     #[test]

@@ -41,4 +41,19 @@ describe('书源兼容性扫描', () => {
       'UNSUPPORTED_SOURCE_TYPE', 'UNSUPPORTED_ANDROID_API',
     ]))
   })
+
+  it('区分字符串规则桥与尚未完整支持的元素对象规则桥', () => {
+    const stringReport = inspectSourceCompatibility(source({
+      ruleSearch: { bookList: '.book', name: '<js>java.getString("//h5/text()")</js>' },
+    }))
+    expect(stringReport.status).toBe('supported')
+    expect(stringReport.capabilities).toContain('rule-parser-host')
+
+    const elementReport = inspectSourceCompatibility(source({
+      ruleSearch: { bookList: '.book', name: '<js>java.getElement(".item").text()</js>' },
+    }))
+    expect(elementReport.status).toBe('partial')
+    expect(elementReport.capabilities).toContain('rule-element-host')
+    expect(elementReport.issues.map(issue => issue.code)).toContain('PARTIAL_RULE_ELEMENT_API')
+  })
 })

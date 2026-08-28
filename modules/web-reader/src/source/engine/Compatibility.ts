@@ -48,6 +48,16 @@ export function inspectSourceCompatibility(source: BookSource): SourceCompatibil
     if (/@?json:|\$[.[]/i.test(entry.value)) capabilities.add('jsonpath')
     if (/@?regex:|##/.test(entry.value)) capabilities.add('regex')
     if (/@js:|<js>|\{\{/.test(entry.value)) capabilities.add('javascript')
+    if (/\bjava\.get(?:String|StringList)\s*\(/.test(entry.value)) capabilities.add('rule-parser-host')
+    if (/\bjava\.getElements?\s*\(/.test(entry.value)) {
+      capabilities.add('rule-element-host')
+      issues.push({
+        status: 'partial',
+        code: 'PARTIAL_RULE_ELEMENT_API',
+        path: entry.path,
+        message: 'java.getElement/getElements 尚未完整模拟 Android 元素对象及其链式方法',
+      })
+    }
     if (/@put:|@get:\{/.test(entry.value)) capabilities.add('variables')
     if (/<webjs>|@webjs:/i.test(entry.value)) capabilities.add('webview-script')
     for (const [pattern, code, message] of UNSUPPORTED_API_PATTERNS) {

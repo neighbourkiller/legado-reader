@@ -487,6 +487,7 @@ async function evaluateChainAsync(
   segment: RuleSegment,
   context: RuleExecutionContext,
   runner?: RuleScriptRunner,
+  stringifyBeforeScript = false,
 ): Promise<RuleNode[]> {
   context.result = input
 
@@ -509,10 +510,15 @@ async function evaluateChainAsync(
 
   let current: RuleNode[] = Array.isArray(input) ? input as RuleNode[] : [input as RuleNode]
 
-  for (const step of steps) {
+  for (const [stepIndex, step] of steps.entries()) {
     if (current.length === 0) break
     if (step.mode === 'js' || step.mode === 'webjs') {
-      const jsInput = current.length === 1 ? current[0] : current.map(nodeToString)
+      const previousStep = steps[stepIndex - 1]
+      const followsDeclarativeStep = previousStep
+        && previousStep.mode !== 'js' && previousStep.mode !== 'webjs'
+      const jsInput = stringifyBeforeScript && followsDeclarativeStep
+        ? current.map(nodeToString).join('\n')
+        : current.length === 1 ? current[0] : current.map(nodeToString)
       current = await evaluateSingleStepAsync(jsInput, step, context, runner)
     } else {
       const nextLevel: RuleNode[] = []
@@ -598,13 +604,14 @@ async function evaluateAstNodeAsync(
   node: CompiledRuleNode,
   context: RuleExecutionContext,
   runner?: RuleScriptRunner,
+  stringifyBeforeScript = false,
 ): Promise<RuleNode[]> {
   if (node.type === 'combination') {
     if (node.operator === '||') {
       const errors: RuleExecutionError[] = []
       for (const child of node.children || []) {
         try {
-          const values = await evaluateAstNodeAsync(input, child, context, runner)
+          const values = await evaluateAstNodeAsync(input, child, context, runner, stringifyBeforeScript)
           if (values.length > 0 && values.some(v => nodeToString(v).trim())) {
             return values
           }
@@ -622,7 +629,7 @@ async function evaluateAstNodeAsync(
     if (node.operator === '%%') {
       const groups: RuleNode[][] = []
       for (const child of node.children || []) {
-        const values = await evaluateAstNodeAsync(input, child, context, runner)
+        const values = await evaluateAstNodeAsync(input, child, context, runner, stringifyBeforeScript)
         if (values.length > 0) groups.push(values)
       }
       return interleave(groups)
@@ -631,14 +638,14 @@ async function evaluateAstNodeAsync(
     // 默认 ('&&' 或无 operator 单节点组合)
     const results: RuleNode[] = []
     for (const child of node.children || []) {
-      const values = await evaluateAstNodeAsync(input, child, context, runner)
+      const values = await evaluateAstNodeAsync(input, child, context, runner, stringifyBeforeScript)
       results.push(...values)
     }
     return results
   }
 
   if (node.type === 'chain' && node.segment) {
-    return evaluateChainAsync(input, node.segment, context, runner)
+    return evaluateChainAsync(input, node.segment, context, runner, stringifyBeforeScript)
   }
 
   if (node.type === 'step' && node.step) {
@@ -810,15 +817,16 @@ async function evaluateCompiledAsync(
   compiled: CompiledRule,
   context: RuleExecutionContext,
   runner?: RuleScriptRunner,
+  stringifyBeforeScript = false,
 ): Promise<RuleNode[]> {
   if (compiled.tree) {
-    return evaluateAstNodeAsync(input, compiled.tree, context, runner)
+    return evaluateAstNodeAsync(input, compiled.tree, context, runner, stringifyBeforeScript)
   }
   const groups: RuleNode[][] = []
   const errors: RuleExecutionError[] = []
   for (const segment of compiled.alternatives) {
     try {
-      const values = await evaluateChainAsync(input, segment, context, runner)
+      const values = await evaluateChainAsync(input, segment, context, runner, stringifyBeforeScript)
       if (values.length > 0) groups.push(values)
       if (compiled.operator === '||' && values.some(value => nodeToString(value).trim())) return values
     } catch (cause) {
@@ -869,7 +877,9 @@ export async function evaluateRuleStringAsync(
   }
 
   const compiled = compileRule(targetRule)
-  const values = await evaluateCompiledAsync(input, compiled, context, runner)
+  const values = await evaluateCompiledAsync(
+    input, compiled, context, runner, context.compatibilityMode === 'legado',
+  )
   const stringify = (value: RuleNode) => context.compatibilityMode === 'legado'
     && compiled.alternatives.some(segment => segment.mode === 'xpath' || segment.steps?.some(st => st.mode === 'xpath'))
     && value instanceof Element ? value.outerHTML : nodeToString(value)

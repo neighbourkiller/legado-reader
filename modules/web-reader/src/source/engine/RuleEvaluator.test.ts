@@ -191,6 +191,75 @@ describe('异步脚本规则', () => {
       { compatibilityMode: 'legado' }, runner,
     )).resolves.toBe('LEGADO')
   })
+
+  it('按 Android getString 语义把多节点合并后传入链式 JavaScript', async () => {
+    const inputs: unknown[] = []
+    const runner: RuleScriptRunner = {
+      javascript: async (_code, _context, input) => {
+        inputs.push(input)
+        return String(input).replace(/[\[\]\s]/g, '').replace(/\d+\.?|\n/g, '')
+      },
+      webJavascript: async () => '',
+    }
+    const html = '<h5><a>1. 朱门<span>绣</span><span>户</span></a></h5>'
+    const rule = '//h5/a//text()@js:result.replace(/[\\[\\]\\s]/g, "").replace(/\\d+\\.?|\\n/g, "")'
+
+    await expect(evaluateRuleStringAsync(
+      html, rule, { compatibilityMode: 'legado' }, runner,
+    )).resolves.toBe('朱门绣户')
+    expect(inputs).toEqual(['1. 朱门\n绣\n户'])
+  })
+
+  it('按 Android getString 语义把单个 XPath 文本节点字符串化后传入 JavaScript', async () => {
+    const inputs: unknown[] = []
+    const runner: RuleScriptRunner = {
+      javascript: async (_code, _context, input) => {
+        inputs.push(input)
+        return String(input).toUpperCase()
+      },
+      webJavascript: async () => '',
+    }
+
+    await expect(evaluateRuleStringAsync(
+      '<h5><a>legado</a></h5>', '//h5/a/text()@js:result',
+      { compatibilityMode: 'legado' }, runner,
+    )).resolves.toBe('LEGADO')
+    expect(inputs).toEqual(['legado'])
+  })
+
+  it('getStringList 链式 JavaScript 继续接收多值数组', async () => {
+    const inputs: unknown[] = []
+    const runner: RuleScriptRunner = {
+      javascript: async (_code, _context, input) => {
+        inputs.push(input)
+        return input
+      },
+      webJavascript: async () => '',
+    }
+
+    await expect(evaluateRuleListAsync(
+      '<h5><a>甲<span>乙</span></a></h5>', '//h5/a//text()@js:result',
+      { compatibilityMode: 'legado' }, runner,
+    )).resolves.toEqual(['甲', '乙'])
+    expect(inputs).toEqual([['甲', '乙']])
+  })
+
+  it('standard 模式不启用 Android getString 合并语义', async () => {
+    const inputs: unknown[] = []
+    const runner: RuleScriptRunner = {
+      javascript: async (_code, _context, input) => {
+        inputs.push(input)
+        return input
+      },
+      webJavascript: async () => '',
+    }
+
+    await evaluateRuleStringAsync(
+      '<h5><a>甲<span>乙</span></a></h5>', '//h5/a//text()@js:result',
+      { compatibilityMode: 'standard' }, runner,
+    )
+    expect(inputs).toEqual([['甲', '乙']])
+  })
 })
 
 describe('G1: 复合逻辑运算符树', () => {
