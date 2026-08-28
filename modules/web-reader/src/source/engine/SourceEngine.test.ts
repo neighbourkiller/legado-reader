@@ -64,6 +64,28 @@ describe('AnalyzeUrl 兼容请求解析', () => {
     expect(parseSearchUrl('/health,{"method":"HEAD"}', '', source).method).toBe('HEAD')
   })
 
+  it('支持分页候选与请求级传输选项', () => {
+    const request = parseSearchUrl(
+      '/search/<first,second,last>,{"retry":4,"timeout":1200,"followRedirects":false,"enabledCookieJar":false,"dnsIp":"127.0.0.1","useWebView":true,"webViewDelayTime":80}',
+      '', source, 2,
+    )
+    expect(request).toMatchObject({
+      url: 'https://example.com/search/second', retry: 4, timeout: 1200,
+      followRedirects: false, useCookieJar: false, dnsIp: '127.0.0.1',
+      useWebView: true, webViewDelayTime: 80,
+    })
+    expect(parseSearchUrl('/<one,two>', '', source, 9).url).toBe('https://example.com/two')
+  })
+
+  it('兼容 Android UrlOption 的对象 body、webView 与 type', () => {
+    const request = parseSearchUrl('/api,{"method":"POST","body":{"key":"{{key}}"},"webView":"true","type":"image"}', '书', source)
+    expect(request).toMatchObject({ method: 'POST', body: '{"key":"%E4%B9%A6"}', useWebView: true, responseType: 'hex' })
+  })
+
+  it('对 Android serverID 返回明确错误', () => {
+    expect(() => parseSearchUrl('/api,{"serverID":1}', '', source)).toThrow('serverID')
+  })
+
   it('parseSearchUrlAsync 支持占位符与快速解析', async () => {
     const request = await parseSearchUrlAsync('/api/search?k={{key}}&p={{page}}', '测试', source, 2)
     expect(request.url).toBe('https://example.com/api/search?k=%E6%B5%8B%E8%AF%95&p=2')
@@ -208,6 +230,23 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     expect(exploreResults).toHaveLength(1)
     expect(exploreResults[0].name).toBe('宿命之环')
     expect(exploreResults[0].bookUrl).toBe('https://example.com/book/200')
+  })
+
+  it('按 Android getCheckKeyword 语义使用安全的校验关键字', async () => {
+    const engine = new SourceEngine()
+    await engine.search({ ...source, ruleSearch: { ...source.ruleSearch!, checkKeyWord: '大奉' } }, '不会发送的原词')
+    expect(mockTransport.request).toHaveBeenCalledWith(expect.objectContaining({ body: 'q=%E5%A4%A7%E5%A5%89&page=1' }))
+  })
+
+  it('把详情阶段变量写入书籍实体而不是污染书源变量', async () => {
+    const engine = new SourceEngine()
+    const book = { bookUrl: 'https://example.com/book/100', variableMap: { inherited: 'book' } }
+    await engine.getBookInfo({
+      ...source,
+      variableMap: { sourceOnly: 'source' },
+      ruleBookInfo: { ...source.ruleBookInfo!, name: '@put:{"saved":".author@text"}h1@text' },
+    }, book)
+    expect(book.variableMap).toEqual({ inherited: 'book', saved: '卖报小郎君' })
   })
 
   it('正文遇到循环自引用 URL 时能自动终止', async () => {

@@ -9,6 +9,7 @@ export interface BookChapter {
   isPay?: boolean
   updateTime?: string
   contentType?: 'text' | 'images'
+  variableMap?: Record<string, string>
 }
 
 export interface BookMeta {
@@ -35,6 +36,8 @@ export interface BookMeta {
   kind?: string
   /** 是否已加入书架（对于在线书籍，仅浏览或试读未加入书架时为 false） */
   inShelf?: boolean
+  /** Android Book.variableMap 兼容字段，随 meta_json/备份自然持久化。 */
+  variableMap?: Record<string, string>
 }
 
 export interface ParsedBook {

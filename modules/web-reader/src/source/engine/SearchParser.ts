@@ -6,12 +6,14 @@ export async function parseSearchResults(
   html: string,
   rule: SearchRule,
   baseUrl: string,
-  source?: BookSource
+  source?: BookSource,
+  options?: Partial<RuleExecutionContext>,
 ): Promise<SearchResult[]> {
   if (!rule.bookList) return []
 
   const baseContext: Partial<RuleExecutionContext> = {
-    compatibilityMode: source?.webReaderCompatibilityMode || 'legado',
+    ...options,
+    compatibilityMode: options?.compatibilityMode || source?.webReaderCompatibilityMode || 'legado',
     stage: 'search', baseUrl, source: source as unknown as Record<string, unknown>,
   }
   const field = (name: string) => ({ ...baseContext, field: `ruleSearch.${name}` })
@@ -57,6 +59,8 @@ export async function parseSearchResults(
       // 6. 分类与最新章节
       const kind = await parseStringAsync(item, rule.kind || '', field('kind'))
       const lastChapter = await parseStringAsync(item, rule.lastChapter || '', field('lastChapter'))
+      const updateTime = await parseStringAsync(item, rule.updateTime || '', field('updateTime'))
+      const wordCount = await parseStringAsync(item, rule.wordCount || '', field('wordCount'))
 
       return {
         name,
@@ -66,8 +70,11 @@ export async function parseSearchResults(
         intro,
         kind,
         lastChapter,
+        updateTime,
+        wordCount,
         sourceName: source?.bookSourceName || '',
         sourceUrl: source?.bookSourceUrl || baseUrl,
+        variableMap: baseContext.variables ? Object.fromEntries(baseContext.variables) : undefined,
       }
     }))
   return results.filter(book => Boolean(book.name && book.name.trim()))

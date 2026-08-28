@@ -30,7 +30,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            app.manage(AppState::new());
+            let source_cache_path = app.path().app_data_dir().ok().map(|directory| {
+                let _ = std::fs::create_dir_all(&directory);
+                directory.join("source_script_cache.json")
+            });
+            app.manage(AppState::new(source_cache_path));
 
             let storage_result: Result<std::sync::Arc<storage::StorageDb>, String> = (|| {
                 let app_data_dir = app

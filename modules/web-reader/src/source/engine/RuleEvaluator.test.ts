@@ -69,6 +69,7 @@ describe('Legado DOM/JSON 执行器', () => {
 
   it('支持显式正则提取', () => {
     expect(evaluateRuleString('a=12;b=34', '@Regex:=([0-9]+)')).toBe('12\n34')
+    expect(evaluateRuleString('name-42', '@Regex:(\\w+)-(\\d+)@$2')).toBe('42')
   })
 
   it('支持 @put、@get 与基础上下文模板', () => {

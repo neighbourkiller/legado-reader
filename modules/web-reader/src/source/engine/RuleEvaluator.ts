@@ -22,6 +22,11 @@ import {
 } from './RuleTypes'
 
 type RuleNode = Node | Record<string, unknown> | string | number | boolean | null
+type RegexGroupNode = { __regexGroups: string[] }
+
+function isRegexGroupNode(value: unknown): value is RegexGroupNode {
+  return Boolean(value && typeof value === 'object' && Array.isArray((value as RegexGroupNode).__regexGroups))
+}
 
 function mergedContext(context?: Partial<RuleExecutionContext>): RuleExecutionContext {
   return { ...DEFAULT_RULE_CONTEXT, variables: context?.variables || new Map(), ...context }
@@ -148,17 +153,29 @@ function queryLegacyStep(
 function extractElements(elements: Element[], directive: string): string[] {
   const lower = directive.toLowerCase().trim()
   if (lower === 'text') return elements.map(element => normalizeText(element.textContent)).filter(Boolean)
-  if (lower === 'textnodes' || lower === 'owntext') {
+  if (lower === 'textnodes') {
+    return elements.map(element => Array.from(element.childNodes)
+      .filter(node => node.nodeType === Node.TEXT_NODE)
+      .map(node => node.textContent?.trim() || '')
+      .filter(Boolean)
+      .join('\n'))
+      .filter(Boolean)
+  }
+  if (lower === 'owntext') {
     return elements.map(element => ownText(element)).filter(Boolean)
   }
   if (lower === 'html') {
-    return elements.map(element => {
+    const html = elements.map(element => {
       const clone = element.cloneNode(true) as Element
       clone.querySelectorAll('script,style').forEach(node => node.remove())
       return clone.outerHTML
-    }).filter(Boolean)
+    }).filter(Boolean).join('\n')
+    return html ? [html] : []
   }
-  if (lower === 'all') return elements.map(element => element.outerHTML).filter(Boolean)
+  if (lower === 'all') {
+    const html = elements.map(element => element.outerHTML).filter(Boolean).join('\n')
+    return html ? [html] : []
+  }
   const seen = new Set<string>()
   return elements.map(element => element.getAttribute(directive) || '')
     .filter(value => value && !seen.has(value) && seen.add(value))
@@ -239,8 +256,8 @@ function evaluateJsonNodes(value: unknown, expression: string): RuleNode[] {
 function evaluateRegexNodes(value: unknown, expression: string): RuleNode[] {
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   const regex = new RegExp(expression, 'g')
-  const result: string[] = []
-  for (const match of text.matchAll(regex)) result.push(match[1] ?? match[0])
+  const result: RegexGroupNode[] = []
+  for (const match of text.matchAll(regex)) result.push({ __regexGroups: Array.from(match, item => item ?? '') })
   return result
 }
 
@@ -265,7 +282,7 @@ function applyReplacement(values: RuleNode[], segment: RuleSegment, context: Rul
     const text = typeof value === 'string' ? value : nodeToString(value)
     if (!segment.replaceFirst) return text.replace(regex, replacement)
     const match = regex.exec(text)
-    return match ? text.slice(0, match.index) + match[0].replace(regex, replacement) + text.slice(match.index + match[0].length) : text
+    return match ? match[0].replace(regex, replacement) : ''
   })
 }
 
@@ -288,13 +305,17 @@ function evaluateSingleStep(
     }
 
     const expression = step.expression
+      .replace(/\$(\d{1,2})/g, (token, index: string) => isRegexGroupNode(input)
+        ? input.__regexGroups[Number(index)] ?? '' : token)
       .replace(/@get:\{([^}]+)\}/gi, (_, key: string) => context.variables?.get(key) || '')
       .replace(/\{\{\s*(key|page|baseUrl|redirectUrl|result)\s*\}\}/g, (_, key: string) =>
         key === 'result' ? nodeToString(context.result as RuleNode) : String(context[key as keyof RuleExecutionContext] ?? ''))
 
     let values: RuleNode[] = []
 
-    if (step.directive) {
+    if (isRegexGroupNode(input) && /^\$\d{1,2}$/.test(step.expression.trim())) {
+      values = [expression]
+    } else if (step.directive) {
       if (input instanceof Element) {
         values = extractElements([input], step.directive)
       } else if (input instanceof Document) {
@@ -659,6 +680,7 @@ export function nodeToString(value: RuleNode): string {
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   if (value instanceof Attr) return value.value.trim()
   if (value instanceof Node) return normalizeText(value.textContent)
+  if (isRegexGroupNode(value)) return (value.__regexGroups[1] ?? value.__regexGroups[0] ?? '').trim()
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }

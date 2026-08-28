@@ -1,16 +1,31 @@
-import type { SourceRequest, SourceResponse, SourceTransport } from './SourceTransport'
+import { SourceTransportError, type SourceRequest, type SourceResponse, type SourceTransport } from './SourceTransport'
+
+function transportError(cause: unknown): SourceTransportError {
+  const message = String(cause)
+  const kind = message.match(/kind=([a-z_]+)/i)?.[1]?.toUpperCase()
+  const code = /timeout|timed out|abort/i.test(message) || kind === 'TIMEOUT' ? 'REQUEST_TIMEOUT'
+    : kind === 'DNS' || /dns|lookup|name resolution/i.test(message) ? 'DNS_RESOLUTION_FAILED'
+      : kind === 'TLS' ? 'TLS_FAILED'
+        : kind === 'CONNECT' ? 'CONNECTION_FAILED' : 'REQUEST_FAILED'
+  return new SourceTransportError(code, message)
+}
 
 export class TauriTransport implements SourceTransport {
   async request(req: SourceRequest): Promise<SourceResponse> {
     const { invoke } = await import('@tauri-apps/api/core')
 
-    const res = await invoke<{
-      status: number
-      finalUrl: string
-      headers: Record<string, string>
-      body: number[]
-      charset?: string
-    }>('source_request', { request: req })
+    let res
+    try {
+      res = await invoke<{
+        status: number
+        finalUrl: string
+        headers: Record<string, string>
+        body: number[]
+        charset?: string
+      }>('source_request', { request: req })
+    } catch (cause) {
+      throw transportError(cause)
+    }
 
     return {
       ...res,
@@ -22,20 +37,29 @@ export class TauriTransport implements SourceTransport {
   async webviewFetch(req: SourceRequest): Promise<SourceResponse> {
     const { invoke } = await import('@tauri-apps/api/core')
 
-    const res = await invoke<{
-      status: number
-      finalUrl: string
-      headers: Record<string, string>
-      body: number[]
-      charset?: string
-    }>('webview_fetch', {
-      sourceId: req.sourceId,
-      url: req.url,
-      method: req.method,
-      headers: req.headers,
-      body: req.body,
-      timeoutMs: req.timeout,
-    })
+    let res
+    try {
+      res = await invoke<{
+        status: number
+        finalUrl: string
+        headers: Record<string, string>
+        body: number[]
+        charset?: string
+      }>('webview_fetch', {
+        sourceId: req.sourceId,
+        url: req.url,
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
+        timeoutMs: req.timeout,
+        delayMs: req.webViewDelayTime,
+        followRedirects: req.followRedirects,
+        useCookieJar: req.useCookieJar,
+        responseType: req.responseType,
+      })
+    } catch (cause) {
+      throw transportError(cause)
+    }
 
     return {
       ...res,

@@ -9,6 +9,7 @@ export interface TocItem {
   isVip?: boolean
   isPay?: boolean
   updateTime?: string
+  variableMap?: Record<string, string>
 }
 
 export function isLegadoTrue(val: string | null | undefined, nullIsTrue = false): boolean {
@@ -60,7 +61,12 @@ export async function parseToc(
         isVip: isLegadoTrue(isVipStr),
         isPay: isLegadoTrue(isPayStr),
         updateTime: await parseStringAsync(item, rule.updateTime || '', field('updateTime')) || undefined,
+        variableMap: baseVariableMap(options),
       }
     }))
   return result.filter(item => Boolean(item.name && item.url))
+}
+
+function baseVariableMap(options?: Partial<RuleExecutionContext>): Record<string, string> | undefined {
+  return options?.variables ? Object.fromEntries(options.variables) : undefined
 }

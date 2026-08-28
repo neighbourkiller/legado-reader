@@ -6,6 +6,16 @@ export interface SourceRequest {
   body?: string
   charset?: string
   timeout?: number
+  retry?: number
+  followRedirects?: boolean
+  useCookieJar?: boolean
+  useWebView?: boolean
+  webViewDelayTime?: number
+  dnsIp?: string
+  origin?: string
+  responseType?: 'text' | 'binary' | 'hex'
+  webJs?: string
+  bodyJs?: string
 }
 
 export interface SourceResponse {
@@ -16,6 +26,13 @@ export interface SourceResponse {
   charset?: string
   /** 请求通道标识 */
   channel?: 'reqwest' | 'webview'
+}
+
+export class SourceTransportError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message)
+    this.name = 'SourceTransportError'
+  }
 }
 
 /** Cloudflare 诊断信息 */

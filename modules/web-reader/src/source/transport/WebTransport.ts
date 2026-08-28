@@ -10,7 +10,9 @@ export class WebTransport implements SourceTransport {
         method: req.method,
         headers: req.headers,
         body: req.method === 'POST' ? req.body : undefined,
-        signal: controller.signal
+        signal: controller.signal,
+        credentials: req.useCookieJar === false ? 'omit' : 'include',
+        redirect: req.followRedirects === false ? 'manual' : 'follow',
       })
 
       clearTimeout(timeoutId)

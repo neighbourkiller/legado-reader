@@ -17,6 +17,7 @@ function bindings(context: RuleExecutionContext, result: unknown): Record<string
     result,
     baseUrl: context.baseUrl || '',
     redirectUrl: context.redirectUrl || '',
+    nextChapterUrl: context.nextChapterUrl || '',
     variables: Object.fromEntries(context.variables || []),
   }
 }

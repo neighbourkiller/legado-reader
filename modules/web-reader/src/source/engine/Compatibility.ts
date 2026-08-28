@@ -6,6 +6,7 @@ import type {
 
 const UNSUPPORTED_API_PATTERNS: Array<[RegExp, string, string]> = [
   [/\bPackages\b/, 'UNSUPPORTED_ANDROID_API', '使用了 Packages/任意 Java 类'],
+  [/\bjava\.(?:lang|util|security|io|net)\b/, 'UNSUPPORTED_JAVA_PACKAGE', '使用了 Java 包或类访问'],
   [/\bjava\.(?:io|nio\.file)\b/, 'UNSUPPORTED_ANDROID_FILESYSTEM', '使用了 Android/Java 文件系统'],
   [/\b(?:startActivity|context\.|activity\.|toast\s*\()/i, 'UNSUPPORTED_ANDROID_UI', '使用了 Android 系统界面能力'],
   [/\b(?:payAction|purchase|buyChapter)\b/i, 'UNSUPPORTED_PAY_ACTION', '使用了付费动作'],
@@ -24,7 +25,14 @@ function collectStrings(value: unknown, path: string, target: Array<{ path: stri
 
 export function inspectSourceCompatibility(source: BookSource): SourceCompatibilityReport {
   const issues: CompatibilityIssue[] = []
-  if (![0, 2].includes(source.bookSourceType)) {
+  const capabilities = new Set<string>()
+  const sourceType = source.bookSourceType
+  if (typeof sourceType !== 'number' || !Number.isInteger(sourceType)) {
+    issues.push({
+      status: 'unsupported', code: 'INVALID_SOURCE_TYPE', path: 'bookSourceType',
+      message: `bookSourceType 必须是数字，当前为 ${JSON.stringify(source.bookSourceType)}`,
+    })
+  } else if (![0, 2].includes(sourceType)) {
     issues.push({
       status: 'unsupported',
       code: 'UNSUPPORTED_SOURCE_TYPE',
@@ -36,6 +44,12 @@ export function inspectSourceCompatibility(source: BookSource): SourceCompatibil
   const strings: Array<{ path: string; value: string }> = []
   collectStrings(source, '', strings)
   for (const entry of strings) {
+    if (/@?xpath:|(?:^|\s)\/\//i.test(entry.value)) capabilities.add('xpath')
+    if (/@?json:|\$[.[]/i.test(entry.value)) capabilities.add('jsonpath')
+    if (/@?regex:|##/.test(entry.value)) capabilities.add('regex')
+    if (/@js:|<js>|\{\{/.test(entry.value)) capabilities.add('javascript')
+    if (/@put:|@get:\{/.test(entry.value)) capabilities.add('variables')
+    if (/<webjs>|@webjs:/i.test(entry.value)) capabilities.add('webview-script')
     for (const [pattern, code, message] of UNSUPPORTED_API_PATTERNS) {
       if (pattern.test(entry.value)) {
         issues.push({ status: 'unsupported', code, path: entry.path, message })
@@ -50,6 +64,27 @@ export function inspectSourceCompatibility(source: BookSource): SourceCompatibil
       })
     }
   }
+  if (source.mainJs?.trim()) capabilities.add('main-js')
+  if (source.loginUrl?.trim()) capabilities.add('manual-login')
+  if (source.ruleContent?.imageDecode?.trim()) capabilities.add('image-decode')
+  if (source.loginUi?.trim()) {
+    issues.push({
+      status: 'partial', code: 'UNSUPPORTED_LOGIN_UI', path: 'loginUi',
+      message: '支持 loginUrl 手动 WebView 登录，但暂不执行 Android loginUi 表单脚本',
+    })
+  }
+  if (source.ruleContent?.callBackJs?.trim()) {
+    issues.push({
+      status: 'unsupported', code: 'UNSUPPORTED_CALLBACK_JS', path: 'ruleContent.callBackJs',
+      message: 'Tauri 阅读器暂不执行 Android 阅读事件回调脚本',
+    })
+  }
+  if (strings.some(entry => /["']serverID["']\s*:/.test(entry.value))) {
+    issues.push({
+      status: 'unsupported', code: 'UNSUPPORTED_SERVER_ID', path: 'request.serverID',
+      message: 'serverID 依赖 Android 应用内服务器配置',
+    })
+  }
 
   const unique = issues.filter((issue, index) =>
     issues.findIndex(other => other.code === issue.code && other.path === issue.path) === index)
@@ -62,5 +97,9 @@ export function inspectSourceCompatibility(source: BookSource): SourceCompatibil
     issues: unique,
     checkedAt: Date.now(),
     mode: source.webReaderCompatibilityMode || 'legado',
+    verificationStatus: 'untested',
+    engineVersion: 2,
+    capabilities: [...capabilities].sort(),
+    stages: {},
   }
 }

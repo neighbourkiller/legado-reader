@@ -74,6 +74,8 @@ export interface BookSource {
   coverDecodeJs?: string
   bookSourceComment?: string
   variableComment?: string
+  /** 与 Android BaseSource.put/get 对齐的持久化变量。 */
+  variableMap?: Record<string, string>
   exploreUrl?: string
   ruleExplore?: Record<string, string | undefined>
   header?: string
@@ -129,6 +131,13 @@ export interface SourceCompatibilityReport {
   issues: CompatibilityIssue[]
   checkedAt: number
   mode: 'legado' | 'standard'
+  verificationStatus?: 'untested' | 'fixture-passed' | 'live-passed'
+  engineVersion?: number
+  capabilities?: string[]
+  stages?: Partial<Record<'search' | 'explore' | 'bookInfo' | 'toc' | 'content' | 'login', {
+    status: 'untested' | 'passed' | 'failed' | 'unsupported'
+    code?: string
+  }>>
 }
 
 export interface SearchResult {
@@ -139,6 +148,9 @@ export interface SearchResult {
   intro?: string
   kind?: string
   lastChapter?: string
+  updateTime?: string
+  wordCount?: string
+  variableMap?: Record<string, string>
   sourceName?: string
   sourceUrl?: string
 }

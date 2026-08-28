@@ -56,10 +56,11 @@ export interface CompiledRule {
 
 export interface RuleExecutionContext {
   compatibilityMode: CompatibilityMode
-  stage?: 'search' | 'explore' | 'bookInfo' | 'toc' | 'content' | 'unknown'
+  stage?: 'search' | 'explore' | 'bookInfo' | 'toc' | 'content' | 'login' | 'unknown'
   field?: string
   baseUrl?: string
   redirectUrl?: string
+  nextChapterUrl?: string
   source?: Record<string, unknown>
   book?: Record<string, unknown>
   chapter?: Record<string, unknown>
@@ -67,6 +68,10 @@ export interface RuleExecutionContext {
   page?: number
   result?: unknown
   variables?: Map<string, string>
+  /** java.put/@put 的 Android 兼容写入目标（chapter > book > source）。 */
+  variableTarget?: Record<string, unknown>
+  variableSnapshot?: string
+  variableInitial?: Record<string, string>
 }
 
 export type RuleErrorCode =

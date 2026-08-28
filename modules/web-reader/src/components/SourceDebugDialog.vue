@@ -304,7 +304,7 @@ const startDebug = async () => {
   appendLog('INIT', `规则编译模式: ${props.source.webReaderCompatibilityMode || 'legado'}`)
   appendLog('INIT', `WebView 通道: ${props.source.useWebView ? '已启用' : '未启用'}`)
   const compatibility = inspectSourceCompatibility(props.source)
-  appendLog('COMPAT', `兼容状态: ${compatibility.status}，发现 ${compatibility.issues.length} 个问题`,
+  appendLog('COMPAT', `兼容状态: ${compatibility.status}，验证=${compatibility.verificationStatus}，引擎=v${compatibility.engineVersion}，能力=${compatibility.capabilities?.join(',') || 'none'}，发现 ${compatibility.issues.length} 个问题`,
     compatibility.status === 'supported' ? 'success' : 'warn')
   compatibility.issues.forEach(issue => appendLog('COMPAT', `[${issue.code}] ${issue.path}: ${issue.message}`, 'warn'))
 

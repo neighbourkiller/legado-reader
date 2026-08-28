@@ -90,5 +90,21 @@
     "androidExpected": ["全职高手"],
     "standardExpected": ["全职高手"],
     "mode": "string"
+  },
+  {
+    "id": "direct-text-nodes-newline",
+    "html": "<div class=\"content\">前文 <span>内嵌节点</span> 后文</div>",
+    "rule": "class.content@textNodes",
+    "androidExpected": ["前文\n后文"],
+    "standardExpected": ["前文\n后文"],
+    "mode": "string"
+  },
+  {
+    "id": "own-text-excludes-descendants",
+    "html": "<div class=\"content\">前文 <span>内嵌节点</span> 后文</div>",
+    "rule": "class.content@ownText",
+    "androidExpected": ["前文 后文"],
+    "standardExpected": ["前文 后文"],
+    "mode": "string"
   }
 ]

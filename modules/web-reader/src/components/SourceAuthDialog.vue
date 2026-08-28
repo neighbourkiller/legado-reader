@@ -188,9 +188,10 @@ const handleOpenBrowser = async () => {
   try {
     const transport = await getTransport()
     if (transport instanceof TauriTransport) {
+      const loginUrl = new URL(props.source.loginUrl || props.source.bookSourceUrl, props.source.bookSourceUrl).href
       await transport.openAuthWindow(
         props.source.bookSourceUrl,
-        props.source.bookSourceUrl,
+        loginUrl,
         `书源人机验证 - ${props.source.bookSourceName}`
       )
       ElMessage.success('已打开内置验证窗口，请在窗口中完成验证！')
@@ -235,6 +236,13 @@ const handleAutoExtract = async () => {
           await transport.closeAuthWindow(props.source.bookSourceUrl)
         }
         ElMessage.success(`成功提取 ${result.cookieCount} 个 Cookie${result.hasCfClearance ? '（含 cf_clearance）' : ''}`)
+        if (props.source.loginCheckJs?.trim()) {
+          const login = await new SourceEngine().checkLogin(props.source)
+          testResult.value = {
+            success: login.loggedIn,
+            message: login.loggedIn ? 'Cookie 已同步，loginCheckJs 验证登录成功' : 'Cookie 已同步，但 loginCheckJs 判断尚未登录',
+          }
+        }
       } else {
         ElMessage.warning('未提取到任何 Cookie，请确保已在浏览器窗口中完成验证')
       }

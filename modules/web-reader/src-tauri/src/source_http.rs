@@ -6,8 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::str::FromStr;
+use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -21,6 +24,9 @@ pub struct SourceRequest {
     pub body: Option<String>,
     pub charset: Option<String>,
     pub timeout: Option<u64>,
+    pub follow_redirects: Option<bool>,
+    pub use_cookie_jar: Option<bool>,
+    pub dns_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,12 +41,22 @@ pub struct SourceResponse {
 
 pub struct AppState {
     pub cookie_manager: Arc<Mutex<CookieManager>>,
+    pub source_cache: Arc<StdMutex<HashMap<String, String>>>,
+    pub source_cache_path: Arc<Option<PathBuf>>,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(source_cache_path: Option<PathBuf>) -> Self {
+        let source_cache = source_cache_path.as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|json| serde_json::from_str::<HashMap<String, String>>(&json).ok())
+            .unwrap_or_default();
         Self {
-            cookie_manager: Arc::new(Mutex::new(CookieManager::new())),
+            cookie_manager: Arc::new(Mutex::new(CookieManager::new(
+                source_cache_path.as_ref().and_then(|path| path.parent()).map(|directory| directory.join("source_cookies.json")),
+            ))),
+            source_cache: Arc::new(StdMutex::new(source_cache)),
+            source_cache_path: Arc::new(source_cache_path),
         }
     }
 }
@@ -130,19 +146,33 @@ pub async fn source_request(
     // 1. URL Safety Check
     validate_url(&request.url)?;
 
-    // Extract User-Agent from request.headers if present
-    let custom_ua = request.headers.as_ref().and_then(|h| {
-        h.get("User-Agent")
-            .or_else(|| h.get("user-agent"))
-            .or_else(|| h.get("User-agent"))
-            .cloned()
-    });
-
-    // 2. Get or create HTTP Client for the source
-    let client = {
+    // 2. Build a request-scoped client so redirect, Cookie and DNS overrides are honored.
+    let cookie_jar = {
         let mut manager = state.cookie_manager.lock().await;
-        manager.get_or_create_client(&request.source_id, custom_ua.as_deref())?
+        manager.get_or_create_jar(&request.source_id)
     };
+    let mut client_builder = reqwest::Client::builder()
+        .gzip(true).brotli(true).deflate(true)
+        .redirect(if request.follow_redirects == Some(false) {
+            reqwest::redirect::Policy::none()
+        } else {
+            reqwest::redirect::Policy::limited(10)
+        });
+    if request.use_cookie_jar != Some(false) {
+        client_builder = client_builder.cookie_provider(cookie_jar);
+    }
+    if let Some(dns_ip) = request.dns_ip.as_deref() {
+        let parsed_url = url::Url::parse(&request.url).map_err(|e| format!("Invalid URL: {e}"))?;
+        let host = parsed_url.host_str().ok_or_else(|| "URL has no host".to_string())?;
+        let port = parsed_url.port_or_known_default().unwrap_or(80);
+        let addresses = dns_ip.split(',').map(str::trim).filter(|value| !value.is_empty())
+            .map(|value| value.trim_matches(|character| character == '[' || character == ']')
+                .parse::<IpAddr>().map(|ip| SocketAddr::new(ip, port)).map_err(|e| format!("Invalid dnsIp: {e}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        if addresses.is_empty() { return Err("dnsIp requires at least one IP address".to_string()); }
+        client_builder = client_builder.resolve_to_addrs(host, &addresses);
+    }
+    let client = client_builder.build().map_err(|e| format!("Failed to build client: {e}"))?;
 
     // 3. Build reqwest Request
     let method = match request.method.to_uppercase().as_str() {
@@ -167,9 +197,9 @@ pub async fn source_request(
         req_builder = req_builder.body(body);
     }
 
-    // 4. Set Timeout (Default 30s)
-    let timeout_secs = request.timeout.unwrap_or(30);
-    req_builder = req_builder.timeout(Duration::from_secs(timeout_secs));
+    // 4. 前端统一以毫秒传递超时。
+    let timeout_ms = request.timeout.unwrap_or(30_000).clamp(1, 300_000);
+    req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
 
     // 5. Send Request
     let response = req_builder
@@ -180,6 +210,11 @@ pub async fn source_request(
     // 6. Extract response info
     let status = response.status().as_u16();
     let final_url = response.url().to_string();
+
+    if request.use_cookie_jar != Some(false) {
+        let mut manager = state.cookie_manager.lock().await;
+        manager.persist_current_cookies(&request.source_id, &final_url)?;
+    }
 
     let mut resp_headers = HashMap::new();
     for (name, value) in response.headers() {
@@ -221,19 +256,31 @@ pub async fn source_request(
 
 #[tauri::command]
 pub async fn set_source_cookies(
+    app: tauri::AppHandle,
     source_id: String,
     url: String,
     cookie_str: String,
     user_agent: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut manager = state.cookie_manager.lock().await;
-    manager.set_cookies(&source_id, &url, &cookie_str)?;
-    if let Some(ua) = user_agent {
-        if !ua.trim().is_empty() {
-            manager.set_user_agent(&source_id, &ua);
+    {
+        let mut manager = state.cookie_manager.lock().await;
+        manager.set_cookies(&source_id, &url, &cookie_str)?;
+    }
+    if !cookie_str.trim().is_empty() {
+        let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+        let host = parsed_url.host_str().ok_or_else(|| "URL has no host".to_string())?.to_string();
+        let webview = ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
+        for item in cookie_str.split(';') {
+            if let Some((name, value)) = item.trim().split_once('=') {
+                let cookie = tauri::webview::Cookie::build((name.trim().to_string(), value.trim().to_string()))
+                    .domain(host.clone()).path("/").build();
+                webview.set_cookie(cookie).map_err(|e| format!("Failed to set WebView cookie: {e}"))?;
+            }
         }
     }
+    // UA 由书源 header 持久化并在每次请求中传入；保留参数以兼容现有 IPC。
+    let _ = user_agent;
     Ok(())
 }
 
@@ -335,6 +382,8 @@ struct WebviewFetchResult {
     final_url: Option<String>,
     headers: Option<HashMap<String, String>>,
     body: Option<String>,
+    #[serde(rename = "bodyBase64")]
+    body_base64: Option<String>,
     error: Option<String>,
 }
 
@@ -585,6 +634,10 @@ pub async fn webview_fetch(
     headers: Option<HashMap<String, String>>,
     body: Option<String>,
     timeout_ms: Option<u64>,
+    delay_ms: Option<u64>,
+    follow_redirects: Option<bool>,
+    use_cookie_jar: Option<bool>,
+    response_type: Option<String>,
 ) -> Result<SourceResponse, String> {
     validate_url(&url)?;
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
@@ -592,6 +645,9 @@ pub async fn webview_fetch(
     let initialization_timeout = Duration::from_millis(timeout.clamp(1_000, 15_000));
     let webview =
         ensure_source_webview(&app, &source_id, &parsed_url, initialization_timeout).await?;
+    if let Some(delay) = delay_ms.filter(|value| *value > 0) {
+        tokio::time::sleep(Duration::from_millis(delay.min(60_000))).await;
+    }
 
     // WebKit 的网站数据目录会跨应用重启保存 Cookie。隐藏 WebView 加载完成后，
     // 将当前可用 Cookie 同步到 reqwest CookieJar，供非 WebView回退路径复用。
@@ -633,6 +689,9 @@ pub async fn webview_fetch(
         .map_err(|e| format!("Failed to serialize WebView request headers: {e}"))?;
     let body_json = serde_json::to_string(&body)
         .map_err(|e| format!("Failed to serialize WebView request body: {e}"))?;
+    let redirect_mode = if follow_redirects == Some(false) { "manual" } else { "follow" };
+    let credentials_mode = if use_cookie_jar == Some(false) { "omit" } else { "include" };
+    let binary_response = matches!(response_type.as_deref(), Some("binary" | "hex"));
 
     let js_code = format!(
         r#"(() => {{
@@ -651,10 +710,22 @@ pub async fn webview_fetch(
         method: {method},
         headers: {headers},
         body: requestBody === null ? undefined : requestBody,
-        credentials: 'include',
+        credentials: '{credentials}',
+        redirect: '{redirect}',
         signal: controller.signal
       }});
-      const text = await resp.text();
+      let text = null;
+      let bodyBase64 = null;
+      if ({binary}) {{
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        let binaryText = '';
+        for (let offset = 0; offset < bytes.length; offset += 32768) {{
+          binaryText += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+        }}
+        bodyBase64 = btoa(binaryText);
+      }} else {{
+        text = await resp.text();
+      }}
       const hdrs = {{}};
       resp.headers.forEach((value, name) => {{ hdrs[name] = value; }});
       store[requestId] = JSON.stringify({{
@@ -662,7 +733,8 @@ pub async fn webview_fetch(
         status: resp.status,
         finalUrl: resp.url,
         headers: hdrs,
-        body: text
+        body: text,
+        bodyBase64
       }});
     }} catch (error) {{
       store[requestId] = JSON.stringify({{
@@ -682,6 +754,9 @@ pub async fn webview_fetch(
         method = method_json,
         headers = headers_json,
         body = body_json,
+        credentials = credentials_mode,
+        redirect = redirect_mode,
+        binary = binary_response,
     );
 
     webview
@@ -743,9 +818,25 @@ pub async fn webview_fetch(
             .unwrap_or_else(|| "Unknown fetch error".to_string()));
     }
 
-    let response_body = fetch_result.body.unwrap_or_default().into_bytes();
+    let response_body = if let Some(encoded) = fetch_result.body_base64 {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(encoded)
+            .map_err(|e| format!("Failed to decode WebView binary response: {e}"))?
+    } else {
+        fetch_result.body.unwrap_or_default().into_bytes()
+    };
     if response_body.len() > 10 * 1024 * 1024 {
         return Err("Response body too large (max 10MB)".to_string());
+    }
+
+    let updated_cookies = webview.cookies_for_url(parsed_url)
+        .map_err(|e| format!("Failed to read WebView response cookies: {e}"))?;
+    if !updated_cookies.is_empty() {
+        let cookie_header = updated_cookies.iter()
+            .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+            .collect::<Vec<_>>().join("; ");
+        let mut manager = state.cookie_manager.lock().await;
+        manager.set_cookies(&source_id, &url, &cookie_header)?;
     }
 
     Ok(SourceResponse {

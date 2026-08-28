@@ -8,6 +8,13 @@ export interface BookInfo {
   coverUrl: string
   intro: string
   tocUrl: string
+  kind?: string
+  lastChapter?: string
+  updateTime?: string
+  wordCount?: string
+  canReName?: boolean
+  downloadUrls?: string[]
+  variableMap?: Record<string, string>
 }
 
 export async function parseBookInfo(
@@ -70,5 +77,17 @@ export async function parseBookInfo(
     coverUrl: finalCoverUrl,
     intro,
     tocUrl: finalTocUrl,
+    kind: await parseStringAsync(context, rule.kind || '', field('kind')) || undefined,
+    lastChapter: await parseStringAsync(context, rule.lastChapter || '', field('lastChapter')) || undefined,
+    updateTime: await parseStringAsync(context, rule.updateTime || '', field('updateTime')) || undefined,
+    wordCount: await parseStringAsync(context, rule.wordCount || '', field('wordCount')) || undefined,
+    canReName: rule.canReName?.trim()
+      ? !/^(?:false|no|not|0|0\.0)$/i.test((await parseStringAsync(context, rule.canReName, field('canReName'))).trim())
+      : undefined,
+    downloadUrls: rule.downloadUrls?.trim()
+      ? (await parseStringAsync(context, rule.downloadUrls, field('downloadUrls')))
+        .split(/[\r\n,]+/).map(item => resolveAbsoluteUrl(item.trim(), baseUrl)).filter(Boolean)
+      : undefined,
+    variableMap: options?.variables ? Object.fromEntries(options.variables) : undefined,
   }
 }

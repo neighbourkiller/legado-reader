@@ -1,14 +1,20 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
+use aes::{Aes128, Aes192, Aes256};
+use des::{Des, TdesEde3};
+use cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit, block_padding::{NoPadding, Pkcs7}};
 use reqwest::blocking::Client;
 use reqwest::cookie::{CookieStore, Jar};
 use rquickjs::{Context, Function, Runtime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
+use scraper::{Html, Selector};
+use regex::Regex;
 
 use crate::source_policy::validate_url;
 
@@ -48,6 +54,110 @@ fn script_error(code: &'static str, message: impl Into<String>) -> SourceScriptE
     SourceScriptError { code, stage: "javascript", message: message.into() }
 }
 
+fn symmetric_crypto(action: &str, transformation: &str, key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+    let upper = transformation.to_uppercase();
+    let cbc_mode = upper.contains("/CBC/");
+    let no_padding = upper.ends_with("/NOPADDING");
+    macro_rules! apply_cipher {
+        ($cipher:ty) => {{
+            if cbc_mode {
+                if action == "encrypt" {
+                    let cipher = cbc::Encryptor::<$cipher>::new_from_slices(key, iv).map_err(|e| e.to_string())?;
+                    if no_padding { cipher.encrypt_padded_vec_mut::<NoPadding>(data) } else { cipher.encrypt_padded_vec_mut::<Pkcs7>(data) }
+                } else {
+                    let cipher = cbc::Decryptor::<$cipher>::new_from_slices(key, iv).map_err(|e| e.to_string())?;
+                    if no_padding { cipher.decrypt_padded_vec_mut::<NoPadding>(data).map_err(|e| e.to_string())? }
+                    else { cipher.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(|e| e.to_string())? }
+                }
+            } else if action == "encrypt" {
+                let cipher = ecb::Encryptor::<$cipher>::new_from_slice(key).map_err(|e| e.to_string())?;
+                if no_padding { cipher.encrypt_padded_vec_mut::<NoPadding>(data) } else { cipher.encrypt_padded_vec_mut::<Pkcs7>(data) }
+            } else {
+                let cipher = ecb::Decryptor::<$cipher>::new_from_slice(key).map_err(|e| e.to_string())?;
+                if no_padding { cipher.decrypt_padded_vec_mut::<NoPadding>(data).map_err(|e| e.to_string())? }
+                else { cipher.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(|e| e.to_string())? }
+            }
+        }};
+    }
+    let result = if upper.starts_with("AES/") {
+        match key.len() {
+            16 => apply_cipher!(Aes128),
+            24 => apply_cipher!(Aes192),
+            32 => apply_cipher!(Aes256),
+            _ => return Err("AES key must be 16, 24 or 32 bytes".to_string()),
+        }
+    } else if upper.starts_with("DES/") {
+        if key.len() != 8 { return Err("DES key must be 8 bytes".to_string()); }
+        apply_cipher!(Des)
+    } else if upper.starts_with("DESEDE/") || upper.starts_with("3DES/") {
+        if key.len() != 24 { return Err("3DES key must be 24 bytes".to_string()); }
+        apply_cipher!(TdesEde3)
+    } else {
+        return Err(format!("unsupported symmetric transformation: {transformation}"));
+    };
+    Ok(result)
+}
+
+fn portable_rule_strings(rule: &str, content: &str) -> Result<Vec<String>, String> {
+    let trimmed = rule.trim();
+    if let Some(pattern) = trimmed.strip_prefix("@Regex:").or_else(|| trimmed.strip_prefix("@regex:")) {
+        let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
+        return Ok(regex.captures_iter(content).filter_map(|capture| {
+            capture.get(1).or_else(|| capture.get(0)).map(|value| value.as_str().to_string())
+        }).collect());
+    }
+    if let Some(path) = trimmed.strip_prefix("@Json:").or_else(|| trimmed.strip_prefix("@json:")) {
+        let json: Value = serde_json::from_str(content).map_err(|e| e.to_string())?;
+        return jsonpath_lib::select(&json, path).map_err(|e| e.to_string()).map(|values| values.into_iter().map(|value| {
+            value.as_str().map(ToOwned::to_owned).unwrap_or_else(|| value.to_string())
+        }).collect());
+    }
+    if trimmed.starts_with("@XPath:") || trimmed.starts_with("@xpath:") {
+        return Err("QuickJS rule bridge does not emulate Android JsoupXpath; use the declarative XPath rule so compatibility mode can be applied".to_string());
+    }
+    let raw = trimmed.strip_prefix("@CSS:").or_else(|| trimmed.strip_prefix("@css:")).unwrap_or(trimmed);
+    let mut pieces = raw.split('@').filter(|part| !part.trim().is_empty()).collect::<Vec<_>>();
+    let directive = pieces.last().copied().unwrap_or("text");
+    let known_directive = matches!(directive.to_ascii_lowercase().as_str(), "text" | "textnodes" | "owntext" | "html" | "all")
+        || (!directive.starts_with("class.") && !directive.starts_with("tag.") && !directive.starts_with("id.") && pieces.len() > 1);
+    if known_directive { pieces.pop(); }
+    let selector_text = pieces.into_iter().map(|piece| {
+        if let Some(value) = piece.strip_prefix("class.") { format!(".{value}") }
+        else if let Some(value) = piece.strip_prefix("tag.") { value.to_string() }
+        else if let Some(value) = piece.strip_prefix("id.") { format!("#{value}") }
+        else { piece.to_string() }
+    }).collect::<Vec<_>>().join(" ");
+    let selector = Selector::parse(if selector_text.is_empty() { "html" } else { &selector_text })
+        .map_err(|e| format!("invalid CSS selector: {e}"))?;
+    let document = Html::parse_document(content);
+    let mut values = Vec::new();
+    for element in document.select(&selector) {
+        let value = match directive.to_ascii_lowercase().as_str() {
+            "html" | "all" => element.html(),
+            "textnodes" | "owntext" => element.children().filter_map(|node| node.value().as_text()).map(|text| text.trim()).filter(|text| !text.is_empty()).collect::<Vec<_>>().join(if directive.eq_ignore_ascii_case("textNodes") { "\n" } else { " " }),
+            "text" => element.text().collect::<Vec<_>>().join(" ").split_whitespace().collect::<Vec<_>>().join(" "),
+            attribute => element.value().attr(attribute).unwrap_or_default().to_string(),
+        };
+        if !value.is_empty() && !values.contains(&value) { values.push(value); }
+    }
+    Ok(values)
+}
+
+fn persist_explicit_cache(path: Option<&Path>, cache: &HashMap<String, String>) -> Result<(), String> {
+    let Some(path) = path else { return Ok(()); };
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec(cache).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&temporary, path).map_err(|e| e.to_string())
+}
+
 #[derive(Deserialize)]
 struct AjaxOptions {
     url: String,
@@ -67,9 +177,16 @@ struct ScriptEvaluationPayload {
 fn execute_script(
     request: SourceScriptRequest,
     cookie_jar: Arc<Jar>,
+    source_cache: Arc<Mutex<HashMap<String, String>>>,
+    source_cache_path: Arc<Option<PathBuf>>,
 ) -> Result<SourceScriptResponse, SourceScriptError> {
     if request.code.contains("Packages") || request.code.contains("java.io.")
-        || request.code.contains("java.nio.file")
+        || request.code.contains("java.nio.file") || request.code.contains("java.lang.")
+        || request.code.contains("java.util.") || request.code.contains("java.security.")
+        || request.code.contains("java.net.") || request.code.contains("context.")
+        || request.code.contains("activity.") || request.code.contains("startActivity")
+        || request.code.contains("java.getFile(") || request.code.contains("java.readFile(")
+        || request.code.contains("payAction")
     {
         return Err(script_error(
             "UNSUPPORTED_ANDROID_API",
@@ -134,6 +251,15 @@ fn execute_script(
             base64::engine::general_purpose::STANDARD.decode(value)
                 .ok().and_then(|bytes| String::from_utf8(bytes).ok()).unwrap_or_default()
         })?)?;
+        globals.set("__hostBase64EncodeBytes", Function::new(ctx.clone(), |value: Vec<u8>| {
+            base64::engine::general_purpose::STANDARD.encode(value)
+        })?)?;
+        globals.set("__hostBase64DecodeBytes", Function::new(ctx.clone(), |value: String| -> Vec<u8> {
+            base64::engine::general_purpose::STANDARD.decode(value).unwrap_or_default()
+        })?)?;
+        globals.set("__hostBytesToString", Function::new(ctx.clone(), |value: Vec<u8>| -> String {
+            String::from_utf8_lossy(&value).into_owned()
+        })?)?;
         globals.set("__hostHexEncode", Function::new(ctx.clone(), |value: String| -> String {
             value.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect()
         })?)?;
@@ -158,6 +284,54 @@ fn execute_script(
                 .filter_map(|i| u8::from_str_radix(&clean[i..i + 2], 16).ok())
                 .collect()
         })?)?;
+        globals.set("__hostMd5", Function::new(ctx.clone(), |value: String| -> String {
+            format!("{:x}", md5::compute(value.as_bytes()))
+        })?)?;
+        globals.set("__hostSymmetricCrypto", Function::new(ctx.clone(), |action: String, transformation: String, key: Vec<u8>, iv: Vec<u8>, data: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+            symmetric_crypto(&action, &transformation, &key, &iv, &data)
+                .map_err(|error| rquickjs::Error::new_from_js_message("crypto", "bytes", error))
+        })?)?;
+        globals.set("__hostRuleStrings", Function::new(ctx.clone(), |rule: String, content: String| -> rquickjs::Result<Vec<String>> {
+            portable_rule_strings(&rule, &content)
+                .map_err(|error| rquickjs::Error::new_from_js_message("rule", "string[]", error))
+        })?)?;
+        globals.set("__hostParseUrl", Function::new(ctx.clone(), |value: String, base: String| -> String {
+            let parsed = if base.trim().is_empty() {
+                Url::parse(&value)
+            } else {
+                Url::parse(&base).and_then(|url| url.join(&value))
+            };
+            parsed.ok().map(|url| serde_json::json!({
+                "host": url.host_str().unwrap_or_default(),
+                "origin": url.origin().ascii_serialization(),
+                "pathname": url.path(),
+                "searchParams": url.query_pairs().into_owned().collect::<HashMap<String, String>>(),
+            }).to_string()).unwrap_or_else(|| "null".to_string())
+        })?)?;
+        let cache_source_id = request.source_id.clone();
+        let get_cache = source_cache.clone();
+        globals.set("__hostCacheGet", Function::new(ctx.clone(), move |key: String| -> String {
+            let cache_key = format!("{}\0{}", cache_source_id, key);
+            get_cache.lock().ok().and_then(|cache| cache.get(&cache_key).cloned()).unwrap_or_default()
+        })?)?;
+        let cache_source_id = request.source_id.clone();
+        let put_cache = source_cache.clone();
+        let put_cache_path = source_cache_path.clone();
+        globals.set("__hostCachePut", Function::new(ctx.clone(), move |key: String, value: String| -> rquickjs::Result<()> {
+            let mut cache = put_cache.lock().map_err(|error| rquickjs::Error::new_from_js_message("cache", "lock", error.to_string()))?;
+            cache.insert(format!("{}\0{}", cache_source_id, key), value);
+            persist_explicit_cache(put_cache_path.as_deref(), &cache)
+                .map_err(|error| rquickjs::Error::new_from_js_message("cache", "disk", error))
+        })?)?;
+        let cache_source_id = request.source_id.clone();
+        let delete_cache = source_cache.clone();
+        let delete_cache_path = source_cache_path.clone();
+        globals.set("__hostCacheDelete", Function::new(ctx.clone(), move |key: String| -> rquickjs::Result<()> {
+            let mut cache = delete_cache.lock().map_err(|error| rquickjs::Error::new_from_js_message("cache", "lock", error.to_string()))?;
+            cache.remove(&format!("{}\0{}", cache_source_id, key));
+            persist_explicit_cache(delete_cache_path.as_deref(), &cache)
+                .map_err(|error| rquickjs::Error::new_from_js_message("cache", "disk", error))
+        })?)?;
         let script_logs = logs.clone();
         globals.set("__hostLog", Function::new(ctx.clone(), move |message: String| {
             if let Ok(mut entries) = script_logs.lock() { entries.push(message); }
@@ -171,6 +345,8 @@ fn execute_script(
             globalThis.__variables = Object.assign({{}}, __bindings.variables || {{}});
             globalThis.java = Object.freeze({{
               ajax: value => __hostAjax(typeof value === 'string' ? value : JSON.stringify(value)),
+              connect: value => __hostAjax(typeof value === 'string' ? value : JSON.stringify(value)),
+              post: (url, body, headers) => __hostAjax(JSON.stringify({{ url: String(url), method: 'POST', body: body == null ? '' : String(body), headers: headers || undefined }})),
               getCookie: url => __hostGetCookie(String(url)),
               setCookie: (url, cookie) => __hostSetCookie(String(url), String(cookie)),
               base64Encode: value => __hostBase64Encode(String(value)),
@@ -178,9 +354,72 @@ fn execute_script(
               hexEncode: value => __hostHexEncode(String(value)),
               hexDecode: value => __hostHexDecode(String(value)),
               hexDecodeToString: value => __hostHexDecodeToString(String(value)),
+              md5Encode: value => __hostMd5(String(value)),
+              urlEncode: value => encodeURIComponent(String(value)),
+              encodeURI: value => encodeURI(String(value)),
+              strToBytes: value => Array.from(unescape(encodeURIComponent(String(value))), c => c.charCodeAt(0)),
+              timeFormat: (value, format) => {{
+                const d = new Date(Number(value));
+                const pad = n => String(n).padStart(2, '0');
+                return String(format || 'yyyy-MM-dd HH:mm:ss')
+                  .replace(/yyyy/g, String(d.getFullYear())).replace(/MM/g, pad(d.getMonth() + 1))
+                  .replace(/dd/g, pad(d.getDate())).replace(/HH/g, pad(d.getHours()))
+                  .replace(/mm/g, pad(d.getMinutes())).replace(/ss/g, pad(d.getSeconds()));
+              }},
+              timeFormatUTC: (value, format) => {{
+                const d = new Date(Number(value));
+                const pad = n => String(n).padStart(2, '0');
+                return String(format || 'yyyy-MM-dd HH:mm:ss')
+                  .replace(/yyyy/g, String(d.getUTCFullYear())).replace(/MM/g, pad(d.getUTCMonth() + 1))
+                  .replace(/dd/g, pad(d.getUTCDate())).replace(/HH/g, pad(d.getUTCHours()))
+                  .replace(/mm/g, pad(d.getUTCMinutes())).replace(/ss/g, pad(d.getUTCSeconds()));
+              }},
+              htmlFormat: value => String(value).replace(/<\s*br\s*\/?>/gi, '\n').replace(/<\/\s*(?:p|div|li|h[1-6])\s*>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' '),
+              toast: value => __hostLog(String(value)),
+              longToast: value => __hostLog(String(value)),
+              createSymmetricCrypto: (transformation, key, iv) => {{
+                const toBytes = value => Array.isArray(value) ? value.map(v => Number(v) & 255) : Array.from(unescape(encodeURIComponent(String(value ?? ''))), c => c.charCodeAt(0));
+                const keyBytes = toBytes(key), ivBytes = toBytes(iv);
+                const normalizeEncrypted = value => {{
+                  if (Array.isArray(value)) return toBytes(value);
+                  const text = String(value ?? '').trim();
+                  return /^[0-9a-f]+$/i.test(text) && text.length % 2 === 0 ? __hostHexDecode(text) : __hostBase64DecodeBytes(text);
+                }};
+                return Object.freeze({{
+                  encrypt: value => __hostSymmetricCrypto('encrypt', String(transformation), keyBytes, ivBytes, toBytes(value)),
+                  encryptBase64: value => __hostBase64EncodeBytes(__hostSymmetricCrypto('encrypt', String(transformation), keyBytes, ivBytes, toBytes(value))),
+                  encryptHex: value => __hostSymmetricCrypto('encrypt', String(transformation), keyBytes, ivBytes, toBytes(value)).map(v => v.toString(16).padStart(2, '0')).join(''),
+                  decrypt: value => __hostSymmetricCrypto('decrypt', String(transformation), keyBytes, ivBytes, normalizeEncrypted(value)),
+                  decryptStr: value => __hostBytesToString(__hostSymmetricCrypto('decrypt', String(transformation), keyBytes, ivBytes, normalizeEncrypted(value)))
+                }});
+              }},
+              getStringList: (rule, content) => __hostRuleStrings(String(rule), content == null ? (typeof result === 'string' ? result : JSON.stringify(result)) : String(content)),
+              getString: (rule, content) => __hostRuleStrings(String(rule), content == null ? (typeof result === 'string' ? result : JSON.stringify(result)) : String(content)).join('\n'),
+              getElements: (rule, content) => __hostRuleStrings(String(rule), content == null ? (typeof result === 'string' ? result : JSON.stringify(result)) : String(content)),
+              getElement: (rule, content) => __hostRuleStrings(String(rule), content == null ? (typeof result === 'string' ? result : JSON.stringify(result)) : String(content))[0] ?? null,
+              toURL: (value, base) => JSON.parse(__hostParseUrl(String(value), base == null ? '' : String(base))),
+              getWebViewUA: () => {{
+                try {{
+                  const header = typeof source?.header === 'string' ? JSON.parse(source.header) : source?.header;
+                  return header?.['User-Agent'] || header?.['user-agent'] || 'Mozilla/5.0 AppleWebKit/537.36';
+                }} catch (_) {{ return 'Mozilla/5.0 AppleWebKit/537.36'; }}
+              }},
               log: value => __hostLog(typeof value === 'string' ? value : JSON.stringify(value)),
               get: key => globalThis.__variables[key],
               put: (key, value) => {{ const str = String(value); globalThis.__variables[key] = str; return value; }}
+            }});
+            globalThis.cache = Object.freeze({{
+              get: key => __hostCacheGet(String(key)),
+              getFromMemory: key => __hostCacheGet(String(key)),
+              put: (key, value) => {{ __hostCachePut(String(key), String(value)); return value; }},
+              putMemory: (key, value) => {{ __hostCachePut(String(key), String(value)); return value; }},
+              delete: key => __hostCacheDelete(String(key)),
+              deleteMemory: key => __hostCacheDelete(String(key))
+            }});
+            globalThis.cookie = Object.freeze({{
+              getCookie: url => __hostGetCookie(String(url)),
+              setCookie: (url, value) => __hostSetCookie(String(url), String(value)),
+              removeCookie: (url, name) => __hostSetCookie(String(url), String(name) + '=; Max-Age=0')
             }});
             globalThis.console = Object.freeze({{ log: (...args) => __hostLog(args.map(String).join(' ')) }});
             const __code = {code_json};
@@ -232,7 +471,9 @@ pub async fn execute_source_script(
         let mut manager = state.cookie_manager.lock().await;
         manager.get_or_create_jar(&request.source_id)
     };
-    tokio::task::spawn_blocking(move || execute_script(request, jar)).await
+    let cache = state.source_cache.clone();
+    let cache_path = state.source_cache_path.clone();
+    tokio::task::spawn_blocking(move || execute_script(request, jar, cache, cache_path)).await
         .map_err(|error| script_error("JS_TASK_FAILED", error.to_string()))?
 }
 
@@ -244,7 +485,7 @@ mod tests {
         execute_script(SourceScriptRequest {
             source_id: "test".to_string(), code: code.to_string(), bindings: serde_json::json!({"key":"abc"}),
             timeout_ms: Some(timeout_ms), memory_limit_bytes: None, stack_limit_bytes: None,
-        }, Arc::new(Jar::default()))
+        }, Arc::new(Jar::default()), Arc::new(Mutex::new(HashMap::new())), Arc::new(None))
     }
 
     #[test]
@@ -268,6 +509,46 @@ mod tests {
     }
 
     #[test]
+    fn exposes_portable_encoding_and_diagnostic_apis() {
+        let response = run("java.toast('ok'); ({md5:java.md5Encode('abc'), url:java.urlEncode('中 文'), bytes:java.strToBytes('A中'), host:java.toURL('/book?id=1','https://example.com/root/').host})", 1_000).unwrap();
+        assert_eq!(response.result["md5"], "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(response.result["url"], "%E4%B8%AD%20%E6%96%87");
+        assert_eq!(response.result["bytes"], serde_json::json!([65, 228, 184, 173]));
+        assert_eq!(response.result["host"], "example.com");
+        assert_eq!(response.logs, vec!["ok"]);
+    }
+
+    #[test]
+    fn explicit_cache_survives_quickjs_sandbox_and_process_state_recreation() {
+        let path = std::env::temp_dir().join(format!("legado-source-cache-{}.json", std::process::id()));
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let cache_path = Arc::new(Some(path.clone()));
+        let request = |code: &str| SourceScriptRequest {
+            source_id: "cache-source".to_string(), code: code.to_string(), bindings: serde_json::json!({}),
+            timeout_ms: Some(1_000), memory_limit_bytes: None, stack_limit_bytes: None,
+        };
+        execute_script(request("cache.put('token', 'value')"), Arc::new(Jar::default()), cache, cache_path.clone()).unwrap();
+        let restored = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let response = execute_script(request("cache.get('token')"), Arc::new(Jar::default()), Arc::new(Mutex::new(restored)), cache_path).unwrap();
+        assert_eq!(response.result, "value");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn supports_common_aes_cbc_crypto_roundtrip() {
+        let code = "const crypto=java.createSymmetricCrypto('AES/CBC/PKCS5Padding','1234567890123456','6543210987654321'); const encrypted=crypto.encryptBase64('兼容测试'); crypto.decryptStr(encrypted)";
+        let response = run(code, 1_000).unwrap();
+        assert_eq!(response.result, "兼容测试");
+    }
+
+    #[test]
+    fn bridges_portable_css_and_regex_rules() {
+        let code = "const html='<div class=\"book\"><span class=\"name\">测试书</span></div>'; [java.getString('class.book@class.name@text', html), java.getString('@Regex:id=(\\\\d+)', 'id=42'), java.getString('@Json:$.book.name', '{\"book\":{\"name\":\"JSON书\"}}')]";
+        let response = run(code, 1_000).unwrap();
+        assert_eq!(response.result, serde_json::json!(["测试书", "42", "JSON书"]));
+    }
+
+    #[test]
     fn executes_main_js_pattern() {
         let response = run("function search(key) { return [{ name: key + '书名' }]; }; search(key)", 1_000).unwrap();
         assert_eq!(response.result[0]["name"], "abc书名");
@@ -282,7 +563,7 @@ mod tests {
             timeout_ms: Some(2_000),
             memory_limit_bytes: Some(1024 * 1024),
             stack_limit_bytes: None,
-        }, Arc::new(Jar::default())).unwrap_err();
+        }, Arc::new(Jar::default()), Arc::new(Mutex::new(HashMap::new())), Arc::new(None)).unwrap_err();
         assert_eq!(error.code, "JS_MEMORY_LIMIT");
     }
 

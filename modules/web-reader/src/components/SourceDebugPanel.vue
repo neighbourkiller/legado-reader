@@ -376,7 +376,7 @@ const startDebug = async () => {
   const compatibility = inspectSourceCompatibility(targetSource)
   appendLog(
     'COMPAT',
-    `兼容状态: ${compatibility.status}，发现 ${compatibility.issues.length} 个问题`,
+    `兼容状态: ${compatibility.status}，验证=${compatibility.verificationStatus}，引擎=v${compatibility.engineVersion}，能力=${compatibility.capabilities?.join(',') || 'none'}，发现 ${compatibility.issues.length} 个问题`,
     compatibility.status === 'supported' ? 'success' : 'warn'
   )
   compatibility.issues.forEach(issue => appendLog('COMPAT', `[${issue.code}] ${issue.path}: ${issue.message}`, 'warn'))
