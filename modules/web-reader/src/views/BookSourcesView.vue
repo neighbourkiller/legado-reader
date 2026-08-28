@@ -1148,8 +1148,10 @@ const handleClearAll = async () => {
 .content-panel-body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 20px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px 20px;
 }
 
 .empty-selection-placeholder {
