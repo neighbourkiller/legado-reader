@@ -233,7 +233,7 @@ function evaluateXPathNodes(root: Element | Document, expression: string, contex
 
 function evaluateJsonNodes(value: unknown, expression: string): RuleNode[] {
   const result = JSONPath({ path: expression, json: value as object, wrap: true, eval: 'safe' })
-  return result as RuleNode[]
+  return (result as unknown[]).flatMap(item => Array.isArray(item) ? item : [item]) as RuleNode[]
 }
 
 function evaluateRegexNodes(value: unknown, expression: string): RuleNode[] {
@@ -672,14 +672,98 @@ export function evaluateRuleList(
   return evaluateCompiled(input, compileRule(rule), mergedContext(options))
 }
 
+function interpolateTemplateString(
+  input: string | Document | Element | Record<string, unknown> | unknown[],
+  rule: string,
+  context: RuleExecutionContext,
+): string {
+  return rule.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, expr: string) => {
+    const sub = expr.trim()
+    if (sub === 'result') return nodeToString(context.result as RuleNode)
+    if (['key', 'page', 'baseUrl', 'redirectUrl'].includes(sub)) {
+      return String(context[sub as keyof RuleExecutionContext] ?? '')
+    }
+    if (context.variables?.has(sub)) {
+      return context.variables.get(sub) || ''
+    }
+    if (input !== null && input !== undefined) {
+      try {
+        return evaluateRuleString(input, sub, context)
+      } catch {
+        return ''
+      }
+    }
+    return ''
+  })
+}
+
+async function interpolateTemplateStringAsync(
+  input: string | Document | Element | Record<string, unknown> | unknown[],
+  rule: string,
+  context: RuleExecutionContext,
+  runner?: RuleScriptRunner,
+): Promise<string> {
+  const matches = Array.from(rule.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g))
+  if (matches.length === 0) return rule
+  let result = rule
+  for (const m of matches) {
+    const sub = m[1].trim()
+    let replacement = ''
+    if (sub === 'result') {
+      replacement = nodeToString(context.result as RuleNode)
+    } else if (['key', 'page', 'baseUrl', 'redirectUrl'].includes(sub)) {
+      replacement = String(context[sub as keyof RuleExecutionContext] ?? '')
+    } else if (context.variables?.has(sub)) {
+      replacement = context.variables.get(sub) || ''
+    } else if (input !== null && input !== undefined) {
+      try {
+        replacement = await evaluateRuleStringAsync(input, sub, context, runner)
+      } catch {
+        if (runner) {
+          try {
+            const evalRes = await runner.javascript(sub, context, input)
+            replacement = evalRes === null || evalRes === undefined ? '' : String(evalRes)
+          } catch {
+            replacement = ''
+          }
+        }
+      }
+    } else if (runner) {
+      try {
+        const evalRes = await runner.javascript(sub, context, input)
+        replacement = evalRes === null || evalRes === undefined ? '' : String(evalRes)
+      } catch {
+        replacement = ''
+      }
+    }
+    result = result.replace(m[0], replacement)
+  }
+  return result
+}
+
 export function evaluateRuleString(
   input: string | Document | Element | Record<string, unknown> | unknown[],
   rule: string,
   options?: Partial<RuleExecutionContext>,
 ): string {
   if (!rule.trim()) return ''
-  const compiled = compileRule(rule)
+  let targetRule = rule.trim()
   const context = mergedContext(options)
+
+  if (targetRule.includes('{{') && targetRule.includes('}}') && !targetRule.startsWith('@js:') && !targetRule.startsWith('<js>')) {
+    const interpolated = interpolateTemplateString(input, targetRule, context)
+    const isRule = interpolated.includes('@')
+      || interpolated.startsWith('//')
+      || interpolated.startsWith('$.')
+      || interpolated.startsWith('$[')
+      || /^(?:tag|class|id)\./i.test(interpolated)
+    if (!isRule) {
+      return interpolated
+    }
+    targetRule = interpolated
+  }
+
+  const compiled = compileRule(targetRule)
   const values = evaluateCompiled(input, compiled, context)
   const stringify = (value: RuleNode) => context.compatibilityMode === 'legado'
     && compiled.alternatives.some(segment => segment.mode === 'xpath' || segment.steps?.some(st => st.mode === 'xpath'))
@@ -746,8 +830,23 @@ export async function evaluateRuleStringAsync(
   runner?: RuleScriptRunner,
 ): Promise<string> {
   if (!rule.trim()) return ''
-  const compiled = compileRule(rule)
+  let targetRule = rule.trim()
   const context = mergedContext(options)
+
+  if (targetRule.includes('{{') && targetRule.includes('}}') && !targetRule.startsWith('@js:') && !targetRule.startsWith('<js>')) {
+    const interpolated = await interpolateTemplateStringAsync(input, targetRule, context, runner)
+    const isRule = interpolated.includes('@')
+      || interpolated.startsWith('//')
+      || interpolated.startsWith('$.')
+      || interpolated.startsWith('$[')
+      || /^(?:tag|class|id)\./i.test(interpolated)
+    if (!isRule) {
+      return interpolated
+    }
+    targetRule = interpolated
+  }
+
+  const compiled = compileRule(targetRule)
   const values = await evaluateCompiledAsync(input, compiled, context, runner)
   const stringify = (value: RuleNode) => context.compatibilityMode === 'legado'
     && compiled.alternatives.some(segment => segment.mode === 'xpath' || segment.steps?.some(st => st.mode === 'xpath'))

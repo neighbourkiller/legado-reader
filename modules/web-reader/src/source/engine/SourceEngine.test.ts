@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SourceEngine, parseSearchUrl, parseSearchUrlAsync } from './SourceEngine'
+import { SourceEngine, parseSearchUrl, parseSearchUrlAsync, detectSecurityChallenge, SecurityChallengeError } from './SourceEngine'
 import { deserializeOnlineChapterPayload, serializeOnlineChapterPayload } from './ChapterPayload'
 import { applyTextReplaceRule } from './RuleParser'
 import type { BookSource } from '@/source/types/BookSource'
 import { setTransport } from '@/source/transport'
 import type { SourceRequest, SourceResponse, SourceTransport } from '@/source/transport/SourceTransport'
+import * as sourceScripts from '@/platform/sourceScripts'
 
 const source: BookSource = {
   bookSourceUrl: 'https://example.com/root/',
@@ -235,5 +236,95 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
       expect(payload.text).toBe('内容1')
     }
     expect(loopTransport.request).toHaveBeenCalledTimes(1)
+  })
+
+  it('能精准识别前端 JS 浏览器质询盾并抛出 SecurityChallengeError', async () => {
+    const challengeHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head><title>正在验证浏览器</title></head>
+      <body>
+      <p>請稍等，正在進行安全驗證...</p>
+      <script>
+          let token = "MTc4Nzg4NzE4NTo1MDg2YzZiNmFhZjcwNTZlODEx";
+          window.location.href = location.pathname + "?challenge=" + encodeURIComponent(token);  
+      </script>
+      </body>
+      </html>
+    `
+    const diag = detectSecurityChallenge(challengeHtml)
+    expect(diag.isChallenge).toBe(true)
+    expect(diag.type).toBe('browser_challenge')
+    expect(diag.title).toBe('正在验证浏览器')
+    expect(diag.snippet).toContain('正在验证浏览器')
+
+    const challengeSource: BookSource = {
+      ...source,
+      useWebView: false,
+      ruleContent: {
+        content: '//section/p[position()>1]/text()',
+      },
+    }
+    const engine = new SourceEngine()
+    const encoder = new TextEncoder()
+    const mockTransport: SourceTransport = {
+      request: vi.fn(async (options: SourceRequest): Promise<SourceResponse> => ({
+        status: 200,
+        headers: {},
+        body: encoder.encode(challengeHtml),
+        finalUrl: options.url,
+        charset: 'utf-8',
+        channel: 'reqwest',
+      })),
+    }
+    setTransport(mockTransport)
+
+    await expect(engine.getContent(challengeSource, 'https://example.com/read/1/p1.html'))
+      .rejects
+      .toThrowError(SecurityChallengeError)
+
+    try {
+      await engine.getContent(challengeSource, 'https://example.com/read/1/p1.html')
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(SecurityChallengeError)
+      if (err instanceof SecurityChallengeError) {
+        expect(err.diagnostics.title).toBe('正在验证浏览器')
+        expect(err.diagnostics.type).toBe('browser_challenge')
+        expect(err.message).toContain('安全验证页面')
+      }
+    }
+  })
+
+  it('支持 preUpdateJs 访问 baseUrl 并使用返回的 JSON 数据直接解析目录', async () => {
+    const jsonCatalogSource: BookSource = {
+      ...source,
+      bookSourceUrl: 'https://ixdzs8.com',
+      ruleToc: {
+        chapterList: '$.data',
+        chapterName: '$.title',
+        chapterUrl: 'p{{$.ordernum}}.html',
+        preUpdateJs: 'custom-pre-update-js',
+      },
+    }
+    const engine = new SourceEngine()
+    vi.spyOn(sourceScripts, 'executeSourceJavaScript').mockImplementation(async (_sourceId, _code, context) => {
+      const bid = String(context.baseUrl).split('/read/')[1]?.split('/')[0]
+      return {
+        result: JSON.stringify({
+          data: [
+            { title: `第1章 异世降临 (bid=${bid})`, ordernum: 1 },
+            { title: `第2章 神秘系统 (bid=${bid})`, ordernum: 2 },
+          ],
+        }),
+        logs: [],
+      }
+    })
+
+    const chapters = await engine.getToc(jsonCatalogSource, 'https://ixdzs8.com/read/30848/')
+    expect(chapters).toHaveLength(2)
+    expect(chapters[0].name).toBe('第1章 异世降临 (bid=30848)')
+    expect(chapters[0].url).toBe('https://ixdzs8.com/read/30848/p1.html')
+    expect(chapters[1].name).toBe('第2章 神秘系统 (bid=30848)')
+    expect(chapters[1].url).toBe('https://ixdzs8.com/read/30848/p2.html')
   })
 })

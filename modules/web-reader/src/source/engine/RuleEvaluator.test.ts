@@ -81,6 +81,12 @@ describe('Legado DOM/JSON 执行器', () => {
     expect(evaluateRuleString(`<p class="p2">ok</p>`, `.p{{page}}@text`, {
       compatibilityMode: 'legado', page: 2,
     })).toBe('ok')
+    expect(evaluateRuleString({ ordernum: 1, title: '第一章' }, 'p{{$.ordernum}}.html', {
+      compatibilityMode: 'legado',
+    })).toBe('p1.html')
+    expect(evaluateRuleString({ id: 12345 }, '/read/{{$.id}}/', {
+      compatibilityMode: 'legado',
+    })).toBe('/read/12345/')
   })
 
   it('为无效规则抛出结构化错误', () => {

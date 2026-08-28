@@ -19,52 +19,178 @@ export function decodeResponse(body: Uint8Array, charset: string = 'utf-8'): str
   }
 }
 
-/** 从响应中提取 Cloudflare 诊断信息 */
-export function extractCfDiagnostics(response: SourceResponse): CfDiagnostics {
-  const getHeader = (name: string) =>
-    Object.entries(response.headers).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1]
+export type { CfDiagnostics } from '@/source/transport/SourceTransport'
 
-  const server = getHeader('server')
-  const cfRay = getHeader('cf-ray')
-  const cfMitigated = getHeader('cf-mitigated')
+export type ChallengeType = 'cloudflare' | 'browser_challenge' | 'captcha' | 'waf'
 
-  const isCloudflare = server?.toLowerCase().includes('cloudflare') ?? false
-
-  let isChallenge = false
-  if (response.status === 403 && isCloudflare) {
-    const html = decodeResponse(response.body, response.charset || 'utf-8').toLowerCase()
-    isChallenge = [
-      'just a moment',
-      'attention required',
-      'sorry, you have been blocked',
-      'cf-mitigated',
-      '/cdn-cgi/challenge-platform/',
-    ].some(marker => html.includes(marker))
-  }
-
-  return { isChallenge, cfRay, cfMitigated }
+export interface SecurityDiagnostics {
+  isChallenge: boolean
+  type?: ChallengeType
+  title?: string
+  snippet?: string
+  cfRay?: string
+  cfMitigated?: string
 }
 
-/** Cloudflare 验证挑战错误，携带诊断信息和原始响应 */
-export class CloudflareChallengeError extends Error {
-  readonly diagnostics: CfDiagnostics
-  readonly response: SourceResponse
+/** 启发式检测页面是否为防爬验证/浏览器质询拦截页 */
+export function detectSecurityChallenge(html: string, response?: SourceResponse): SecurityDiagnostics {
+  const lowerHtml = (html || '').toLowerCase()
+  const snippet = (html || '').trim().slice(0, 300)
 
-  constructor(message: string, response: SourceResponse, diagnostics: CfDiagnostics) {
+  // 1. Cloudflare 检测 (支持 HTTP 403 / 503 或含有 Cloudflare 特征头/特征串)
+  let cfRay: string | undefined
+  let cfMitigated: string | undefined
+  let isCloudflare = false
+
+  if (response) {
+    const getHeader = (name: string) =>
+      Object.entries(response.headers).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1]
+    const server = getHeader('server')
+    cfRay = getHeader('cf-ray')
+    cfMitigated = getHeader('cf-mitigated')
+    isCloudflare = server?.toLowerCase().includes('cloudflare') ?? Boolean(cfRay || cfMitigated)
+  }
+
+  const cfMarkers = [
+    'just a moment',
+    'attention required',
+    'sorry, you have been blocked',
+    'cf-mitigated',
+    '/cdn-cgi/challenge-platform/',
+    '__cf_chl_',
+  ]
+  const hasCfMarker = cfMarkers.some(marker => lowerHtml.includes(marker))
+
+  if ((response && (response.status === 403 || response.status === 503) && isCloudflare && hasCfMarker) || (isCloudflare && hasCfMarker)) {
+    return {
+      isChallenge: true,
+      type: 'cloudflare',
+      title: 'Cloudflare 浏览器访问质询',
+      snippet,
+      cfRay,
+      cfMitigated,
+    }
+  }
+
+  // 2. 前端 JavaScript 浏览器质询 (例如 ixdzs8、5秒盾、自建 WAF 挑战)
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  const pageTitle = titleMatch ? titleMatch[1].trim() : ''
+
+  const challengeTitleKeywords = [
+    '正在验证浏览器',
+    '安全验证',
+    '系统安全验证',
+    '浏览器安全检查',
+    '安全检查中',
+    'checking your browser',
+    'just a moment',
+    'attention required',
+    'please wait',
+    'ddos protection',
+    '人机安全验证',
+  ]
+  const titleMatches = challengeTitleKeywords.some(kw => pageTitle.toLowerCase().includes(kw))
+
+  const challengeBodyKeywords = [
+    '正在進行安全驗證',
+    '正在进行安全验证',
+    '請稍等，正在進行安全驗證',
+    '请稍等，正在进行安全验证',
+    'checking your browser before accessing',
+    'ddos protection by',
+    'location.pathname + "?challenge="',
+    'location.href = location.pathname + "?challenge="',
+    '?challenge=',
+    'waf-verify',
+  ]
+  const bodyMatches = challengeBodyKeywords.some(kw => html.includes(kw) || lowerHtml.includes(kw.toLowerCase()))
+
+  const isShortPage = html.length < 4000
+
+  if ((titleMatches && (bodyMatches || isShortPage)) || (bodyMatches && isShortPage)) {
+    return {
+      isChallenge: true,
+      type: 'browser_challenge',
+      title: pageTitle || '前端浏览器安全质询',
+      snippet,
+    }
+  }
+
+  // 3. 滑块 / 极验 / 人机验证码页面 (Captcha / WAF)
+  const captchaKeywords = [
+    '滑动验证',
+    '人机安全验证',
+    '点击完成验证',
+    'geetest',
+    '极验',
+    '请输入验证码',
+  ]
+  const hasCaptcha = captchaKeywords.some(kw => html.includes(kw))
+  if (hasCaptcha && isShortPage) {
+    return {
+      isChallenge: true,
+      type: 'captcha',
+      title: pageTitle || '人机验证码拦截',
+      snippet,
+    }
+  }
+
+  return { isChallenge: false }
+}
+
+/** 从响应中提取 Cloudflare 诊断信息（保持向后兼容） */
+export function extractCfDiagnostics(response: SourceResponse): CfDiagnostics {
+  const result = detectSecurityChallenge(decodeResponse(response.body, response.charset || 'utf-8'), response)
+  return {
+    isChallenge: result.isChallenge && result.type === 'cloudflare',
+    cfRay: result.cfRay,
+    cfMitigated: result.cfMitigated,
+  }
+}
+
+/** 通用安全验证挑战错误，携带诊断信息和原始响应 */
+export class SecurityChallengeError extends Error {
+  readonly diagnostics: SecurityDiagnostics
+  readonly response?: SourceResponse
+
+  constructor(message: string, diagnostics: SecurityDiagnostics, response?: SourceResponse) {
     super(message)
-    this.name = 'CloudflareChallengeError'
+    this.name = 'SecurityChallengeError'
     this.diagnostics = diagnostics
     this.response = response
   }
 }
 
+/** Cloudflare 验证挑战错误，继承自 SecurityChallengeError 保持向后兼容 */
+export class CloudflareChallengeError extends SecurityChallengeError {
+  constructor(message: string, response: SourceResponse, diagnostics: CfDiagnostics) {
+    super(message, {
+      isChallenge: diagnostics.isChallenge,
+      type: 'cloudflare',
+      title: 'Cloudflare 访问验证',
+      cfRay: diagnostics.cfRay,
+      cfMitigated: diagnostics.cfMitigated,
+      snippet: decodeResponse(response.body, response.charset || 'utf-8').trim().slice(0, 300),
+    }, response)
+    this.name = 'CloudflareChallengeError'
+  }
+}
+
 function createHttpError(response: SourceResponse, fallbackMessage: string): Error {
-  const cfInfo = extractCfDiagnostics(response)
-  if (cfInfo.isChallenge) {
-    return new CloudflareChallengeError(
-      '目标网站触发 Cloudflare 浏览器访问验证（HTTP 403）。请启用 WebView 通道或先完成网页验证。',
+  const html = decodeResponse(response.body, response.charset || 'utf-8')
+  const challenge = detectSecurityChallenge(html, response)
+  if (challenge.isChallenge) {
+    if (challenge.type === 'cloudflare') {
+      return new CloudflareChallengeError(
+        '目标网站触发 Cloudflare 浏览器访问验证（HTTP 403）。请启用 WebView 通道或先完成网页验证。',
+        response,
+        { isChallenge: true, cfRay: challenge.cfRay, cfMitigated: challenge.cfMitigated },
+      )
+    }
+    return new SecurityChallengeError(
+      `目标网站触发安全访问验证（${challenge.title}）。请启用 WebView 通道或先完成网页验证。`,
+      challenge,
       response,
-      cfInfo,
     )
   }
 
@@ -317,14 +443,22 @@ export class SourceEngine {
     }
     if (!response) throw lastError instanceof Error ? lastError : new Error('书源请求失败')
 
-    // 自动检测 Cloudflare challenge，抛出带诊断信息的错误
-    if (response.status === 403) {
-      const cfInfo = extractCfDiagnostics(response)
-      if (cfInfo.isChallenge) {
-        throw new CloudflareChallengeError(
-          '检测到 Cloudflare 验证，请在书源设置中启用 WebView 通道或先完成网页验证。',
+    // 自动检测安全验证 challenge，抛出带诊断信息的错误
+    if (!source.useWebView) {
+      const html = decodeResponse(response.body, response.charset || 'utf-8')
+      const challenge = detectSecurityChallenge(html, response)
+      if (challenge.isChallenge) {
+        if (challenge.type === 'cloudflare') {
+          throw new CloudflareChallengeError(
+            '检测到 Cloudflare 验证，请在书源设置中启用 WebView 通道或先完成网页验证。',
+            response,
+            { isChallenge: true, cfRay: challenge.cfRay, cfMitigated: challenge.cfMitigated },
+          )
+        }
+        throw new SecurityChallengeError(
+          `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}）。请在书源设置中启用 WebView 通道或先完成网页验证。`,
+          challenge,
           response,
-          cfInfo,
         )
       }
     }
@@ -583,28 +717,54 @@ export class SourceEngine {
     let url = tocUrl
     const visited = new Set<string>()
     const chapters: TocItem[] = []
-    const context = this.createRuleContext(source, 'toc')
+    const book = { bookUrl: tocUrl, tocUrl }
+    const context = this.createRuleContext(source, 'toc', { baseUrl: tocUrl, book })
+
+    let initialBody: string | null = null
     if (source.ruleToc.preUpdateJs?.trim()) {
       const updated = (await executeSourceJavaScript(
         source.bookSourceUrl, source.ruleToc.preUpdateJs, context, url,
       )).result
-      if (typeof updated === 'string' && updated.trim()) url = updated.trim()
+      if (updated) {
+        if (typeof updated === 'object') {
+          initialBody = JSON.stringify(updated)
+        } else if (typeof updated === 'string') {
+          const trimmed = updated.trim()
+          if (trimmed.startsWith('{') || trimmed.startsWith('[') || /^\s*<(?:!DOCTYPE|html|head|body|ul|ol|div|section|table)/i.test(trimmed)) {
+            initialBody = trimmed
+          } else if (trimmed) {
+            url = trimmed
+          }
+        }
+      }
     }
-    for (let page = 1; url && page <= 100; page += 1) {
-      const request = await parseSearchUrlAsync(url, '', source, page, context)
-      const requestUrl = new URL(request.url)
-      requestUrl.hash = ''
-      const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
-      if (visited.has(requestKey)) break
-      visited.add(requestKey)
-      const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset)
-      if (response.status >= 400) throw createHttpError(response, `请求目录页失败 (HTTP ${response.status})`)
-      const html = decodeResponse(response.body, response.charset || 'utf-8')
-      const effectiveBaseUrl = response.finalUrl || requestUrl.href
-      Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+
+    for (let page = 1; (url || initialBody) && page <= 100; page += 1) {
+      let html = ''
+      let effectiveBaseUrl = url || tocUrl
+
+      if (page === 1 && initialBody) {
+        html = initialBody
+        effectiveBaseUrl = tocUrl
+        Object.assign(context, { page, baseUrl: effectiveBaseUrl })
+      } else {
+        if (!url) break
+        const request = await parseSearchUrlAsync(url, '', source, page, context)
+        const requestUrl = new URL(request.url)
+        requestUrl.hash = ''
+        const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
+        if (visited.has(requestKey)) break
+        visited.add(requestKey)
+        const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset)
+        if (response.status >= 400) throw createHttpError(response, `请求目录页失败 (HTTP ${response.status})`)
+        html = decodeResponse(response.body, response.charset || 'utf-8')
+        effectiveBaseUrl = response.finalUrl || requestUrl.href
+        Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+      }
+
       const newChapters = await parseToc(html, source.ruleToc, effectiveBaseUrl, context)
       chapters.push(...newChapters)
-      onProgress?.({ page, url: request.url, count: newChapters.length })
+      onProgress?.({ page, url: effectiveBaseUrl, count: newChapters.length })
       if (!source.ruleToc.nextTocUrl) break
       const doc = html.trim().startsWith('{') || html.trim().startsWith('[')
         ? JSON.parse(html) : new DOMParser().parseFromString(html, 'text/html')
@@ -668,6 +828,19 @@ export class SourceEngine {
       let html = decodeResponse(response.body, response.charset || 'utf-8')
       const effectiveBaseUrl = response.finalUrl || requestUrl.href
       Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+
+      // 在非 WebView 模式下，检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
+      if (!source.useWebView) {
+        const challenge = detectSecurityChallenge(html, response)
+        if (challenge.isChallenge) {
+          throw new SecurityChallengeError(
+            `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}），普通 HTTP 请求未能获取到有效正文。请开启 WebView 通道或先完成网页验证。`,
+            challenge,
+            response,
+          )
+        }
+      }
+
       if (source.ruleContent.webJs?.trim()) {
         const transformed = (await executeSourceWebJavaScript(
           source.bookSourceUrl, source.ruleContent.webJs, context, html,

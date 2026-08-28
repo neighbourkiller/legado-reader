@@ -186,7 +186,7 @@ import { ElMessage } from 'element-plus'
 import { VideoPlay, Key } from '@element-plus/icons-vue'
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import type { TocItem } from '@/source/engine/TocParser'
-import { SourceEngine, parseSearchUrl, CloudflareChallengeError } from '@/source/engine/SourceEngine'
+import { SourceEngine, parseSearchUrl, CloudflareChallengeError, SecurityChallengeError } from '@/source/engine/SourceEngine'
 import SourceAuthDialog from './SourceAuthDialog.vue'
 import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
 import { RuleExecutionError } from '@/source/engine/RuleTypes'
@@ -326,7 +326,18 @@ const startDebug = async () => {
     }).catch((err: unknown) => {
       stepStatus.search = 'failed'
       appendLog('ERROR', `网络请求或解析异常: ${errorMessage(err)}`, 'error')
-      if (err instanceof CloudflareChallengeError) {
+      if (err instanceof SecurityChallengeError) {
+        appendLog('CHALLENGE', `【诊断结果】源站要求浏览器完成安全访问验证（${err.diagnostics.title || err.diagnostics.type}）。`, 'warn')
+        if (err.diagnostics.cfRay) {
+          appendLog('CF_CHALLENGE', `cf-ray: ${err.diagnostics.cfRay}`, 'warn')
+        }
+        if (err.diagnostics.cfMitigated) {
+          appendLog('CF_CHALLENGE', `cf-mitigated: ${err.diagnostics.cfMitigated}`, 'warn')
+        }
+        if (!props.source?.useWebView) {
+          appendLog('CF_CHALLENGE', '建议：请在「网页验证」中启用 WebView 通道，让请求通过真实浏览器会话执行。', 'warn')
+        }
+      } else if (err instanceof CloudflareChallengeError) {
         appendLog('CF_CHALLENGE', '【诊断结果】源站要求浏览器完成 Cloudflare 访问验证。', 'warn')
         if (err.diagnostics.cfRay) {
           appendLog('CF_CHALLENGE', `cf-ray: ${err.diagnostics.cfRay}`, 'warn')
@@ -425,19 +436,50 @@ const startDebug = async () => {
                 ? payload.text
                 : payload.images.map(image => image.url).join('\n')
               const contentTime = Date.now() - contentStart
-              stepStatus.content = 'success'
-              stepResults.content = {
-                charCount: text.length,
-                preview: text.slice(0, 200) + (text.length > 200 ? '...' : ''),
-                time: contentTime,
+              const charCount = text.length
+
+              if (payload.type === 'text' && charCount === 0 && (!payload.embeddedImages || payload.embeddedImages.length === 0)) {
+                stepStatus.content = 'failed'
+                stepResults.content = {
+                  charCount: 0,
+                  preview: '',
+                  time: contentTime,
+                }
+                appendLog('CONTENT', `正文解析未通过: 提取结果为空 (0 字) (${contentTime}ms)`, 'error')
+                appendLog('DIAGNOSE', '【诊断结果】正文规则未能提取出有效文字。可能是正文规则选择器不匹配，或正文需要异步 JavaScript 渲染（建议在书源编辑中启用 WebView 通道）。', 'warn')
+              } else if (payload.type === 'images' && payload.images.length === 0) {
+                stepStatus.content = 'failed'
+                stepResults.content = {
+                  charCount: 0,
+                  preview: '',
+                  time: contentTime,
+                }
+                appendLog('CONTENT', `图片解析未通过: 未提取到任何图片 (${contentTime}ms)`, 'error')
+                appendLog('DIAGNOSE', '【诊断结果】漫画正文规则未能提取出有效图片链接。', 'warn')
+              } else {
+                stepStatus.content = 'success'
+                stepResults.content = {
+                  charCount,
+                  preview: text.slice(0, 200) + (text.length > 200 ? '...' : ''),
+                  time: contentTime,
+                }
+                appendLog('CONTENT', payload.type === 'images'
+                  ? `图片解析成功! 共 ${payload.images.length} 张 (${contentTime}ms)`
+                  : `正文解析成功! 字数: ${charCount} (${contentTime}ms)`, 'success')
+                appendLog('CONTENT', `正文预览:\n${text.slice(0, 120)}...`)
               }
-              appendLog('CONTENT', payload.type === 'images'
-                ? `图片解析成功! 共 ${payload.images.length} 张 (${contentTime}ms)`
-                : `正文解析成功! 字数: ${text.length} (${contentTime}ms)`, 'success')
-              appendLog('CONTENT', `正文预览:\n${text.slice(0, 120)}...`)
             } catch (err: unknown) {
               stepStatus.content = 'failed'
-              appendLog('CONTENT', `正文解析失败: ${errorMessage(err)}`, 'error')
+              if (err instanceof SecurityChallengeError) {
+                appendLog('CONTENT', `正文解析失败: 触发目标网站安全质询拦截 (${err.diagnostics.title || err.diagnostics.type})`, 'error')
+                appendLog('CHALLENGE', `【诊断结果】源站正文页返回了安全验证页面${err.diagnostics.title ? `（“${err.diagnostics.title}”）` : ''}，普通 HTTP 请求已被拦截。`, 'warn')
+                if (err.diagnostics.snippet) {
+                  appendLog('RAW_PAGE', `拦截页面片段摘要:\n${err.diagnostics.snippet}`, 'info')
+                }
+                appendLog('SUGGEST', '建议：请在「书源编辑」中启用「WebView 通道」，或在「网页验证」中完成浏览器安全验证。', 'warn')
+              } else {
+                appendLog('CONTENT', `正文解析失败: ${errorMessage(err)}`, 'error')
+              }
             }
           }
         } else {
@@ -450,8 +492,23 @@ const startDebug = async () => {
       }
     }
 
-    appendLog('DONE', '书源全流程调试完成!', 'success')
-    ElMessage.success('调试完成')
+    const failedSteps = Object.entries(stepStatus)
+      .filter(([_, status]) => status === 'failed')
+      .map(([step]) => step)
+    if (failedSteps.length > 0) {
+      const stepNames: Record<string, string> = {
+        search: '搜索',
+        detail: '详情',
+        toc: '目录',
+        content: '正文',
+      }
+      const failedNames = failedSteps.map(s => stepNames[s] || s).join('、')
+      appendLog('DONE', `书源调试结束，部分流程未通过（${failedNames}），请参考上方日志进行调整。`, 'warn')
+      ElMessage.warning(`书源调试未全部通过（${failedNames}）`)
+    } else {
+      appendLog('DONE', '书源全流程调试完成!', 'success')
+      ElMessage.success('调试完成')
+    }
   } catch (err: unknown) {
     appendLog('FATAL', `调试中止: ${errorMessage(err)}`, 'error')
   } finally {
