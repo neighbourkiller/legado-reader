@@ -17,9 +17,27 @@ const routes: RouteRecordRaw[] = [
     name: 'reader',
     component: () => import('@/views/ReaderView.vue'),
   },
+  {
+    path: '/book-detail',
+    name: 'book-detail',
+    component: () => import('@/views/BookDetailView.vue'),
+  },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('@/views/SettingsView.vue'),
+  },
+  {
+    path: '/settings/preferences',
+    name: 'settings-preferences',
+    redirect: {
+      path: '/settings',
+      query: { section: 'preferences' },
+    },
+  },
 ]
 
-// 桌面模式注册额外路由（书源管理、搜索等）
+// 仅书源网络执行相关页面保持桌面专属。
 if (import.meta.env.VITE_APP_TARGET === 'desktop') {
   routes.push(
     {
@@ -31,24 +49,6 @@ if (import.meta.env.VITE_APP_TARGET === 'desktop') {
       path: '/search',
       name: 'search',
       component: () => import('@/views/SearchView.vue'),
-    },
-    {
-      path: '/book-detail',
-      name: 'book-detail',
-      component: () => import('@/views/BookDetailView.vue'),
-    },
-    {
-      path: '/settings',
-      name: 'settings',
-      component: () => import('@/views/SettingsView.vue'),
-    },
-    {
-      path: '/settings/preferences',
-      name: 'settings-preferences',
-      redirect: {
-        path: '/settings',
-        query: { section: 'preferences' },
-      },
     },
   )
 }

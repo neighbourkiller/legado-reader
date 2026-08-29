@@ -235,6 +235,7 @@ const router = useRouter()
 const bookshelfStore = useBookshelfStore()
 const bookSourceStore = useBookSourceStore()
 const downloadStore = useDownloadStore()
+const isDesktopBuild = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 const isLoadingDetail = ref(false)
 const isLoadingToc = ref(false)
@@ -289,10 +290,9 @@ const downloadButtonText = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([
-    bookshelfStore.loadBooks(),
-    bookSourceStore.loadSources(),
-  ])
+  const startupTasks = [bookshelfStore.loadBooks()]
+  if (isDesktopBuild) startupTasks.push(bookSourceStore.loadSources())
+  await Promise.all(startupTasks)
 
   await initBookFromRoute()
   await refreshDownloadedCount()
@@ -705,7 +705,7 @@ const handleGoBack = () => {
   if (window.history.length > 1) {
     router.back()
   } else {
-    router.push(isOnlineBook.value ? '/search' : '/bookshelf')
+    router.push(isOnlineBook.value && isDesktopBuild ? '/search' : '/bookshelf')
   }
 }
 

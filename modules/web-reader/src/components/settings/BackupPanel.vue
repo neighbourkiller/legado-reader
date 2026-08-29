@@ -2,110 +2,105 @@
   <div class="backup-panel">
     <el-alert
       v-if="!isDesktop"
-      title="仅桌面客户端支持备份与恢复"
-      description="请在 Tauri 桌面客户端中使用本地 ZIP 和 WebDAV 备份。"
+      title="浏览器本地备份"
+      description="备份文件会直接下载到本机；恢复时只读取你主动选择的 ZIP，不会上传数据。WebDAV 仍仅由桌面客户端提供。"
       type="info"
       :closable="false"
       show-icon
     />
 
-    <template v-else>
-      <el-card shadow="never" class="backup-card">
-        <template #header>
-          <div class="card-title">
-            <strong>本地备份</strong>
-            <small>生成可由 Legado 安卓端识别的 ZIP，并保留桌面端完整数据</small>
-          </div>
-        </template>
-
-        <div class="action-row">
-          <el-button type="primary" :loading="busy === 'local-backup'" @click="backupToLocal">
-            备份到本地
-          </el-button>
-          <el-button :loading="busy === 'local-restore'" @click="restoreFromFile">
-            从文件恢复
-          </el-button>
+    <el-card shadow="never" class="backup-card">
+      <template #header>
+        <div class="card-title">
+          <strong>本地备份</strong>
+          <small>生成可由 Legado 安卓端识别的 ZIP，并保留当前客户端的完整数据</small>
         </div>
-        <p class="content-note">
-          包含书源、网络书架、书签、阅读记录，以及桌面端本地 TXT/EPUB、章节缓存和桌面设置。
-          WebDAV 密码、设备 ID、Cookie 与临时任务不会进入备份。
-        </p>
-      </el-card>
+      </template>
 
-      <el-card shadow="never" class="backup-card">
-        <template #header>
-          <div class="card-title">
-            <strong>WebDAV</strong>
-            <small>手动上传、刷新列表或恢复；默认与安卓端共用 legado/ 目录</small>
+      <div class="action-row">
+        <el-button type="primary" :loading="busy === 'local-backup'" @click="backupToLocal">
+          {{ isDesktop ? '备份到本地' : '下载 ZIP 备份' }}
+        </el-button>
+        <el-button :loading="busy === 'local-restore'" @click="restoreFromFile">
+          从文件恢复
+        </el-button>
+      </div>
+      <p class="content-note">{{ localBackupDescription }}</p>
+    </el-card>
+
+    <el-card v-if="isDesktop" shadow="never" class="backup-card">
+      <template #header>
+        <div class="card-title">
+          <strong>WebDAV</strong>
+          <small>手动上传、刷新列表或恢复；默认与安卓端共用 legado/ 目录</small>
+        </div>
+      </template>
+
+      <el-form label-width="100px" class="webdav-form">
+        <el-form-item label="服务器">
+          <el-input v-model="webdav.serverUrl" placeholder="https://dav.jianguoyun.com/dav/" />
+        </el-form-item>
+        <el-form-item label="账号">
+          <el-input v-model="webdav.account" autocomplete="username" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="password"
+            type="password"
+            show-password
+            autocomplete="current-password"
+            :placeholder="webdav.passwordSaved ? '已安全保存在系统凭据库；留空不修改' : '保存在系统凭据库'"
+          />
+        </el-form-item>
+        <el-form-item label="子目录">
+          <el-input v-model="webdav.directory" placeholder="legado/" />
+        </el-form-item>
+        <el-form-item label="设备名">
+          <el-input v-model="webdav.deviceName" placeholder="用于备份文件名，可留空" />
+        </el-form-item>
+        <el-form-item>
+          <div class="action-row wrap">
+            <el-button :loading="busy === 'save-config'" @click="saveConfig">保存配置</el-button>
+            <el-button :loading="busy === 'test'" @click="testConnection">测试连接</el-button>
+            <el-button type="primary" :loading="busy === 'upload'" @click="uploadNow">
+              立即上传
+            </el-button>
+            <el-button :loading="busy === 'list'" @click="refreshCloudList">刷新列表</el-button>
           </div>
-        </template>
+        </el-form-item>
+      </el-form>
 
-        <el-form label-width="100px" class="webdav-form">
-          <el-form-item label="服务器">
-            <el-input v-model="webdav.serverUrl" placeholder="https://dav.jianguoyun.com/dav/" />
-          </el-form-item>
-          <el-form-item label="账号">
-            <el-input v-model="webdav.account" autocomplete="username" />
-          </el-form-item>
-          <el-form-item label="密码">
-            <el-input
-              v-model="password"
-              type="password"
-              show-password
-              autocomplete="current-password"
-              :placeholder="webdav.passwordSaved ? '已安全保存在系统凭据库；留空不修改' : '保存在系统凭据库'"
-            />
-          </el-form-item>
-          <el-form-item label="子目录">
-            <el-input v-model="webdav.directory" placeholder="legado/" />
-          </el-form-item>
-          <el-form-item label="设备名">
-            <el-input v-model="webdav.deviceName" placeholder="用于备份文件名，可留空" />
-          </el-form-item>
-          <el-form-item>
-            <div class="action-row wrap">
-              <el-button :loading="busy === 'save-config'" @click="saveConfig">保存配置</el-button>
-              <el-button :loading="busy === 'test'" @click="testConnection">测试连接</el-button>
-              <el-button type="primary" :loading="busy === 'upload'" @click="uploadNow">
-                立即上传
-              </el-button>
-              <el-button :loading="busy === 'list'" @click="refreshCloudList">刷新列表</el-button>
-            </div>
-          </el-form-item>
-        </el-form>
+      <el-table v-if="cloudFiles.length" :data="cloudFiles" size="small" class="cloud-table">
+        <el-table-column prop="name" label="备份文件" min-width="260" />
+        <el-table-column label="大小" width="110">
+          <template #default="scope">{{ formatBytes(scope.row.size) }}</template>
+        </el-table-column>
+        <el-table-column label="修改时间" width="190">
+          <template #default="scope">{{ formatTime(scope.row.modifiedAt, scope.row.modified) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="scope">
+            <el-button
+              link
+              type="primary"
+              :loading="busy === `cloud:${scope.row.name}`"
+              @click="restoreFromCloud(scope.row.name)"
+            >恢复</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else description="尚未加载云端备份" :image-size="60" />
+    </el-card>
 
-        <el-table v-if="cloudFiles.length" :data="cloudFiles" size="small" class="cloud-table">
-          <el-table-column prop="name" label="备份文件" min-width="260" />
-          <el-table-column label="大小" width="110">
-            <template #default="scope">{{ formatBytes(scope.row.size) }}</template>
-          </el-table-column>
-          <el-table-column label="修改时间" width="190">
-            <template #default="scope">{{ formatTime(scope.row.modifiedAt, scope.row.modified) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="100" fixed="right">
-            <template #default="scope">
-              <el-button
-                link
-                type="primary"
-                :loading="busy === `cloud:${scope.row.name}`"
-                @click="restoreFromCloud(scope.row.name)"
-              >恢复</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-else description="尚未加载云端备份" :image-size="60" />
-      </el-card>
+    <el-alert
+      v-if="statusText"
+      :title="statusText"
+      :type="statusType"
+      :closable="false"
+      show-icon
+    />
 
-      <el-alert
-        v-if="statusText"
-        :title="statusText"
-        :type="statusType"
-        :closable="false"
-        show-icon
-      />
-    </template>
-
-    <el-dialog v-model="restoreDialogVisible" title="确认恢复备份" width="600px" :close-on-click-modal="false">
+    <el-dialog v-model="restoreDialogVisible" title="确认恢复备份" width="min(600px, 92vw)" :close-on-click-modal="false">
       <template v-if="pendingBackup">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="备份类型">{{ backupKindLabel }}</el-descriptions-item>
@@ -182,22 +177,25 @@ const webdav = reactive<WebDavConfig>({
   serverUrl: 'https://dav.jianguoyun.com/dav/',
   account: '',
   directory: 'legado/',
-  deviceName: 'Tauri',
+  deviceName: isDesktop ? 'Tauri' : 'Web',
   passwordSaved: false,
 })
 
 const backupKindLabel = computed(() => {
-  if (pendingBackup.value?.preview.kind === 'tauri') return 'Tauri 混合备份'
-  if (pendingBackup.value?.preview.kind === 'newer-tauri') return '较新版本 Tauri 备份（仅共同数据）'
+  if (pendingBackup.value?.preview.kind === 'tauri') return '完整混合备份'
+  if (pendingBackup.value?.preview.kind === 'newer-tauri') return '较新版本混合备份（仅共同数据）'
   return '安卓备份'
 })
+const localBackupDescription = computed(() => isDesktop
+  ? '包含书源、网络书架、书签、阅读记录，以及本地 TXT/EPUB、章节缓存和桌面设置。WebDAV 密码、设备 ID、Cookie 与临时任务不会进入备份。'
+  : '包含浏览器 IndexedDB 中的本地 TXT/EPUB、书签、标注、替换规则、阅读记录、章节缓存和界面设置；同时保留 Android 兼容数据。')
 const previewCreatedAt = computed(() => {
   const value = pendingBackup.value?.preview.createdAt
   return value ? new Date(value).toLocaleString() : '备份未记录'
 })
 const overwriteDescription = computed(() => pendingBackup.value?.preview.canRestoreTauriData
-  ? '完整还原该 Tauri 快照，删除当前快照中多出的数据'
-  : '替换安卓共同数据，保留桌面本地书籍、文件和专属设置')
+  ? '完整还原该客户端快照，删除当前快照中多出的数据'
+  : '替换安卓共同数据，保留当前客户端本地书籍、文件和专属设置')
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -208,7 +206,7 @@ function setStatus(text: string, type: typeof statusType.value): void {
   statusType.value = type
 }
 
-async function createDesktopArchive() {
+async function createClientArchive() {
   return createBackupArchive(await getAppVersion())
 }
 
@@ -235,7 +233,7 @@ async function backupToLocal(): Promise<void> {
   try {
     await runBusy('local-backup', async () => {
       setStatus('正在生成一致性快照和校验值…', 'info')
-      const result = await createDesktopArchive()
+      const result = await createClientArchive()
       const path = await saveBackupFile(result.bytes, makeBackupFilename(webdav.deviceName))
       if (!path) {
         setStatus('已取消保存', 'info')
@@ -324,7 +322,7 @@ async function uploadNow(): Promise<void> {
     await runBusy('upload', async () => {
       await ensureSavedConfig()
       setStatus('正在生成并上传备份…', 'info')
-      const archive = await createDesktopArchive()
+      const archive = await createClientArchive()
       const name = makeBackupFilename(webdav.deviceName)
       await uploadWebDavBackup(name, archive.bytes)
       setStatus(`WebDAV 备份已上传：${name}`, archive.positionFallbacks ? 'warning' : 'success')

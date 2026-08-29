@@ -99,7 +99,9 @@ const emit = defineEmits<{
 
 const dropdownRef = ref<DropdownInstance | null>(null)
 const imageLoadFailed = ref(false)
-const supportsDetail = import.meta.env.VITE_APP_TARGET === 'desktop'
+const supportsDetail = computed(() =>
+  import.meta.env.VITE_APP_TARGET === 'desktop' || props.book.format !== 'online',
+)
 
 const hasCoverImage = computed(() => {
   return Boolean(props.book.coverUrl) && !imageLoadFailed.value

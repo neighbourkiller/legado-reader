@@ -1,6 +1,6 @@
 <template>
   <div class="file-panel" v-loading="loading">
-    <div class="native-folder-action">
+    <div v-if="platform.isDesktop" class="native-folder-action">
       <div>
         <strong>应用文件夹</strong>
         <span>使用系统默认文件管理器查看客户端的实际数据目录</span>
@@ -18,7 +18,9 @@
     </div>
 
     <div class="scope-tip">
-      仅显示并管理本客户端保存在 IndexedDB 中的文件，不会访问系统其他目录。
+      {{ platform.isDesktop
+        ? '仅显示并管理本客户端保存的书籍与缓存，不会访问系统其他目录。'
+        : '仅显示并管理当前浏览器 IndexedDB 中的书籍与缓存。' }}
     </div>
 
     <div class="path-bar">
@@ -106,11 +108,14 @@
     <section class="cache-section" aria-labelledby="chapter-cache-title">
       <div class="section-heading">
         <div>
-          <h3 id="chapter-cache-title">离线章节与图片缓存</h3>
-          <p>管理已下载或阅读时自动保存的网络章节正文与漫画/插图原生 BLOB 缓存</p>
+          <h3 id="chapter-cache-title">{{ platform.isDesktop ? '离线章节与图片缓存' : '离线章节缓存' }}</h3>
+          <p>{{ platform.isDesktop
+            ? '管理已下载或阅读时自动保存的网络章节正文与漫画/插图原生 BLOB 缓存'
+            : '管理当前浏览器中的离线章节，可导出为 TXT 或批量 ZIP' }}</p>
         </div>
         <div class="header-actions">
           <el-button
+            v-if="platform.isDesktop"
             type="warning"
             plain
             :disabled="totalImageCount === 0"

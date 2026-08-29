@@ -7,7 +7,7 @@
     class="startup-restore-guide"
   >
     <template #default>
-      <p>检测到书架为空。可导入 Legado Android 或 Tauri 客户端导出的 ZIP 备份，书源、网络书籍、书签和阅读记录会按兼容格式恢复。</p>
+      <p>检测到书架为空。可导入 Legado Android、Web 或 Tauri 客户端导出的 ZIP 备份；首次引导固定使用合并恢复，不会覆盖备份未涉及的数据。</p>
       <el-button type="primary" :icon="Download" :loading="isRestoring" @click="restoreFromFile">
         从现有备份恢复
       </el-button>

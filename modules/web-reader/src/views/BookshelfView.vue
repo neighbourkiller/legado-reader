@@ -307,7 +307,7 @@ const filteredBooks = computed(() => {
 })
 
 const showStartupRestoreGuide = computed(() => shouldShowStartupRestoreGuide(
-  isDesktop,
+  platform.supportsLocalBackup,
   bookshelfStore.isLoading,
   bookshelfStore.books.length,
 ))
@@ -335,7 +335,9 @@ const openRecentBook = () => {
 }
 
 const openBook = (id: string) => {
-  if (isDesktop && appSettingsStore.bookshelfClickAction === 'detail') {
+  const book = bookshelfStore.books.find(item => item.id === id)
+  const canOpenDetail = isDesktop || book?.format !== 'online'
+  if (canOpenDetail && appSettingsStore.bookshelfClickAction === 'detail') {
     router.push({
       path: '/book-detail',
       query: { id },
@@ -346,6 +348,8 @@ const openBook = (id: string) => {
 }
 
 const openBookDetail = (id: string) => {
+  const book = bookshelfStore.books.find(item => item.id === id)
+  if (!isDesktop && book?.format === 'online') return
   router.push({
     path: '/book-detail',
     query: { id },

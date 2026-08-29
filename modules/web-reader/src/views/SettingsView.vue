@@ -191,12 +191,15 @@ interface SettingGroup {
 const router = useRouter()
 const appSettingsStore = useAppSettingsStore()
 const searchKeyword = ref('')
+const isDesktopBuild = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 const groups: SettingGroup[] = [
   {
     title: '常用',
     items: [
-      { key: 'bookSources', title: '书源管理', description: '导入、编辑或管理书源', icon: Collection, path: '/book-sources' },
+      ...(isDesktopBuild
+        ? [{ key: 'bookSources' as const, title: '书源管理', description: '导入、编辑或管理书源', icon: Collection, path: '/book-sources' }]
+        : []),
       { key: 'preferences', title: '偏好', description: '设置书架与应用交互偏好', icon: Operation },
     ],
   },
@@ -206,7 +209,9 @@ const groups: SettingGroup[] = [
       { key: 'backup', title: '备份与恢复', description: '备份或恢复客户端数据', icon: UploadFilled },
       { key: 'theme', title: '主题设置', description: '调整界面主题与颜色', icon: Brush },
       { key: 'replaceRules', title: '替换管理', description: '管理标题、正文与书源替换规则', icon: MagicStick },
-      { key: 'other', title: '其他设置', description: '与客户端功能相关的设置', icon: Tools },
+      ...(isDesktopBuild
+        ? [{ key: 'other' as const, title: '其他设置', description: '与客户端功能相关的设置', icon: Tools }]
+        : []),
     ],
   },
   {
@@ -463,6 +468,37 @@ const handleReaderInfiniteLoadingChange = (value: string | number | boolean | un
   .preference-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .settings-header {
+    height: 56px;
+    padding: 0 12px;
+  }
+
+  .settings-window {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .settings-sidebar {
+    min-height: 260px;
+    max-height: 42vh;
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    flex: 0 0 auto;
+  }
+
+  .settings-panel {
+    padding: 18px 14px 72px;
+    overflow: visible;
+  }
+
+  .panel-breadcrumb {
+    margin-bottom: 16px;
   }
 }
 </style>

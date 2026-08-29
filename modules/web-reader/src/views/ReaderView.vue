@@ -57,7 +57,7 @@
         </div>
 
         <!-- 书籍详情 -->
-        <div v-if="supportsBookDetail" class="tool-icon" @click="toBookDetail">
+        <div v-if="canOpenBookDetail" class="tool-icon" @click="toBookDetail">
           <el-icon class="action-icon"><DetailIcon /></el-icon>
           <div class="icon-text">详情</div>
         </div>
@@ -105,7 +105,7 @@
     </div>
 
     <!-- 紧贴正文右侧的书签按钮 -->
-    <div v-if="supportsBookDetail" class="bookmark-bar" :style="rightBarTheme" @click.stop>
+    <div class="bookmark-bar" :style="rightBarTheme" @click.stop>
       <div
         class="tool-icon"
         :class="{ active: isCurrentPositionBookmarked }"
@@ -299,6 +299,7 @@ import { captureReaderSelection, findTextRange, resolveTextAnchor } from '@/util
 import type { ReaderSelectionSnapshot } from '@/utils/textSelection'
 import { applyRulesToChapter, ReplacementTimeoutError } from '@/utils/replaceRules'
 import { openExternalUrl } from '@/platform/externalBrowser'
+import { copyTextToClipboard } from '@/platform/clipboard'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
@@ -350,14 +351,17 @@ const editingHighlight = ref<HighlightRecord | null>(null)
 const bookmarkDrawerPosition = ref<ReadingPosition | null>(null)
 const currentPositionKey = ref('')
 const bookmarkedPositionKey = ref('')
-const supportsBookDetail = import.meta.env.VITE_APP_TARGET === 'desktop'
+const isDesktopBuild = import.meta.env.VITE_APP_TARGET === 'desktop'
+const canOpenBookDetail = computed(() =>
+  isDesktopBuild || currentBook.value?.format === 'txt' || currentBook.value?.format === 'epub',
+)
 const readerPopoverOptions = computed(() => ({
   modifiers: [
     {
       name: 'preventOverflow',
       options: {
         padding: {
-          top: supportsBookDetail && !isFullscreen.value ? 36 : 0,
+          top: isDesktopBuild && !isFullscreen.value ? 36 : 0,
           right: 0,
           bottom: 0,
           left: 0,
@@ -1057,7 +1061,7 @@ const isImageChapter = (chapterIndex?: number) => {
 }
 
 const showSelectionMenu = () => {
-  if (!supportsBookDetail || replaceDialogVisible.value || highlightEditVisible.value) return
+  if (replaceDialogVisible.value || highlightEditVisible.value) return
   const snapshot = captureReaderSelection(window.getSelection())
   if (!snapshot) {
     selectionSnapshot.value = null
@@ -1091,7 +1095,7 @@ const copySelection = async () => {
   const text = selectionSnapshot.value?.text
   if (!text) return
   try {
-    await navigator.clipboard.writeText(text)
+    await copyTextToClipboard(text)
     clearSelectionMenu()
     ElMessage.success('已复制')
   } catch (error) {
@@ -1192,7 +1196,7 @@ const searchSelection = async () => {
 const flushReadingSession = async (
   continueSession = document.visibilityState === 'visible',
 ) => {
-  if (!supportsBookDetail || !currentBook.value || readingSessionStartedAt === 0) return
+  if (!currentBook.value || readingSessionStartedAt === 0) return
   const duration = Math.max(0, Date.now() - readingSessionStartedAt)
   readingSessionStartedAt = continueSession ? Date.now() : 0
   await addReadingTime(currentBook.value, duration).catch(error => {
@@ -1530,7 +1534,7 @@ const updateReadingProgress = () => {
     lastSavedPositionKey = positionKey
     store.saveProgress(index, position.chapterPos).catch(console.error)
   }
-  if (supportsBookDetail) syncBookmarkState(position).catch(console.error)
+  syncBookmarkState(position).catch(console.error)
 }
 
 const onScroll = () => {
@@ -1594,7 +1598,7 @@ const onVisibilityChange = () => {
   if (document.visibilityState === 'hidden') {
     if (currentBook.value) store.saveProgress(undefined, undefined, true).catch(console.error)
     flushReadingSession().catch(console.error)
-  } else if (supportsBookDetail && currentBook.value && readingSessionStartedAt === 0) {
+  } else if (currentBook.value && readingSessionStartedAt === 0) {
     readingSessionStartedAt = Date.now()
   }
 }
@@ -1612,10 +1616,10 @@ onMounted(async () => {
       await bookshelfStore.loadBooks().catch(console.error)
     }
     await store.loadBook(bookId)
-    if (supportsBookDetail) {
-      replaceRules.value = await getAllReplaceRules().catch(() => [])
-      await loadCurrentBookHighlights()
-      await addReadingTime(currentBook.value!, 0).catch(console.error)
+    replaceRules.value = await getAllReplaceRules().catch(() => [])
+    await loadCurrentBookHighlights()
+    if (currentBook.value) {
+      await addReadingTime(currentBook.value, 0).catch(console.error)
       readingSessionStartedAt = Date.now()
     }
 
@@ -1680,7 +1684,7 @@ onMounted(async () => {
         }
       }
     }
-    if (supportsBookDetail) await syncBookmarkState()
+    await syncBookmarkState()
 
     window.addEventListener('keyup', handleKeyPress)
     window.addEventListener('keydown', ignoreKeyPress)

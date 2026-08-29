@@ -4,14 +4,14 @@
       <div class="app-mark">阅</div>
       <div class="app-copy">
         <h3>Legado 阅读</h3>
-        <p>Tauri 2 + Vue 3 桌面客户端</p>
+        <p>{{ clientDescription }}</p>
         <span>版本 {{ packageInfo.version }}</span>
       </div>
     </div>
 
     <div class="about-details">
       <div><span>客户端类型</span><strong>{{ clientType }}</strong></div>
-      <div><span>数据存储</span><strong>本地 IndexedDB</strong></div>
+      <div><span>数据存储</span><strong>{{ storageType }}</strong></div>
       <div><span>项目许可</span><strong>GPL-3.0</strong></div>
     </div>
 
@@ -27,6 +27,10 @@ import packageInfo from '../../../package.json'
 import { openExternalUrl } from '@/platform/externalBrowser'
 
 const clientType = import.meta.env.VITE_APP_TARGET === 'desktop' ? 'Tauri 桌面客户端' : 'Web 客户端'
+const clientDescription = import.meta.env.VITE_APP_TARGET === 'desktop'
+  ? 'Tauri 2 + Vue 3 桌面客户端'
+  : 'Vue 3 纯前端本地阅读器'
+const storageType = import.meta.env.VITE_APP_TARGET === 'desktop' ? '本地 SQLite 与应用文件' : '浏览器 IndexedDB'
 const openProject = () => openExternalUrl('https://github.com/neighbourkiller/legado-reader')
 const openIssues = () => openExternalUrl('https://github.com/neighbourkiller/legado-reader/issues')
 </script>

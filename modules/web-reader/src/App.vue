@@ -14,7 +14,7 @@
       <GlobalDownloadProgress />
       <ThemeSyncDialog />
       <GlobalHomeButton v-if="isDesktop" />
-      <GlobalSettingsButton v-if="isDesktop" />
+      <GlobalSettingsButton />
     </div>
   </el-config-provider>
 </template>
