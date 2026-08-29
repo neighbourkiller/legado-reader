@@ -38,6 +38,41 @@ impl BackupSessionManager {
     }
 }
 
+const PRIMARY_KEY_CHECKS: &[(&str, &str)] = &[
+    ("books", "id"),
+    ("settings", "key"),
+    ("book_sources", "book_source_url"),
+    ("remote_books", "id"),
+    ("chapter_contents", "(book_id || ':' || chapter_index)"),
+    ("bookmarks", "id"),
+    ("reading_records", "book_id"),
+    ("highlights", "id"),
+    ("replace_rules", "id"),
+];
+
+fn validate_primary_key_uniqueness(
+    conn: &Connection,
+    database: &str,
+) -> Result<(), StorageErrorPayload> {
+    for &(table, key_expression) in PRIMARY_KEY_CHECKS {
+        let sql = format!(
+            "SELECT COUNT(*), COUNT(DISTINCT {key_expression}) FROM {database}.{table};"
+        );
+        let (total, distinct): (i64, i64) = conn
+            .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| StorageErrorPayload::new("IO", "staging_pk_check", e.to_string()))?;
+        if total != distinct {
+            return Err(StorageErrorPayload::new(
+                "CONSTRAINT",
+                "staging_pk_check",
+                format!("暂存表 {table} 存在重复主键或冲突 (总数: {total}, 唯一: {distinct})"),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 // --- 导出命令 ---
 
 #[tauri::command]
@@ -911,30 +946,7 @@ pub async fn storage_staging_commit(
             }
 
             // (b) 主键唯一性检验
-            let pk_checks = [
-                ("books", "SELECT COUNT(*), COUNT(DISTINCT id) FROM staging.books;"),
-                ("settings", "SELECT COUNT(*), COUNT(DISTINCT key) FROM staging.settings;"),
-                ("book_sources", "SELECT COUNT(*), COUNT(DISTINCT book_source_url) FROM staging.book_sources;"),
-                ("remote_books", "SELECT COUNT(*), COUNT(DISTINCT id) FROM staging.remote_books;"),
-                ("chapter_contents", "SELECT COUNT(*), COUNT(DISTINCT (book_id || ':' || chapter_index)) FROM staging.chapter_contents;"),
-                ("bookmarks", "SELECT COUNT(*), COUNT(DISTINCT id) FROM staging.bookmarks;"),
-                ("reading_records", "SELECT COUNT(*), COUNT(DISTINCT id) FROM staging.reading_records;"),
-                ("highlights", "SELECT COUNT(*), COUNT(DISTINCT id) FROM staging.highlights;"),
-                ("replace_rules", "SELECT COUNT(*), COUNT(DISTINCT id) FROM staging.replace_rules;"),
-            ];
-
-            for (table, sql) in pk_checks {
-                let (total, distinct): (i64, i64) = live_conn
-                    .query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
-                    .map_err(|e| StorageErrorPayload::new("IO", "staging_pk_check", e.to_string()))?;
-                if total != distinct {
-                    return Err(StorageErrorPayload::new(
-                        "CONSTRAINT",
-                        "staging_pk_check",
-                        format!("暂存表 {table} 存在重复主键或冲突 (总数: {total}, 唯一: {distinct})"),
-                    ));
-                }
-            }
+            validate_primary_key_uniqueness(&live_conn, "staging")?;
 
             // (c) 记录数校验
             if let Some(counts) = &expected_counts {
@@ -1164,4 +1176,25 @@ fn fastrand_suffix() -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(12345)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primary_key_checks_match_current_storage_schema() {
+        let mut conn = Connection::open_in_memory().expect("打开内存数据库失败");
+        initialize_schema(&mut conn).expect("初始化数据库结构失败");
+        conn.execute(
+            "INSERT INTO reading_records (
+                book_id, book_name, book_author, read_time, last_read, devices_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["reading-book-1", "测试书", "测试作者", 60, 1000, "{}"],
+        )
+        .expect("写入阅读记录失败");
+
+        validate_primary_key_uniqueness(&conn, "main")
+            .expect("主键校验字段必须与当前数据库结构一致");
+    }
 }

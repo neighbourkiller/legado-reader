@@ -168,6 +168,25 @@ describe('sqliteBackend', () => {
     }))
   })
 
+  it('归一化已存在的 readSettings 时不会重复增加预期记录数', async () => {
+    const mockInvoke = vi.mocked(invoke)
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'storage_staging_create') return 'stg_settings_token'
+      return undefined
+    })
+
+    await importSnapshotViaStaging(
+      { settings: [{ key: 'readSettings', fontSize: 20 }] },
+      ['settings'],
+      { legado_web_reader_settings: JSON.stringify({ fontSize: 18 }) },
+    )
+
+    expect(mockInvoke).toHaveBeenCalledWith('storage_staging_commit', expect.objectContaining({
+      token: 'stg_settings_token',
+      expectedCounts: { settings: 1 },
+    }))
+  })
+
   it('importSnapshotViaStaging 失败时会触发 storage_staging_abort 清理临时资源', async () => {
     const mockInvoke = vi.mocked(invoke)
     mockInvoke.mockImplementation(async (cmd: string) => {

@@ -538,6 +538,12 @@ export async function importSnapshotViaStaging(
     token = await invoke<string>('storage_staging_create')
     const BATCH_SIZE = 200
     const expectedCounts: Record<string, number> = {}
+    const snapshotHasReadSettings = snapshot.settings?.some(
+      record => typeof record === 'object'
+        && record !== null
+        && 'key' in record
+        && record.key === 'readSettings',
+    ) ?? false
 
     for (const [storeName, records] of Object.entries(snapshot)) {
       if (Array.isArray(records) && records.length > 0) {
@@ -597,7 +603,9 @@ export async function importSnapshotViaStaging(
           storeName: 'settings',
           records: [{ key: 'readSettings', ...DEFAULT_READ_SETTINGS, ...parsed }],
         })
-        expectedCounts['settings'] = (expectedCounts['settings'] ?? 0) + 1
+        if (!snapshotHasReadSettings) {
+          expectedCounts['settings'] = (expectedCounts['settings'] ?? 0) + 1
+        }
       } catch (e) {
         console.warn('归一化 legado_web_reader_settings 失败', e)
       }
