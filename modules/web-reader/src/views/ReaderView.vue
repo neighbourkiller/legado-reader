@@ -145,7 +145,6 @@
       :class="[pageTransitionClass, { 'pagination-chapter': isPaginationMode }]"
       ref="contentRef"
       :style="[chapterTheme, pageTransitionTheme]"
-      :title="isPaginationMode ? '点击左侧上一页，右侧下一页' : undefined"
       @click="handleChapterClick"
     >
       <div class="page-viewport" ref="pageViewportRef">
@@ -244,6 +243,11 @@
       @save="saveHighlightEdit"
       @delete="editingHighlight && removeHighlight(editingHighlight)"
     />
+
+    <ReaderPageTurnGuide
+      v-model="pageTurnGuideVisible"
+      :pagination-enabled="isPaginationMode"
+    />
   </div>
 </template>
 
@@ -270,6 +274,7 @@ import ReaderBookmarksDrawer from '@/components/ReaderBookmarksDrawer.vue'
 import ReaderSelectionMenu from '@/components/ReaderSelectionMenu.vue'
 import ReplaceRuleDialog from '@/components/ReplaceRuleDialog.vue'
 import HighlightEditDialog from '@/components/HighlightEditDialog.vue'
+import ReaderPageTurnGuide from '@/components/ReaderPageTurnGuide.vue'
 import themeConfig from '@/config/themeConfig'
 import jump from '@/plugins/jump'
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
@@ -300,6 +305,12 @@ import type { ReaderSelectionSnapshot } from '@/utils/textSelection'
 import { applyRulesToChapter, ReplacementTimeoutError } from '@/utils/replaceRules'
 import { openExternalUrl } from '@/platform/externalBrowser'
 import { copyTextToClipboard } from '@/platform/clipboard'
+import { getPreference, setPreference } from '@/storage/preferences'
+import {
+  READER_PAGE_TURN_GUIDE_KEY,
+  READER_PAGE_TURN_GUIDE_VERSION,
+  shouldShowReaderPageTurnGuide,
+} from '@/reader/pageTurnGuide'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
@@ -348,6 +359,7 @@ const replaceDialogVisible = ref(false)
 const pendingSelectionText = ref('')
 const highlightEditVisible = ref(false)
 const editingHighlight = ref<HighlightRecord | null>(null)
+const pageTurnGuideVisible = ref(false)
 const bookmarkDrawerPosition = ref<ReadingPosition | null>(null)
 const currentPositionKey = ref('')
 const bookmarkedPositionKey = ref('')
@@ -1609,6 +1621,12 @@ onMounted(async () => {
   if (!bookId) {
     router.push('/bookshelf')
     return
+  }
+
+  if (shouldShowReaderPageTurnGuide(getPreference(READER_PAGE_TURN_GUIDE_KEY))) {
+    pageTurnGuideVisible.value = true
+    setPreference(READER_PAGE_TURN_GUIDE_KEY, String(READER_PAGE_TURN_GUIDE_VERSION))
+      .catch(error => console.error('保存阅读翻页引导状态失败:', error))
   }
 
   try {

@@ -56,6 +56,7 @@ declare module 'vue' {
     NovelDownloadDialog: typeof import('./src/components/NovelDownloadDialog.vue')['default']
     PopCatalog: typeof import('./src/components/PopCatalog.vue')['default']
     ReaderBookmarksDrawer: typeof import('./src/components/ReaderBookmarksDrawer.vue')['default']
+    ReaderPageTurnGuide: typeof import('./src/components/ReaderPageTurnGuide.vue')['default']
     ReaderSelectionMenu: typeof import('./src/components/ReaderSelectionMenu.vue')['default']
     ReadingHistoryPanel: typeof import('./src/components/settings/ReadingHistoryPanel.vue')['default']
     ReadSettings: typeof import('./src/components/ReadSettings.vue')['default']
