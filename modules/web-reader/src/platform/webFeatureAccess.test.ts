@@ -23,6 +23,7 @@ describe('Web 阅读器功能入口', () => {
     const settings = source('../views/SettingsView.vue')
     expect(app).toContain('<GlobalSettingsButton />')
     expect(app).not.toContain('<GlobalSettingsButton v-if="isDesktop" />')
+    expect(source('../components/GlobalSettingsButton.vue')).toContain('!isBookSourcesRoute')
     expect(settings).toContain("{ key: 'backup', title: '备份与恢复'")
   })
 

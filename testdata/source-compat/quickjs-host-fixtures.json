@@ -1,0 +1,31 @@
+[
+  {
+    "id": "quickjs-base64-roundtrip",
+    "code": "java.base64Decode(java.base64Encode(String(result)))",
+    "bindings": { "result": "abc" },
+    "androidExpected": ["abc"],
+    "capability": "quickjs-host",
+    "androidUnitTest": false
+  },
+  {
+    "id": "quickjs-md5",
+    "code": "java.md5Encode(String(result))",
+    "bindings": { "result": "abc" },
+    "androidExpected": ["900150983cd24fb0d6963f7d28e17f72"],
+    "capability": "quickjs-host"
+  },
+  {
+    "id": "quickjs-rule-parser-host",
+    "code": "java.getString('class.book@class.name@text', String(result))",
+    "bindings": { "result": "<div class=\"book\"><span class=\"name\">测试书</span></div>" },
+    "androidExpected": ["测试书"],
+    "capability": "rule-parser-host"
+  },
+  {
+    "id": "quickjs-variable-host",
+    "code": "java.put('sessionKey', '123456'); java.get('sessionKey')",
+    "bindings": { "result": "", "variables": {} },
+    "androidExpected": ["123456"],
+    "capability": "variables"
+  }
+]

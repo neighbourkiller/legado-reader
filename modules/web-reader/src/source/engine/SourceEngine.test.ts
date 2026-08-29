@@ -232,6 +232,17 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     expect(exploreResults[0].bookUrl).toBe('https://example.com/book/200')
   })
 
+  it('允许批量快速测试把目录分页限制为一页', async () => {
+    const engine = new SourceEngine()
+    const pages: number[] = []
+    const chapters = await engine.getToc(source, 'https://example.com/book/100/toc?page=1', info => {
+      pages.push(info.page)
+    }, { maxPages: 1 })
+
+    expect(pages).toEqual([1])
+    expect(chapters.map(chapter => chapter.name)).toEqual(['第一章 许七安', '第二章 牢狱'])
+  })
+
   it('按 Android getCheckKeyword 语义使用安全的校验关键字', async () => {
     const engine = new SourceEngine()
     await engine.search({ ...source, ruleSearch: { ...source.ruleSearch!, checkKeyWord: '大奉' } }, '不会发送的原词')
@@ -510,5 +521,4 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     spy.mockRestore()
   })
 })
-
 

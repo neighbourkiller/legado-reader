@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": 2,
+  "errorCategories": [
+    "NETWORK_ERROR",
+    "HTTP_ERROR",
+    "DNS_ERROR",
+    "TIMEOUT",
+    "SECURITY_CHALLENGE",
+    "EMPTY_RESULT",
+    "RULE_SYNTAX_ERROR",
+    "JS_EXECUTION_ERROR",
+    "WEBVIEW_ERROR",
+    "NEEDS_LOGIN",
+    "UNSUPPORTED_ANDROID_API",
+    "UNKNOWN_ERROR"
+  ]
+}

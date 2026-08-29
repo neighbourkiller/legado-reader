@@ -1,57 +1,49 @@
 <template>
   <div class="source-edit-panel" v-if="formData">
-    <div class="panel-header">
-      <div class="panel-header-left">
-        <el-tabs v-model="activeTab" class="edit-tabs sharp-tabs" @tab-change="handleTabChange">
-          <el-tab-pane label="表单配置" name="form" />
-          <el-tab-pane label="JSON 源码" name="json" />
-        </el-tabs>
-      </div>
-      <div class="panel-header-actions">
-        <el-button @click="handleConvertToCss" class="sharp-btn">
-          <el-icon><MagicStick /></el-icon>
-          <span>XPath转CSS</span>
-        </el-button>
-        <el-button @click="handleReset" class="sharp-btn">重置</el-button>
-        <el-button type="primary" @click="handleSave" class="sharp-btn">
-          <el-icon><Check /></el-icon>
-          <span>{{ isNew ? '创建书源' : '保存修改' }}</span>
-        </el-button>
-      </div>
-    </div>
-
-    <!-- 二级子分类 Tabs 导航 (固定在顶部，不随下方表单滚动) -->
-    <div v-show="activeTab === 'form'" class="sub-tabs-container">
-      <el-tabs v-model="activeSubTab" class="sub-rule-tabs sharp-tabs">
+    <div class="edit-navigation">
+      <el-tabs v-model="activeSection" class="sub-rule-tabs sharp-tabs" @tab-change="handleSectionChange">
         <el-tab-pane label="基本设置" name="base" />
         <el-tab-pane label="搜索规则" name="search" />
         <el-tab-pane label="发现规则" name="explore" />
         <el-tab-pane label="详情规则" name="info" />
         <el-tab-pane label="目录规则" name="toc" />
         <el-tab-pane label="正文规则" name="content" />
+        <el-tab-pane label="JSON" name="json" />
       </el-tabs>
     </div>
 
     <div class="panel-body">
       <!-- 表单可视化编辑 -->
-      <div v-show="activeTab === 'form'" class="form-pane">
+      <div v-show="activeSection !== 'json'" class="form-pane">
         <el-form label-position="top" size="default" class="source-form">
           <!-- 1. 基本设置 -->
-          <div v-show="activeSubTab === 'base'" class="sub-tab-pane">
+          <div v-show="activeSection === 'base'" class="sub-tab-pane">
             <div class="form-section">
               <div class="form-section-title">基本信息</div>
-              <div class="form-grid-2">
+              <div class="form-grid-basic">
                 <el-form-item label="书源名称" required>
                   <el-input v-model="formData.bookSourceName" placeholder="例如：顶点小说" class="sharp-input" />
                 </el-form-item>
                 <el-form-item label="书源分组">
-                  <el-input v-model="formData.bookSourceGroup" placeholder="例如：通用, 精选" class="sharp-input" />
-                </el-form-item>
-              </div>
-
-              <div class="form-grid-2">
-                <el-form-item label="书源基础 URL" required>
-                  <el-input v-model="formData.bookSourceUrl" placeholder="https://www.example.com" class="sharp-input" />
+                  <div
+                    class="book-source-group-select-toggle"
+                    @mousedown.capture="handleBookSourceGroupSelectMouseDown"
+                    @click.capture="handleBookSourceGroupSelectClick"
+                  >
+                    <el-select
+                      ref="bookSourceGroupSelectRef"
+                      v-model="formData.bookSourceGroup"
+                      filterable
+                      allow-create
+                      clearable
+                      default-first-option
+                      placeholder="选择或输入新分组"
+                      class="sharp-input"
+                      style="width: 100%;"
+                    >
+                      <el-option v-for="group in groupOptions" :key="group" :label="group" :value="group" />
+                    </el-select>
+                  </div>
                 </el-form-item>
                 <el-form-item label="书源类型">
                   <el-select v-model="formData.bookSourceType" class="sharp-input" style="width: 100%;">
@@ -60,63 +52,68 @@
                   </el-select>
                 </el-form-item>
               </div>
+              <el-form-item label="书源基础 URL" required>
+                <el-input v-model="formData.bookSourceUrl" placeholder="https://www.example.com" class="sharp-input" />
+              </el-form-item>
 
               <div class="form-switches-grid">
-                <el-form-item label="启用书源">
-                  <el-switch v-model="formData.enabled" active-text="启用" inactive-text="禁用" />
-                </el-form-item>
-                <el-form-item label="启用发现">
-                  <el-switch v-model="formData.enabledExplore" active-text="启用" inactive-text="禁用" />
-                </el-form-item>
-                <el-form-item label="保存 Cookie (CookieJar)">
-                  <el-switch v-model="formData.enabledCookieJar" active-text="开启" inactive-text="关闭" />
-                </el-form-item>
-                <el-form-item label="WebView 穿透 (Cloudflare 5秒盾/验证码)">
-                  <el-switch v-model="formData.useWebView" active-text="开启" inactive-text="关闭" />
-                </el-form-item>
+                <div class="setting-tile">
+                  <div><strong>启用书源</strong><span>参与搜索与在线阅读</span></div>
+                  <el-switch v-model="formData.enabled" aria-label="启用书源" />
+                </div>
+                <div class="setting-tile">
+                  <div><strong>启用发现</strong><span>允许显示书源的发现分类</span></div>
+                  <el-switch v-model="formData.enabledExplore" aria-label="启用发现" />
+                </div>
+                <div class="setting-tile">
+                  <div><strong>保存 Cookie</strong><span>跨请求保存站点 CookieJar</span></div>
+                  <el-switch v-model="formData.enabledCookieJar" aria-label="保存 Cookie" />
+                </div>
+                <div class="setting-tile">
+                  <div><strong>WebView 穿透</strong><span>用于 Cloudflare 盾与验证码</span></div>
+                  <el-switch v-model="formData.useWebView" aria-label="启用 WebView 穿透" />
+                </div>
               </div>
             </div>
 
-            <div class="form-section">
-              <div class="form-section-title">网络与鉴权配置</div>
-              <el-form-item label="自定义请求头 (Header JSON，如 {&quot;User-Agent&quot;: &quot;...&quot;, &quot;Referer&quot;: &quot;...&quot;})">
-                <el-input
-                  v-model="formData.header"
-                  type="textarea"
-                  :rows="3"
-                  placeholder="JSON 格式请求头对象"
-                  class="sharp-textarea code-textarea"
-                />
-              </el-form-item>
-              <div class="form-grid-2">
-                <el-form-item label="并发限制 / 请求间隔 (concurrentRate)">
-                  <el-input v-model="formData.concurrentRate" placeholder="例如：1000（毫秒）" class="sharp-input" />
-                </el-form-item>
-                <el-form-item label="登录地址 (loginUrl)">
-                  <el-input v-model="formData.loginUrl" placeholder="如 https://example.com/login" class="sharp-input" />
-                </el-form-item>
-              </div>
-              <el-form-item label="书籍详情 URL 正则匹配 (bookUrlPattern)">
-                <el-input v-model="formData.bookUrlPattern" placeholder="如 https?://.*example\\.com/book/\\d+" class="sharp-input" />
-              </el-form-item>
-            </div>
-
-            <div class="form-section">
-              <div class="form-section-title">说明与备注</div>
-              <el-form-item label="书源说明注释 (bookSourceComment)">
-                <el-input
-                  v-model="formData.bookSourceComment"
-                  type="textarea"
-                  :rows="3"
-                  placeholder="书源作者使用说明、账号密码提示或注意事项..."
-                  class="sharp-textarea"
-                />
-              </el-form-item>
-            </div>
+            <el-collapse v-model="activeAdvancedSections" class="advanced-config-collapse">
+              <el-collapse-item name="network">
+                <template #title><strong>网络与鉴权配置</strong><span class="collapse-summary">请求头、并发、登录与 URL 匹配</span></template>
+                <div class="advanced-config-body">
+                  <el-form-item label="自定义请求头">
+                    <el-input v-model="formData.header" type="textarea" :rows="3" placeholder="JSON 格式请求头对象" class="sharp-textarea code-textarea" />
+                    <div class="field-help">Header JSON，例如 {&quot;User-Agent&quot;: &quot;...&quot;, &quot;Referer&quot;: &quot;...&quot;}</div>
+                  </el-form-item>
+                  <div class="form-grid-2">
+                    <el-form-item label="并发限制 / 请求间隔">
+                      <el-input v-model="formData.concurrentRate" placeholder="例如：1000（毫秒）" class="sharp-input" />
+                      <div class="field-help"><code>concurrentRate</code></div>
+                    </el-form-item>
+                    <el-form-item label="登录地址">
+                      <el-input v-model="formData.loginUrl" placeholder="如 https://example.com/login" class="sharp-input" />
+                      <div class="field-help"><code>loginUrl</code></div>
+                    </el-form-item>
+                  </div>
+                  <el-form-item label="书籍详情 URL 正则匹配">
+                    <el-input v-model="formData.bookUrlPattern" placeholder="如 https?://.*example\\.com/book/\\d+" class="sharp-input" />
+                    <div class="field-help"><code>bookUrlPattern</code></div>
+                  </el-form-item>
+                </div>
+              </el-collapse-item>
+              <el-collapse-item name="notes">
+                <template #title><strong>说明与备注</strong><span class="collapse-summary">使用说明、账号提示与注意事项</span></template>
+                <div class="advanced-config-body">
+                  <el-form-item label="书源说明注释">
+                    <el-input v-model="formData.bookSourceComment" type="textarea" :rows="3" placeholder="书源作者使用说明、账号密码提示或注意事项..." class="sharp-textarea" />
+                    <div class="field-help"><code>bookSourceComment</code></div>
+                  </el-form-item>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
           </div>
 
           <!-- 2. 搜索规则 -->
-          <div v-show="activeSubTab === 'search'" class="sub-tab-pane">
+          <div v-show="activeSection === 'search'" class="sub-tab-pane">
             <div class="form-section">
               <div class="form-section-title">搜索请求配置</div>
               <el-form-item label="搜索 URL (使用 {{key}} 代替搜索词，{{page}} 代替页码)">
@@ -177,7 +174,7 @@
           </div>
 
           <!-- 3. 发现规则 -->
-          <div v-show="activeSubTab === 'explore'" class="sub-tab-pane">
+          <div v-show="activeSection === 'explore'" class="sub-tab-pane">
             <div class="form-section">
               <div class="form-section-header-row">
                 <div class="form-section-title" style="margin-bottom: 0;">发现请求配置</div>
@@ -244,7 +241,7 @@
           </div>
 
           <!-- 4. 详情规则 -->
-          <div v-show="activeSubTab === 'info'" class="sub-tab-pane">
+          <div v-show="activeSection === 'info'" class="sub-tab-pane">
             <div class="form-section">
               <div class="form-section-title">详情预处理</div>
               <el-form-item label="预处理初始化规则 (init)">
@@ -313,7 +310,7 @@
           </div>
 
           <!-- 5. 目录规则 -->
-          <div v-show="activeSubTab === 'toc'" class="sub-tab-pane">
+          <div v-show="activeSection === 'toc'" class="sub-tab-pane">
             <div class="form-section">
               <div class="form-section-title">章节列表提取 (Toc)</div>
               <el-form-item label="章节列表规则 (chapterList)">
@@ -372,7 +369,7 @@
           </div>
 
           <!-- 6. 正文规则 -->
-          <div v-show="activeSubTab === 'content'" class="sub-tab-pane">
+          <div v-show="activeSection === 'content'" class="sub-tab-pane">
             <div class="form-section">
               <div class="form-section-title">正文内容提取 (Content)</div>
               <el-form-item label="正文内容规则 (content)">
@@ -447,7 +444,7 @@
       </div>
 
       <!-- 原始 JSON 代码编辑 -->
-      <div v-show="activeTab === 'json'" class="json-pane">
+      <div v-show="activeSection === 'json'" class="json-pane">
         <div class="json-actions">
           <span class="json-tip">可以直接编辑或粘贴书源的标准 Legado JSON 对象：</span>
           <el-button size="small" @click="formatJson" class="sharp-btn">格式化 JSON</el-button>
@@ -467,7 +464,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Check, MagicStick, CopyDocument } from '@element-plus/icons-vue'
+import { CopyDocument } from '@element-plus/icons-vue'
 import type { BookSource } from '@/source/types/BookSource'
 import { convertBookSourceXPath } from '@/source/engine/XPathConverter'
 
@@ -475,9 +472,11 @@ const props = withDefaults(
   defineProps<{
     source: BookSource | null
     isNew?: boolean
+    groupOptions?: string[]
   }>(),
   {
     isNew: false,
+    groupOptions: () => [],
   }
 )
 
@@ -493,10 +492,32 @@ export type EditableBookSource = BookSource & {
   ruleContent: NonNullable<BookSource['ruleContent']>
 }
 
-const activeTab = ref<'form' | 'json'>('form')
-const activeSubTab = ref<'base' | 'search' | 'explore' | 'info' | 'toc' | 'content'>('base')
+type EditSection = 'base' | 'search' | 'explore' | 'info' | 'toc' | 'content' | 'json'
+const activeSection = ref<EditSection>('base')
+const previousSection = ref<EditSection>('base')
+const activeAdvancedSections = ref<string[]>([])
 const formData = ref<EditableBookSource | null>(null)
 const jsonText = ref('')
+type SelectToggleInstance = {
+  expanded: boolean
+  blur: () => void
+}
+const bookSourceGroupSelectRef = ref<SelectToggleInstance | null>(null)
+let suppressBookSourceGroupSelectClick = false
+
+function handleBookSourceGroupSelectMouseDown(event: MouseEvent) {
+  if (!(event.target instanceof HTMLInputElement) || !bookSourceGroupSelectRef.value?.expanded) return
+
+  suppressBookSourceGroupSelectClick = true
+  event.preventDefault()
+  bookSourceGroupSelectRef.value.blur()
+}
+
+function handleBookSourceGroupSelectClick(event: MouseEvent) {
+  if (!suppressBookSourceGroupSelectClick) return
+  suppressBookSourceGroupSelectClick = false
+  event.stopImmediatePropagation()
+}
 
 function cloneSource(src: BookSource | null): EditableBookSource | null {
   if (!src) return null
@@ -561,6 +582,18 @@ function cleanEmptyRules(src: BookSource | null): BookSource {
   return cloned as BookSource
 }
 
+function resolveAdvancedSections(source: BookSource): string[] {
+  const sections: string[] = []
+  if ([source.header, source.concurrentRate, source.loginUrl, source.bookUrlPattern]
+    .some(value => typeof value === 'string' && value.trim())) {
+    sections.push('network')
+  }
+  if (typeof source.bookSourceComment === 'string' && source.bookSourceComment.trim()) {
+    sections.push('notes')
+  }
+  return sections
+}
+
 watch(
   () => props.source,
   newSource => {
@@ -568,18 +601,19 @@ watch(
       formData.value = cloneSource(newSource)
       const cleaned = cleanEmptyRules(newSource)
       jsonText.value = JSON.stringify(cleaned, null, 2)
+      activeAdvancedSections.value = resolveAdvancedSections(newSource)
     }
   },
   { immediate: true }
 )
 
-const handleTabChange = (tabName: string | number) => {
+const handleSectionChange = (tabName: string | number) => {
   if (tabName === 'json') {
     if (formData.value) {
       const cleaned = cleanEmptyRules(formData.value)
       jsonText.value = JSON.stringify(cleaned, null, 2)
     }
-  } else if (tabName === 'form') {
+  } else if (previousSection.value === 'json') {
     try {
       const parsed = JSON.parse(jsonText.value)
       formData.value = cloneSource(parsed)
@@ -587,6 +621,7 @@ const handleTabChange = (tabName: string | number) => {
       ElMessage.warning('当前 JSON 格式有误，未应用到表单')
     }
   }
+  previousSection.value = String(tabName) as EditSection
 }
 
 const copySearchToExplore = () => {
@@ -600,6 +635,7 @@ const handleReset = () => {
     formData.value = cloneSource(props.source)
     const cleaned = cleanEmptyRules(props.source)
     jsonText.value = JSON.stringify(cleaned, null, 2)
+    activeAdvancedSections.value = resolveAdvancedSections(props.source)
     ElMessage.info('已恢复至当前书源初始内容')
   }
 }
@@ -614,7 +650,7 @@ function escapeHtml(str: string): string {
 }
 
 const handleConvertToCss = async () => {
-  if (activeTab.value === 'json') {
+  if (activeSection.value === 'json') {
     try {
       formData.value = cloneSource(JSON.parse(jsonText.value))
     } catch {
@@ -696,7 +732,7 @@ const formatJson = () => {
 const handleSave = () => {
   let targetSource: BookSource
 
-  if (activeTab.value === 'json') {
+  if (activeSection.value === 'json') {
     try {
       targetSource = JSON.parse(jsonText.value)
     } catch {
@@ -721,8 +757,11 @@ const handleSave = () => {
 }
 
 defineExpose({
+  save: handleSave,
+  reset: handleReset,
+  convertToCss: handleConvertToCss,
   getFormData: () => {
-    if (activeTab.value === 'json') {
+    if (activeSection.value === 'json') {
       try {
         return JSON.parse(jsonText.value)
       } catch {
@@ -743,29 +782,13 @@ defineExpose({
   overflow: hidden;
 }
 
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  padding-bottom: 12px;
+.edit-navigation {
+  flex-shrink: 0;
   margin-bottom: 12px;
-  flex-shrink: 0;
-}
-
-.panel-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.sub-tabs-container {
-  flex-shrink: 0;
-  margin-bottom: 14px;
-  background: var(--el-bg-color-overlay);
-  border: 1px solid var(--el-border-color-lighter);
+  overflow: hidden;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color);
   padding: 0 12px;
-  z-index: 10;
 }
 
 .panel-body {
@@ -778,6 +801,9 @@ defineExpose({
 .form-pane {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
 }
 
 .sub-rule-tabs :deep(.el-tabs__header) {
@@ -788,6 +814,8 @@ defineExpose({
 .sub-rule-tabs :deep(.el-tabs__nav-wrap::after) {
   display: none;
 }
+
+.sub-rule-tabs :deep(.el-tabs__nav-wrap) { overflow-x: auto; }
 
 .sub-rule-tabs :deep(.el-tabs__item) {
   font-size: 13px;
@@ -805,7 +833,7 @@ defineExpose({
 
 .form-section {
   background: var(--el-bg-color-overlay);
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--el-border-color);
   border-radius: 0 !important;
   padding: 16px 20px;
 }
@@ -831,14 +859,55 @@ defineExpose({
   gap: 16px;
 }
 
+.form-grid-basic {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(180px, .8fr);
+  gap: 16px;
+}
+
 .form-switches-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px dashed var(--el-border-color-lighter);
 }
+
+.setting-tile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 62px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.setting-tile > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.setting-tile strong { color: var(--el-text-color-primary); font-size: 13px; }
+.setting-tile span { color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.35; }
+
+.advanced-config-collapse {
+  background: var(--el-bg-color-overlay);
+  border: 1px solid var(--el-border-color);
+  border-bottom: 0;
+}
+
+.advanced-config-collapse :deep(.el-collapse-item__header) {
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 16px;
+  background: var(--el-fill-color-light);
+}
+
+.advanced-config-collapse :deep(.el-collapse-item__wrap) { background: var(--el-bg-color-overlay); }
+.advanced-config-collapse :deep(.el-collapse-item__content) { padding-bottom: 0; }
+.collapse-summary { margin-left: 8px; color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
+.advanced-config-body { padding: 16px 20px 2px; }
+.field-help { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.4; }
+.field-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 
 .helper-hint {
   font-size: 12px;
@@ -864,6 +933,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
 }
 
 .json-actions {
@@ -884,10 +956,16 @@ defineExpose({
   border-radius: 0 !important;
 }
 
-@media screen and (max-width: 900px) {
-  .form-grid-2 {
+@media screen and (max-width: 767px) {
+  .form-grid-2,
+  .form-grid-basic,
+  .form-switches-grid {
     grid-template-columns: 1fr;
-    gap: 0;
+    gap: 8px;
   }
+  .form-section { padding: 14px 12px; }
+  .advanced-config-body { padding: 14px 12px 2px; }
+  .collapse-summary { display: none; }
+  .sub-rule-tabs :deep(.el-tabs__item) { padding: 0 12px; }
 }
 </style>

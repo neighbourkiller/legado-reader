@@ -377,6 +377,15 @@ function evaluateSingleStep(
 
     if (isRegexGroupNode(input) && /^\$\d{1,2}$/.test(step.expression.trim())) {
       values = [expression]
+    } else if (step.directive && context.selectElementsOnly) {
+      // Android AnalyzeRule.getElements 会把 id.myList@li@a 的每一段都当作
+      // 选择器；只有 getString 才会把最后一段 a/href/text 当作属性或值指令。
+      // 使用 getElements 语义的列表必须保留前者，否则末段 a 会被误读为 a 属性。
+      if (input instanceof Element || input instanceof Document) {
+        values = queryLegacyStep(input, expression, step.spec, step.bracketSyntax)
+      } else if (typeof input === 'string') {
+        values = queryLegacyStep(parseDocument(input), expression, step.spec, step.bracketSyntax)
+      }
     } else if (step.directive) {
       if (input instanceof Element) {
         values = extractElements([input], step.directive)

@@ -2,6 +2,7 @@ import { platform } from './capabilities'
 
 const TXT_FILTERS = [{ name: '文本文档', extensions: ['txt'] }]
 const ZIP_FILTERS = [{ name: 'ZIP 压缩包', extensions: ['zip'] }]
+const JSON_FILTERS = [{ name: 'JSON 数据', extensions: ['json'] }]
 
 /**
  * 跨平台保存单个文本文件
@@ -30,6 +31,31 @@ export async function saveTextFile(content: string, defaultName: string): Promis
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  return defaultName
+}
+
+/** 保存 UTF-8 JSON，不添加 BOM，供脱敏批测报告导出。 */
+export async function saveJsonFile(content: string, defaultName: string): Promise<string | null> {
+  if (platform.isDesktop) {
+    const [{ save }, { writeFile }] = await Promise.all([
+      import('@tauri-apps/plugin-dialog'),
+      import('@tauri-apps/plugin-fs'),
+    ])
+    const path = await save({ defaultPath: defaultName, filters: JSON_FILTERS })
+    if (!path) return null
+    await writeFile(path, new TextEncoder().encode(content))
+    return path
+  }
+
+  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = defaultName
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
   URL.revokeObjectURL(url)
   return defaultName
 }

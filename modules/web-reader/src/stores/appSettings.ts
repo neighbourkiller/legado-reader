@@ -7,6 +7,16 @@ export type BookshelfClickAction = 'detail' | 'reader'
 export type ReaderThemeSyncPreference = 'none' | 'sync' | 'independent'
 export type SearchEngine = 'bing' | 'baidu' | 'google'
 
+export const DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH = 400
+export const MIN_BOOK_SOURCES_SIDEBAR_WIDTH = 340
+export const MAX_BOOK_SOURCES_SIDEBAR_WIDTH = 480
+
+export function clampBookSourcesSidebarWidth(value: unknown): number {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numeric)) return DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH
+  return Math.min(MAX_BOOK_SOURCES_SIDEBAR_WIDTH, Math.max(MIN_BOOK_SOURCES_SIDEBAR_WIDTH, Math.round(numeric)))
+}
+
 const STORAGE_KEY = 'legado_app_settings'
 
 interface StoredAppSettings {
@@ -15,6 +25,7 @@ interface StoredAppSettings {
   readerScrollInfiniteLoading?: boolean
   searchEngine?: SearchEngine
   lastHighlightStyle?: HighlightStyleRecord
+  bookSourcesSidebarWidth?: number
 }
 
 function loadStoredSettings(): StoredAppSettings {
@@ -47,6 +58,9 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
       ? stored.searchEngine
       : 'bing',
   )
+  const bookSourcesSidebarWidth = ref(
+    clampBookSourcesSidebarWidth(stored.bookSourcesSidebarWidth),
+  )
   const lastHighlightStyle = ref<HighlightStyleRecord>(
     stored.lastHighlightStyle?.kind === 'underline'
       ? {
@@ -68,6 +82,7 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
       readerScrollInfiniteLoading: readerScrollInfiniteLoading.value,
       searchEngine: searchEngine.value,
       lastHighlightStyle: { ...lastHighlightStyle.value },
+      bookSourcesSidebarWidth: bookSourcesSidebarWidth.value,
     } satisfies StoredAppSettings)
 
     setPreference(STORAGE_KEY, payload).catch(err => {
@@ -102,17 +117,24 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     persistSettings()
   }
 
+  const setBookSourcesSidebarWidth = (width: number) => {
+    bookSourcesSidebarWidth.value = clampBookSourcesSidebarWidth(width)
+    persistSettings()
+  }
+
   return {
     bookshelfClickAction,
     readerThemeSyncPreference,
     readerScrollInfiniteLoading,
     searchEngine,
     lastHighlightStyle,
+    bookSourcesSidebarWidth,
     saveError,
     setBookshelfClickAction,
     setReaderThemeSyncPreference,
     setReaderScrollInfiniteLoading,
     setSearchEngine,
     setLastHighlightStyle,
+    setBookSourcesSidebarWidth,
   }
 })

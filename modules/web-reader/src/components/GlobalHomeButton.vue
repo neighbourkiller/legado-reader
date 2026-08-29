@@ -1,6 +1,6 @@
 <template>
   <button
-    v-if="!isHomeRoute"
+    v-if="!isHomeRoute && !isBookSourcesRoute"
     type="button"
     class="global-home-button"
     aria-label="回到主页"
@@ -18,6 +18,7 @@ import IconHome from '@/components/icons/IconHome.vue'
 const route = useRoute()
 const router = useRouter()
 const isHomeRoute = computed(() => route.path === '/')
+const isBookSourcesRoute = computed(() => route.path === '/book-sources')
 </script>
 
 <style scoped>

@@ -17,6 +17,8 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
     expect(content).toContain('name="info"')
     expect(content).toContain('name="toc"')
     expect(content).toContain('name="content"')
+    expect(content).toContain('name="json"')
+    expect(content).not.toContain('label="表单配置"')
   })
 
   it('基本设置包含书源类型、CF WebView 穿透及网络配置', () => {
@@ -77,5 +79,14 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
     const content = readFileSync(panelPath, 'utf-8')
     expect(content).toContain('function cleanEmptyRules(')
     expect(content).toContain('cleanEmptyRules(formData.value)')
+  })
+
+  it('高级配置按已有字段自动展开，并向父级暴露统一工具方法', () => {
+    const content = readFileSync(panelPath, 'utf-8')
+    expect(content).toContain('resolveAdvancedSections')
+    expect(content).toContain('activeAdvancedSections')
+    expect(content).toContain('save: handleSave')
+    expect(content).toContain('reset: handleReset')
+    expect(content).toContain('convertToCss: handleConvertToCss')
   })
 })

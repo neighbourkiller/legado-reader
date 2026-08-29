@@ -4,14 +4,18 @@
     "html": "<div id=\"list\"><dl><dt>最新章节</dt><dd><a href=\"/latest.html\">最新</a></dd><dt>《测试》正文</dt><dd><a href=\"/1.html\">第一章</a></dd><dd><a href=\"/2.html\">第二章</a></dd></dl></div>",
     "rule": "//*[@id='list']/dl/dd[preceding-sibling::dt[1][contains(.,'正文')]]",
     "androidExpected": [],
-    "standardExpected": ["第一章", "第二章"]
+    "standardExpected": ["第一章", "第二章"],
+    "capability": "xpath",
+    "execution": "elements"
   },
   {
     "id": "portable-following-sibling",
     "html": "<div id=\"list\"><dl><dt>最新章节</dt><dd><a href=\"/latest.html\">最新</a></dd><dt>《测试》正文</dt><dd><a href=\"/1.html\">第一章</a></dd><dd><a href=\"/2.html\">第二章</a></dd></dl></div>",
     "rule": "//*[@id='list']/dl/dt[contains(.,'正文')]/following-sibling::dd/a",
     "androidExpected": ["第一章", "第二章"],
-    "standardExpected": ["第一章", "第二章"]
+    "standardExpected": ["第一章", "第二章"],
+    "capability": "xpath",
+    "execution": "elements"
   },
   {
     "id": "rule-prefix-css",
@@ -19,7 +23,9 @@
     "rule": "@CSS:.book-card .title@text",
     "androidExpected": ["斗破苍穹"],
     "standardExpected": ["斗破苍穹"],
-    "mode": "string"
+    "mode": "string",
+    "capability": "css",
+    "execution": "string"
   },
   {
     "id": "rule-prefix-xpath",
@@ -27,7 +33,9 @@
     "rule": "@XPath://span[@class='title']/text()",
     "androidExpected": ["凡人修仙传"],
     "standardExpected": ["凡人修仙传"],
-    "mode": "string"
+    "mode": "string",
+    "capability": "xpath",
+    "execution": "string"
   },
   {
     "id": "rule-chaining",

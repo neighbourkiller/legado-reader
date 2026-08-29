@@ -1,5 +1,6 @@
 mod app_files;
 mod cookie_store;
+mod source_audit;
 mod source_http;
 mod source_policy;
 mod source_script;
@@ -7,6 +8,7 @@ pub mod storage;
 mod webdav;
 
 use app_files::open_app_data_dir;
+use source_audit::{clear_source_audit_history, load_source_audit_history, save_source_audit_run};
 use source_http::{
     check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
     open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
@@ -98,6 +100,9 @@ pub fn run() {
             toggle_fullscreen,
             exit_fullscreen,
             open_app_data_dir,
+            load_source_audit_history,
+            save_source_audit_run,
+            clear_source_audit_history,
             get_webdav_config,
             save_webdav_config,
             test_webdav_connection,

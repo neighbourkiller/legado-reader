@@ -36,6 +36,11 @@ export interface SecurityDiagnostics {
   challengeUrl?: string
 }
 
+export interface TocExecutionOptions {
+  /** 目录分页上限。默认保持现有 100 页行为，批量快速测试可显式限制为 1。 */
+  maxPages?: number
+}
+
 /** 启发式检测页面是否为防爬验证/浏览器质询拦截页 */
 export function detectSecurityChallenge(html: string, response?: SourceResponse): SecurityDiagnostics {
   const lowerHtml = (html || '').toLowerCase()
@@ -946,6 +951,7 @@ export class SourceEngine {
     source: BookSource,
     tocOrBook: string | ({ tocUrl?: string; bookUrl: string; variableMap?: Record<string, string> }),
     onProgress?: (info: { page: number; url: string; count: number }) => void,
+    options: TocExecutionOptions = {},
   ): Promise<TocItem[]> {
     this.assertRunnableSource(source)
     const tocUrl = typeof tocOrBook === 'string' ? tocOrBook : tocOrBook.tocUrl || tocOrBook.bookUrl
@@ -996,7 +1002,8 @@ export class SourceEngine {
       }
     }
 
-    for (let page = 1; (url || initialBody) && page <= 100; page += 1) {
+    const maxPages = Math.min(100, Math.max(1, Math.trunc(options.maxPages ?? 100)))
+    for (let page = 1; (url || initialBody) && page <= maxPages; page += 1) {
       let html = ''
       let effectiveBaseUrl = url || tocUrl
 

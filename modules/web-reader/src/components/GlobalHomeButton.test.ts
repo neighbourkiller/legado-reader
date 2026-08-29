@@ -37,5 +37,6 @@ describe('主页图标与主页按钮测试', () => {
     expect(content).toContain("import IconHome from '@/components/icons/IconHome.vue'")
     expect(content).toContain(':global(html.dark) .global-home-button')
     expect(content).toContain('transform: translateY(-2px)')
+    expect(content).toContain('!isBookSourcesRoute')
   })
 })

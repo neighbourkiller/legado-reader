@@ -1,7 +1,6 @@
 <template>
   <div class="book-sources-view">
-    <!-- 原始页面标题栏（保持完全不变） -->
-    <div class="page-header">
+    <header class="page-header">
       <div class="header-left">
         <el-button text @click="router.push('/')">
           <el-icon><ArrowLeft /></el-icon>
@@ -12,218 +11,60 @@
         </span>
       </div>
       <div class="header-actions">
-        <el-dropdown @command="handleSourceSortCommand">
-          <el-button :icon="SortIcon">
-            排序：{{ sourceSortLabels[sourceSort] }}
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
+        <el-button @click="openImportDialog">
+          <el-icon><Download /></el-icon>
+          导入书源
+        </el-button>
+        <el-dropdown @command="handleNavigateCommand">
+          <el-button>前往<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="default">默认顺序</el-dropdown-item>
-              <el-dropdown-item command="name">名称</el-dropdown-item>
-              <el-dropdown-item command="group">分组</el-dropdown-item>
-              <el-dropdown-item command="enabled">启用优先</el-dropdown-item>
+              <el-dropdown-item command="bookshelf"><el-icon><Reading /></el-icon>书架</el-dropdown-item>
+              <el-dropdown-item command="search"><el-icon><Search /></el-icon>搜索书籍</el-dropdown-item>
+              <el-dropdown-item command="settings"><el-icon><Setting /></el-icon>设置</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button @click="router.push('/bookshelf')">
-          <el-icon><Reading /></el-icon>
-          返回书架
-        </el-button>
-        <el-button type="primary" @click="openImportDialog">
-          <el-icon><Upload /></el-icon>
-          导入书源
-        </el-button>
-        <el-button type="success" @click="goToSearch">
-          <el-icon><Search /></el-icon>
-          搜索书籍
-        </el-button>
       </div>
-    </div>
+    </header>
 
-    <!-- 双栏工作台：左侧单列纵向书源列表 + 右侧工作区（编辑区/调试区切换） -->
-    <div class="source-workbench" v-loading="bookSourceStore.isLoading">
-      <!-- 左侧：单列纵向书源列表区 -->
-      <aside class="source-sidebar sharp-container">
-        <!-- 侧边栏顶部搜索与批量操作 -->
-        <div class="sidebar-toolbar">
-          <div class="sidebar-search-row">
-            <el-input
-              v-model="searchKeyword"
-              placeholder="按书源名称、分组或网址筛选..."
-              clearable
-              class="search-input sharp-input"
-              :prefix-icon="Search"
-            />
-            <el-button type="primary" class="sharp-btn create-btn" @click="handleCreateDraft">
-              <el-icon><Plus /></el-icon>
-              <span>新建</span>
-            </el-button>
-          </div>
-          <div class="toolbar-batch-actions">
-            <div class="batch-left">
-              <el-button size="small" @click="handleEnableAll(true)" class="sharp-btn">全部启用</el-button>
-              <el-button size="small" @click="handleEnableAll(false)" class="sharp-btn">全部禁用</el-button>
-            </div>
-            <el-button size="small" type="danger" plain @click="handleClearAll" class="sharp-btn">清空全部</el-button>
-          </div>
-        </div>
+    <div ref="sourceWorkbenchRef" class="source-workbench" v-loading="bookSourceStore.isLoading">
+      <div v-if="!isNarrowLayout" class="desktop-sidebar-shell" :style="{ width: `${liveSidebarWidth}px` }">
+        <BookSourceSidebar v-bind="sidebarProps" v-on="sidebarListeners" />
+      </div>
+      <div
+        v-if="!isNarrowLayout"
+        class="sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-valuenow="liveSidebarWidth"
+        :aria-valuemin="MIN_BOOK_SOURCES_SIDEBAR_WIDTH"
+        :aria-valuemax="MAX_BOOK_SOURCES_SIDEBAR_WIDTH"
+        tabindex="0"
+        @pointerdown="startSidebarResize"
+        @keydown="handleSidebarResizeKeydown"
+      />
 
-        <!-- 单列纵向列表 -->
-        <div class="sidebar-list-container">
-          <!-- 草稿占位卡片 -->
-          <div
-            v-if="isDrafting"
-            class="source-item draft-item sharp-card is-active"
-            @click="activeViewMode = 'edit'"
-          >
-            <div class="source-info">
-              <div class="source-header">
-                <span class="draft-badge sharp-tag">草稿</span>
-                <span class="source-name">{{ draftSource?.bookSourceName || '新书源 (编辑中)' }}</span>
-              </div>
-              <div class="source-url">{{ draftSource?.bookSourceUrl || '待配置书源基础 URL' }}</div>
-            </div>
-            <div class="source-actions" @click.stop>
-              <el-button
-                text
-                size="small"
-                type="danger"
-                class="cancel-draft-btn sharp-btn"
-                @click="handleCancelDraft"
-              >
-                放弃
-              </el-button>
-            </div>
-          </div>
-
-          <el-empty
-            v-if="!isDrafting && filteredSources.length === 0 && bookSourceStore.sources.length === 0"
-            description="暂无书源，请点击上方“导入书源”或“新建”"
-          />
-          <el-empty
-            v-else-if="!isDrafting && filteredSources.length === 0"
-            description="未找到匹配的书源"
-          />
-
-          <div v-else class="source-items-column">
-            <div
-              v-for="source in filteredSources"
-              :key="source.bookSourceUrl"
-              class="source-item sharp-card"
-              :class="{
-                'is-active': !isDrafting && selectedSource?.bookSourceUrl === source.bookSourceUrl,
-                disabled: !source.enabled,
-                'is-top': source.isTop
-              }"
-              @click="selectSource(source)"
-              @contextmenu.prevent="handleContextMenu(source.bookSourceUrl)"
-            >
-              <div class="source-info">
-                <div class="source-header">
-                  <span class="source-top-badge" v-if="source.isTop" title="已置顶">📌</span>
-                  <span class="source-name" :title="source.bookSourceName">{{ source.bookSourceName }}</span>
-                  <span class="source-group sharp-tag" v-if="source.bookSourceGroup">
-                    {{ source.bookSourceGroup }}
-                  </span>
-                  <el-tag size="small" :type="compatibilityTagType(source)" effect="plain" class="sharp-tag">
-                    {{ compatibilityLabel(source) }}
-                  </el-tag>
-                </div>
-                <div class="source-url" :title="source.bookSourceUrl">{{ source.bookSourceUrl }}</div>
-              </div>
-
-              <div class="source-actions" @click.stop>
-                <el-switch
-                  :model-value="source.enabled"
-                  @change="bookSourceStore.toggleSource(source.bookSourceUrl)"
-                  size="small"
-                />
-
-                <!-- 三点更多操作 Dropdown -->
-                <el-dropdown
-                  :ref="(el: any) => setDropdownRef(source.bookSourceUrl, el)"
-                  trigger="click"
-                  placement="bottom-end"
-                  @command="(cmd: any) => handleCommand(String(cmd), source)"
-                >
-                  <button
-                    type="button"
-                    class="more-btn sharp-btn"
-                    title="更多操作（亦可右键整张卡片）"
-                    aria-label="更多操作"
-                  >
-                    <svg class="more-icon" viewBox="0 0 24 24" fill="currentColor">
-                      <circle cx="12" cy="5" r="2.2"></circle>
-                      <circle cx="12" cy="12" r="2.2"></circle>
-                      <circle cx="12" cy="19" r="2.2"></circle>
-                    </svg>
-                  </button>
-
-                  <template #dropdown>
-                    <el-dropdown-menu class="source-action-menu sharp-dropdown">
-                      <el-dropdown-item command="toggleTop">
-                        <el-icon><Top /></el-icon>
-                        {{ source.isTop ? '取消置顶' : '置顶书源' }}
-                      </el-dropdown-item>
-                      <el-dropdown-item command="edit">
-                        <el-icon><Edit /></el-icon>
-                        编辑书源
-                      </el-dropdown-item>
-                      <el-dropdown-item command="search">
-                        <el-icon><Search /></el-icon>
-                        从此源搜索
-                      </el-dropdown-item>
-                      <el-dropdown-item command="debug">
-                        <el-icon><VideoPlay /></el-icon>
-                        调试书源
-                      </el-dropdown-item>
-                      <el-dropdown-item command="toggleCompatibility">
-                        语义模式：{{ source.webReaderCompatibilityMode === 'standard' ? 'standard' : 'legado' }}
-                      </el-dropdown-item>
-                      <el-dropdown-item command="auth">
-                        <el-icon><Key /></el-icon>
-                        网页登录/验证 (CF盾)
-                      </el-dropdown-item>
-                      <el-dropdown-item command="copy">
-                        <el-icon><CopyDocument /></el-icon>
-                        复制规则
-                      </el-dropdown-item>
-                      <el-dropdown-item command="openWebsite">
-                        <el-icon><Link /></el-icon>
-                        打开源网站
-                      </el-dropdown-item>
-                      <el-dropdown-item command="delete" divided class="delete-action-item">
-                        <el-icon><Delete /></el-icon>
-                        删除书源
-                      </el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <!-- 右侧：内容工作区（编辑区 / 调试区 切换） -->
-      <main class="source-main-content sharp-container">
+      <main class="source-main-content">
         <template v-if="currentActiveSource">
-          <!-- 右侧内容区顶部切换条 -->
           <div class="content-header-bar">
+            <el-button v-if="isNarrowLayout" class="open-sidebar-button" @click="sidebarDrawerOpen = true">
+              <el-icon><Menu /></el-icon>
+              书源列表
+            </el-button>
             <div class="selected-source-meta">
               <div class="meta-title-row">
-                <span class="draft-tag sharp-tag" v-if="isDrafting">新建草稿</span>
+                <span v-if="isDrafting" class="draft-tag">新建草稿</span>
                 <span class="selected-name" :title="currentActiveSource.bookSourceName">
                   {{ currentActiveSource.bookSourceName || (isDrafting ? '未命名新书源' : '未命名') }}
                 </span>
-                <span class="selected-group sharp-tag" v-if="currentActiveSource.bookSourceGroup">
-                  {{ currentActiveSource.bookSourceGroup }}
-                </span>
-                <el-tag v-if="!isDrafting" size="small" :type="compatibilityTagType(currentActiveSource)" effect="plain" class="sharp-tag">
-                  {{ compatibilityLabel(currentActiveSource) }}
+                <el-tag v-if="!isDrafting" size="small" :type="selectedRuleStatus.tone" effect="plain">
+                  {{ selectedRuleStatus.label }}
                 </el-tag>
-                <el-tag size="small" type="info" effect="plain" class="sharp-tag">
+                <el-tag v-if="!isDrafting && selectedAuditStatus" size="small" :type="selectedAuditStatus.tone" effect="plain">
+                  {{ selectedAuditStatus.label }}
+                </el-tag>
+                <el-tag size="small" type="info" effect="plain">
                   {{ currentActiveSource.webReaderCompatibilityMode || 'legado' }}模式
                 </el-tag>
               </div>
@@ -232,9 +73,8 @@
               </div>
             </div>
 
-            <!-- 切换【编辑区】与【调试区】的按钮 -->
-            <div class="view-mode-switcher">
-              <el-radio-group v-model="activeViewMode" size="default" class="sharp-radio-group">
+            <div class="content-header-actions">
+              <el-radio-group v-model="activeViewMode" size="default">
                 <el-radio-button value="edit">
                   <el-icon><Edit /></el-icon>
                   <span>编辑区</span>
@@ -244,19 +84,33 @@
                   <span>调试区</span>
                 </el-radio-button>
               </el-radio-group>
+              <el-dropdown v-if="activeViewMode === 'edit'" @command="handleEditorToolCommand">
+                <el-button>工具<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="convert"><el-icon><MagicStick /></el-icon>XPath 转 CSS</el-dropdown-item>
+                    <el-dropdown-item command="reset" divided><el-icon><RefreshLeft /></el-icon>重置未保存修改</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-button v-if="activeViewMode === 'edit'" type="primary" @click="handleEditorSave">
+                <el-icon><Check /></el-icon>
+                {{ isDrafting ? '创建书源' : '保存修改' }}
+              </el-button>
             </div>
           </div>
 
-          <!-- 右侧主体：编辑区 或 调试区 面板 -->
           <div class="content-panel-body">
             <SourceEditPanel
               ref="editPanelRef"
               v-show="activeViewMode === 'edit'"
               :source="currentActiveSource"
               :is-new="isDrafting"
+              :group-options="sourceGroups"
               @save="handleSaveEditedSource"
             />
             <SourceDebugPanel
+              ref="debugPanelRef"
               v-show="activeViewMode === 'debug'"
               :source="currentActiveSource"
             />
@@ -264,15 +118,40 @@
         </template>
 
         <div v-else class="empty-selection-placeholder">
+          <el-button v-if="isNarrowLayout" class="empty-sidebar-button" @click="sidebarDrawerOpen = true">
+            <el-icon><Menu /></el-icon>
+            打开书源列表
+          </el-button>
           <el-empty description="请在左侧列表中选择一个书源进行编辑或调试" />
         </div>
       </main>
     </div>
 
+    <el-drawer
+      v-if="isNarrowLayout"
+      v-model="sidebarDrawerOpen"
+      title="书源列表"
+      direction="ltr"
+      :size="isCompactDrawer ? '92vw' : '420px'"
+      modal-class="book-source-drawer-overlay"
+      append-to-body
+    >
+      <BookSourceSidebar v-bind="sidebarProps" v-on="sidebarListeners" />
+    </el-drawer>
+
     <!-- 网页验证 / Cookie 注入 Dialog -->
     <SourceAuthDialog
       v-model="showAuthDialog"
       :source="currentAuthSource"
+    />
+
+    <SourceBatchAuditDialog
+      v-if="showSourceAuditEntry"
+      v-model="showBatchAuditDialog"
+      :sources="bookSourceStore.sources"
+      :latest-run="latestAuditRun"
+      @debug="handleAuditDebug"
+      @latest-run="applyLatestAuditRun"
     />
 
     <!-- 导入书源 Dialog -->
@@ -342,6 +221,23 @@
             </div>
           </el-tab-pane>
         </el-tabs>
+        <el-form label-position="top" class="import-group-form">
+          <el-form-item label="导入分组（可选）">
+            <el-select
+              v-model="importGroup"
+              filterable
+              allow-create
+              clearable
+              default-first-option
+              placeholder="选择已有分组或输入新分组"
+              class="sharp-input"
+              style="width: 100%;"
+            >
+              <el-option v-for="group in sourceGroups" :key="group" :label="group" :value="group" />
+            </el-select>
+            <div class="field-help">选择或输入的分组会应用到本次导入的全部书源；留空则保留书源原有分组。</div>
+          </el-form-item>
+        </el-form>
         <el-checkbox v-model="useSourceReplacement">
           导入前应用已启用的“作用于书源”替换规则
         </el-checkbox>
@@ -380,47 +276,74 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useMediaQuery } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowLeft,
-  Upload,
+  Download,
   Search,
   Link,
-  Top,
   Edit,
   VideoPlay,
-  CopyDocument,
-  Delete,
-  Key,
   Reading,
-  Sort as SortIcon,
   ArrowDown,
-  Plus,
+  Check,
+  MagicStick,
+  Menu,
+  RefreshLeft,
+  Setting,
 } from '@element-plus/icons-vue'
 import { useBookSourceStore } from '@/stores/bookSource'
 import type { SourceImportPreview, SourceImportResult } from '@/stores/bookSource'
+import {
+  MAX_BOOK_SOURCES_SIDEBAR_WIDTH,
+  MIN_BOOK_SOURCES_SIDEBAR_WIDTH,
+  clampBookSourcesSidebarWidth,
+  useAppSettingsStore,
+} from '@/stores/appSettings'
 import type { BookSource } from '@/source/types/BookSource'
-import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
 import SourceEditPanel from '@/components/SourceEditPanel.vue'
 import SourceDebugPanel from '@/components/SourceDebugPanel.vue'
 import SourceAuthDialog from '@/components/SourceAuthDialog.vue'
+import SourceBatchAuditDialog from '@/components/SourceBatchAuditDialog.vue'
+import BookSourceSidebar from '@/components/BookSourceSidebar.vue'
 import { copyTextToClipboard } from '@/platform/clipboard'
 import { openExternalUrl } from '@/platform/externalBrowser'
+import { platform } from '@/platform/capabilities'
+import { loadSourceAuditHistory } from '@/platform/sourceAuditHistory'
+import { createSourceAuditId } from '@/source/audit/SourceAuditRunner'
+import { SOURCE_ENGINE_VERSION, type SourceAuditEntry, type SourceAuditRun } from '@/source/audit/SourceAuditTypes'
+import { getAuditStatus, getRuleCompatibilityStatus } from '@/source/audit/SourceStatusPresentation'
 
 const router = useRouter()
 const bookSourceStore = useBookSourceStore()
+const appSettingsStore = useAppSettingsStore()
+const { bookSourcesSidebarWidth } = storeToRefs(appSettingsStore)
+const isNarrowLayout = useMediaQuery('(max-width: 1179px)')
+const isCompactDrawer = useMediaQuery('(max-width: 767px)')
+const sidebarDrawerOpen = ref(false)
+const sourceWorkbenchRef = ref<HTMLElement | null>(null)
+const liveSidebarWidth = ref(bookSourcesSidebarWidth.value)
 
 const showImportDialog = ref(false)
 const activeImportTab = ref<'url' | 'text'>('url')
 const importUrl = ref('')
 const importJson = ref('')
+const importGroup = ref('')
 const isImporting = ref(false)
 const useSourceReplacement = ref(true)
 const importPreviewSummary = ref<{ changed: number; errors: number } | null>(null)
 const importCompatibilitySummary = ref<{ partial: number; unsupported: number } | null>(null)
 const searchKeyword = ref('')
+const showSourceAuditEntry = platform.isDesktop && import.meta.env.DEV
+const showBatchAuditDialog = ref(false)
+const latestAuditRun = ref<SourceAuditRun>()
+const latestAuditByUrl = ref(new Map<string, SourceAuditEntry>())
+const selectionMode = ref(false)
+const selectedUrls = ref(new Set<string>())
 
 type SourceSort = 'default' | 'name' | 'group' | 'enabled'
 const sourceSort = ref<SourceSort>('default')
@@ -431,12 +354,20 @@ const sourceSortLabels: Record<SourceSort, string> = {
   enabled: '启用优先',
 }
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const selectedSourceGroup = ref<string | null>(null)
+
+const sourceGroups = computed(() => Array.from(new Set(
+  bookSourceStore.sources
+    .map(source => source.bookSourceGroup?.trim())
+    .filter((group): group is string => Boolean(group)),
+)).sort((a, b) => a.localeCompare(b, 'zh-CN')))
 
 // 选中书源与右侧展示模式
 const selectedSourceUrl = ref<string>('')
 const activeViewMode = ref<'edit' | 'debug'>('edit')
 
 const editPanelRef = ref<any>(null)
+const debugPanelRef = ref<any>(null)
 const isDrafting = ref(false)
 const draftSource = ref<BookSource | null>(null)
 
@@ -458,44 +389,59 @@ function createEmptySourceTemplate(): BookSource {
 const showAuthDialog = ref(false)
 const currentAuthSource = ref<BookSource | null>(null)
 
-// 下拉菜单 Refs 管理
-const dropdownRefs = new Map<string, any>()
-const setDropdownRef = (url: string, el: any) => {
-  if (el) {
-    dropdownRefs.set(url, el)
-  } else {
-    dropdownRefs.delete(url)
+onMounted(async () => {
+  await bookSourceStore.loadSources()
+  if (showSourceAuditEntry) {
+    try {
+      const history = await loadSourceAuditHistory()
+      await applyLatestAuditRun(history[0])
+    } catch {
+      // 批测历史损坏或暂时不可用不阻塞书源管理页。
+    }
   }
-}
-
-const handleContextMenu = (url: string) => {
-  const dropdown = dropdownRefs.get(url)
-  dropdown?.handleOpen()
-}
-
-onMounted(() => {
-  bookSourceStore.loadSources()
 })
 
 const enabledCount = computed(() => bookSourceStore.getEnabledSources().length)
-const compatibilityReport = (source: BookSource) => inspectSourceCompatibility(source)
-const compatibilityLabel = (source: BookSource) => {
-  const report = compatibilityReport(source)
-  return report.status === 'supported' ? '兼容' : `${report.status === 'partial' ? '部分兼容' : '不支持'} ${report.issues.length}`
+
+async function applyLatestAuditRun(run?: SourceAuditRun) {
+  latestAuditRun.value = run
+  if (!run) {
+    latestAuditByUrl.value = new Map()
+    return
+  }
+  const entries = new Map(run.entries.map(entry => [entry.sourceId, entry]))
+  const pairs = await Promise.all(bookSourceStore.sources.map(async source => [
+    source.bookSourceUrl,
+    entries.get(await createSourceAuditId(source.bookSourceUrl)),
+  ] as const))
+  latestAuditByUrl.value = new Map(pairs.filter((pair): pair is readonly [string, SourceAuditEntry] => Boolean(pair[1])))
 }
-const compatibilityTagType = (source: BookSource) => {
-  const status = compatibilityReport(source).status
-  return status === 'supported' ? 'success' : status === 'partial' ? 'warning' : 'danger'
+
+async function handleAuditDebug(payload: { source: BookSource; input: string }) {
+  showBatchAuditDialog.value = false
+  const selected = await selectSource(payload.source)
+  if (!selected) return
+  activeViewMode.value = 'debug'
+  await nextTick()
+  await debugPanelRef.value?.runDebugInput?.(payload.input)
 }
+
+watch(
+  () => bookSourceStore.sources.map(source => source.bookSourceUrl),
+  () => { if (latestAuditRun.value) void applyLatestAuditRun(latestAuditRun.value) },
+)
 
 const filteredSources = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
-  const sources = kw ? bookSourceStore.sources.filter(s => {
+  const keywordFilteredSources = kw ? bookSourceStore.sources.filter(s => {
     const name = s.bookSourceName?.toLowerCase() || ''
     const url = s.bookSourceUrl?.toLowerCase() || ''
     const group = s.bookSourceGroup?.toLowerCase() || ''
     return name.includes(kw) || url.includes(kw) || group.includes(kw)
   }) : bookSourceStore.sources
+  const sources = selectedSourceGroup.value === null
+    ? keywordFilteredSources
+    : keywordFilteredSources.filter(source => (source.bookSourceGroup?.trim() || '') === selectedSourceGroup.value)
 
   if (sourceSort.value === 'default') return sources
 
@@ -529,6 +475,76 @@ const currentActiveSource = computed(() => {
   return selectedSource.value
 })
 
+const auditEngineCurrent = computed(
+  () => latestAuditRun.value?.engineVersion === SOURCE_ENGINE_VERSION,
+)
+const selectedRuleStatus = computed(() => currentActiveSource.value
+  ? getRuleCompatibilityStatus(currentActiveSource.value)
+  : { label: '规则兼容', tone: 'info' as const })
+const selectedAuditStatus = computed(() => currentActiveSource.value
+  ? getAuditStatus(
+      latestAuditByUrl.value.get(currentActiveSource.value.bookSourceUrl),
+      auditEngineCurrent.value,
+    )
+  : undefined)
+
+watch(bookSourcesSidebarWidth, width => {
+  liveSidebarWidth.value = clampBookSourcesSidebarWidth(width)
+})
+
+watch(isNarrowLayout, narrow => {
+  if (!narrow) sidebarDrawerOpen.value = false
+})
+
+function handleNavigateCommand(command: string) {
+  if (command === 'bookshelf') router.push('/bookshelf')
+  else if (command === 'search') goToSearch()
+  else if (command === 'settings') router.push('/settings')
+}
+
+function handleEditorSave() {
+  editPanelRef.value?.save?.()
+}
+
+function handleEditorToolCommand(command: string) {
+  if (command === 'convert') editPanelRef.value?.convertToCss?.()
+  else if (command === 'reset') editPanelRef.value?.reset?.()
+}
+
+function startSidebarResize(event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  window.addEventListener('pointermove', handleSidebarResizeMove)
+  window.addEventListener('pointerup', finishSidebarResize, { once: true })
+}
+
+function handleSidebarResizeMove(event: PointerEvent) {
+  const rect = sourceWorkbenchRef.value?.getBoundingClientRect()
+  if (!rect) return
+  liveSidebarWidth.value = clampBookSourcesSidebarWidth(event.clientX - rect.left)
+}
+
+function finishSidebarResize() {
+  window.removeEventListener('pointermove', handleSidebarResizeMove)
+  appSettingsStore.setBookSourcesSidebarWidth(liveSidebarWidth.value)
+}
+
+function handleSidebarResizeKeydown(event: KeyboardEvent) {
+  let width = liveSidebarWidth.value
+  if (event.key === 'ArrowLeft') width -= 16
+  else if (event.key === 'ArrowRight') width += 16
+  else if (event.key === 'Home') width = MIN_BOOK_SOURCES_SIDEBAR_WIDTH
+  else if (event.key === 'End') width = MAX_BOOK_SOURCES_SIDEBAR_WIDTH
+  else return
+  event.preventDefault()
+  liveSidebarWidth.value = clampBookSourcesSidebarWidth(width)
+  appSettingsStore.setBookSourcesSidebarWidth(liveSidebarWidth.value)
+}
+
+onUnmounted(() => {
+  window.removeEventListener('pointermove', handleSidebarResizeMove)
+})
+
 const hasDraftContent = () => {
   const data = editPanelRef.value?.getFormData?.()
   if (!data) return false
@@ -548,6 +564,7 @@ const handleCreateDraft = () => {
   draftSource.value = createEmptySourceTemplate()
   isDrafting.value = true
   activeViewMode.value = 'edit'
+  if (isNarrowLayout.value) sidebarDrawerOpen.value = false
 }
 
 const handleCancelDraft = async () => {
@@ -583,12 +600,78 @@ const selectSource = async (source: BookSource): Promise<boolean> => {
     draftSource.value = null
   }
   selectedSourceUrl.value = source.bookSourceUrl
+  if (isNarrowLayout.value) sidebarDrawerOpen.value = false
   return true
+}
+
+async function handleSidebarSelect(url: string) {
+  const source = bookSourceStore.sources.find(item => item.bookSourceUrl === url)
+  if (source) await selectSource(source)
+}
+
+function toggleSelectionMode() {
+  selectionMode.value = !selectionMode.value
+  if (!selectionMode.value) selectedUrls.value = new Set()
+}
+
+function toggleSelected(url: string) {
+  const next = new Set(selectedUrls.value)
+  if (next.has(url)) next.delete(url)
+  else next.add(url)
+  selectedUrls.value = next
+}
+
+function selectAllFilteredSources() {
+  selectedUrls.value = new Set(filteredSources.value.map(source => source.bookSourceUrl))
+}
+
+function clearSelectedSources() {
+  selectedUrls.value = new Set()
+}
+
+async function setSelectedSourcesEnabled(enabled: boolean) {
+  const urls = [...selectedUrls.value]
+  if (urls.length === 0) return
+  await bookSourceStore.setSourcesEnabled(urls, enabled)
+  ElMessage.success(`已${enabled ? '启用' : '禁用'} ${urls.length} 个书源`)
+}
+
+async function deleteSelectedSources() {
+  const urls = [...selectedUrls.value]
+  if (urls.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除所选的 ${urls.length} 个书源吗？此操作不可恢复。`,
+      '删除所选书源',
+      {
+        confirmButtonText: `删除 ${urls.length} 个书源`,
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+    await bookSourceStore.deleteSources(urls)
+    selectedUrls.value = new Set()
+    selectionMode.value = false
+    ElMessage.success(`已删除 ${urls.length} 个书源`)
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error ? error.message : '删除所选书源失败')
+    }
+    // 取消或删除失败时保留当前选择，便于重试。
+  }
 }
 
 const handleSourceSortCommand = (command: string) => {
   if (command in sourceSortLabels) {
     sourceSort.value = command as SourceSort
+  }
+}
+
+const handleSourceGroupFilter = (group: string | null) => {
+  selectedSourceGroup.value = group
+  const visibleSources = filteredSources.value
+  if (!visibleSources.some(source => source.bookSourceUrl === selectedSourceUrl.value)) {
+    selectedSourceUrl.value = visibleSources[0]?.bookSourceUrl || ''
   }
 }
 
@@ -601,6 +684,7 @@ const isImportDisabled = computed(() => {
 
 const openImportDialog = () => {
   showImportDialog.value = true
+  importGroup.value = ''
   if (!importUrl.value) {
     importUrl.value = 'https://shuyuan-api.yiove.com/import/book-sources/1-20'
   }
@@ -689,6 +773,46 @@ const handleCommand = async (command: string, source: BookSource) => {
   }
 }
 
+const sidebarProps = computed(() => ({
+  sources: filteredSources.value,
+  totalSources: bookSourceStore.sources.length,
+  searchKeyword: searchKeyword.value,
+  sourceSort: sourceSort.value,
+  sourceSortLabels,
+  sourceGroups: sourceGroups.value,
+  selectedSourceUrl: selectedSource.value?.bookSourceUrl,
+  isDrafting: isDrafting.value,
+  draftSource: draftSource.value,
+  selectionMode: selectionMode.value,
+  selectedUrls: [...selectedUrls.value],
+  showAuditEntry: showSourceAuditEntry,
+  latestAuditByUrl: latestAuditByUrl.value,
+  auditEngineCurrent: auditEngineCurrent.value,
+}))
+
+const sidebarListeners = {
+  'update:searchKeyword': (value: string) => { searchKeyword.value = value },
+  create: handleCreateDraft,
+  'cancel-draft': handleCancelDraft,
+  'select-draft': () => {
+    activeViewMode.value = 'edit'
+    if (isNarrowLayout.value) sidebarDrawerOpen.value = false
+  },
+  audit: () => { showBatchAuditDialog.value = true },
+  'toggle-selection-mode': toggleSelectionMode,
+  'select-all': selectAllFilteredSources,
+  'clear-selection': clearSelectedSources,
+  'enable-selected': () => setSelectedSourcesEnabled(true),
+  'disable-selected': () => setSelectedSourcesEnabled(false),
+  'delete-selected': deleteSelectedSources,
+  sort: handleSourceSortCommand,
+  'group-filter': handleSourceGroupFilter,
+  select: handleSidebarSelect,
+  'toggle-selected': toggleSelected,
+  'toggle-source': (url: string) => bookSourceStore.toggleSource(url),
+  command: handleCommand,
+}
+
 const handleSaveEditedSource = async (updated: BookSource) => {
   if (isDrafting.value) {
     await bookSourceStore.addSource(updated)
@@ -736,6 +860,7 @@ const handleImport = async () => {
     const result: SourceImportResult = await bookSourceStore.importPreparedSources(
       preview,
       useSourceReplacement.value,
+      importGroup.value,
     )
 
     if (result.duplicates > 0) {
@@ -749,6 +874,7 @@ const handleImport = async () => {
     }
     showImportDialog.value = false
     importJson.value = ''
+    importGroup.value = ''
     importPreviewSummary.value = null
     importCompatibilitySummary.value = null
   } catch (err: any) {
@@ -794,24 +920,6 @@ const handleDelete = async (bookSourceUrl: string) => {
   }
 }
 
-const handleEnableAll = async (enabled: boolean) => {
-  await bookSourceStore.setAllSourcesEnabled(enabled)
-  ElMessage.success(enabled ? '已全部启用' : '已全部禁用')
-}
-
-const handleClearAll = async () => {
-  try {
-    await ElMessageBox.confirm('确定要清空所有书源吗？此操作不可恢复。', '清空警告', {
-      confirmButtonText: '清空全部',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
-    await bookSourceStore.deleteAllSources()
-    ElMessage.success('已清空全部书源')
-  } catch {
-    // 用户取消
-  }
-}
 </script>
 
 <style scoped>
@@ -876,7 +984,7 @@ const handleClearAll = async () => {
 }
 
 /* ================= 左侧单列列表侧栏 ================= */
-.source-sidebar {
+.legacy-source-sidebar {
   width: 360px;
   flex-shrink: 0;
   display: flex;
@@ -1159,12 +1267,17 @@ const handleClearAll = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;
+  gap: 8px;
 }
 
 /* 导入 Dialog 内部样式 */
 .import-modal-content {
   margin: -10px 0;
 }
+
+.import-group-form { margin: 16px 0 4px; }
+.import-group-form :deep(.el-form-item) { margin-bottom: 0; }
 
 .tab-pane-content {
   display: flex;
@@ -1220,14 +1333,102 @@ const handleClearAll = async () => {
   margin-top: 12px;
 }
 
-@media screen and (max-width: 900px) {
-  .source-workbench {
-    flex-direction: column;
-  }
-  .source-sidebar {
-    width: 100%;
-    height: 280px;
-  }
+.book-sources-view {
+  padding: 16px 24px 20px;
+  background: var(--el-bg-color-page);
+}
+
+.page-header {
+  min-height: 48px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-color: var(--el-border-color);
+}
+
+.header-actions { gap: 8px; }
+.source-workbench { gap: 0; }
+
+.desktop-sidebar-shell {
+  height: 100%;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.desktop-sidebar-shell :deep(.source-sidebar) { width: 100%; }
+
+.sidebar-resizer {
+  position: relative;
+  width: 16px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 7px;
+  width: 2px;
+  content: '';
+  background: var(--el-border-color-lighter);
+  transition: background-color .15s ease, width .15s ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after {
+  width: 3px;
+  background: var(--el-color-primary);
+}
+
+.sidebar-resizer:focus-visible { outline: 2px solid var(--el-color-primary-light-5); outline-offset: -2px; }
+
+.source-main-content { border-color: var(--el-border-color); }
+.content-header-bar { min-height: 66px; padding: 10px 16px; border-color: var(--el-border-color); }
+.content-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
+.content-header-actions :deep(.el-button) { margin-left: 0; }
+.content-header-actions :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: -1px 0 0 0 var(--el-color-primary-light-5);
+}
+.open-sidebar-button { flex-shrink: 0; }
+.meta-title-row { flex-wrap: wrap; }
+.meta-title-row :deep(.el-tag) { height: 20px; font-size: 11px; }
+.draft-tag { flex-shrink: 0; padding: 1px 7px; color: #fff; background: var(--el-color-primary); font-size: 11px; }
+.content-panel-body { padding: 12px 16px 16px; }
+
+:global(.book-source-drawer-overlay .el-drawer__header) {
+  margin-bottom: 0;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--el-border-color);
+}
+
+:global(.book-source-drawer-overlay .el-drawer__body) { min-height: 0; padding: 0; }
+:global(.book-source-drawer-overlay .source-sidebar) { width: 100%; height: 100%; border: 0; }
+
+@media screen and (max-width: 1179px) {
+  .source-workbench { flex-direction: row; }
+  .content-header-bar { gap: 10px; }
+}
+
+@media screen and (max-width: 767px) {
+  .book-sources-view { padding: 10px 12px 12px; }
+  .page-header { min-height: 44px; margin-bottom: 10px; padding-bottom: 10px; }
+  .header-left { gap: 6px; }
+  .page-title { font-size: 1.15rem; }
+  .source-count-tag { display: none; }
+  .header-actions :deep(.el-button) { padding-inline: 9px; }
+  .content-header-bar { align-items: flex-start; flex-wrap: wrap; padding: 10px 12px; }
+  .selected-source-meta { order: 1; min-width: calc(100% - 112px); }
+  .open-sidebar-button { order: 0; }
+  .content-header-actions { order: 2; width: 100%; justify-content: flex-end; }
+  .content-panel-body { padding: 10px 10px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-resizer::after { transition: none; }
 }
 </style>
 
@@ -1240,5 +1441,10 @@ const handleClearAll = async () => {
 .source-action-menu .delete-action-item:hover {
   background-color: rgba(245, 108, 108, 0.12) !important;
   color: #f56c6c !important;
+}
+
+html.desktop-with-titlebar .book-source-drawer-overlay {
+  top: 36px;
+  height: auto;
 }
 </style>

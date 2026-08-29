@@ -1,5 +1,5 @@
 import type { SearchRule, SearchResult, BookSource } from '@/source/types/BookSource'
-import { parseListAsync, parseStringAsync, resolveAbsoluteUrl, cleanBookTitle } from './RuleParser'
+import { parseElementListAsync, parseStringAsync, resolveAbsoluteUrl, cleanBookTitle } from './RuleParser'
 import type { RuleExecutionContext } from './RuleTypes'
 
 export async function parseSearchResults(
@@ -17,7 +17,7 @@ export async function parseSearchResults(
     stage: 'search', baseUrl, source: source as unknown as Record<string, unknown>,
   }
   const field = (name: string) => ({ ...baseContext, field: `ruleSearch.${name}` })
-  const list = await parseListAsync(html, rule.bookList, field('bookList'))
+  const list = await parseElementListAsync(html, rule.bookList, field('bookList'))
 
   const results = await Promise.all(list.map(async item => {
       // 1. 书名

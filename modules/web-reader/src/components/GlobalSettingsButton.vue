@@ -1,5 +1,6 @@
 <template>
   <button
+    v-if="!isBookSourcesRoute"
     type="button"
     class="global-settings-button"
     :class="{ active: isSettingsRoute }"
@@ -18,6 +19,7 @@ import { Setting } from '@element-plus/icons-vue'
 const route = useRoute()
 const router = useRouter()
 const isSettingsRoute = computed(() => route.path.startsWith('/settings'))
+const isBookSourcesRoute = computed(() => route.path === '/book-sources')
 
 const openSettings = () => {
   if (!isSettingsRoute.value) {

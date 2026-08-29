@@ -3,6 +3,7 @@ import type {
   CompatibilityIssue,
   SourceCompatibilityReport,
 } from '@/source/types/BookSource'
+import { SOURCE_ENGINE_VERSION } from '@/source/audit/SourceAuditTypes'
 
 const UNSUPPORTED_API_PATTERNS: Array<[RegExp, string, string]> = [
   [/\bPackages\b/, 'UNSUPPORTED_ANDROID_API', '使用了 Packages/任意 Java 类'],
@@ -108,7 +109,7 @@ export function inspectSourceCompatibility(source: BookSource): SourceCompatibil
     checkedAt: Date.now(),
     mode: source.webReaderCompatibilityMode || 'legado',
     verificationStatus: 'untested',
-    engineVersion: 2,
+    engineVersion: SOURCE_ENGINE_VERSION,
     capabilities: [...capabilities].sort(),
     stages: {},
   }

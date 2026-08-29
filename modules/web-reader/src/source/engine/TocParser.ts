@@ -1,5 +1,5 @@
 import type { TocRule } from '@/source/types/BookSource'
-import { parseListAsync, parseStringAsync, resolveAbsoluteUrl } from './RuleParser'
+import { parseElementListAsync, parseStringAsync, resolveAbsoluteUrl } from './RuleParser'
 import type { RuleExecutionContext } from './RuleTypes'
 
 export interface TocItem {
@@ -29,7 +29,9 @@ export async function parseToc(
   const context = isJson ? JSON.parse(html) : new DOMParser().parseFromString(html, 'text/html')
 
   const field = (name: string) => ({ ...options, stage: 'toc' as const, baseUrl, field: `ruleToc.${name}` })
-  const rawChapters = await parseListAsync(context, rule.chapterList || '', field('chapterList'))
+  // chapterList 对应 Android AnalyzeRule.getElements；即使末段是 a，也应继续
+  // 选取 a 元素，而不是按 getString 的属性 a 提取。
+  const rawChapters = await parseElementListAsync(context, rule.chapterList || '', field('chapterList'))
 
   const result = await Promise.all(
     rawChapters.map(async (item) => {

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAppSettingsStore } from './appSettings'
+import {
+  DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH,
+  MAX_BOOK_SOURCES_SIDEBAR_WIDTH,
+  MIN_BOOK_SOURCES_SIDEBAR_WIDTH,
+} from './appSettings'
 
 class TestStorage implements Storage {
   private values = new Map<string, string>()
@@ -49,6 +54,7 @@ describe('应用偏好持久化', () => {
         kind: 'background',
         color: 'rgba(255, 241, 118, 0.5)',
       },
+      bookSourcesSidebarWidth: DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH,
     })
 
     store.setBookshelfClickAction('reader')
@@ -61,6 +67,7 @@ describe('应用偏好持久化', () => {
         kind: 'background',
         color: 'rgba(255, 241, 118, 0.5)',
       },
+      bookSourcesSidebarWidth: DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH,
     })
 
     store.setReaderScrollInfiniteLoading(false)
@@ -69,5 +76,21 @@ describe('应用偏好持久化', () => {
       readerThemeSyncPreference: 'sync',
       readerScrollInfiniteLoading: false,
     })
+  })
+
+  it('书源侧栏宽度使用安全默认值、限制范围并持久化', () => {
+    localStorage.setItem('legado_app_settings', JSON.stringify({ bookSourcesSidebarWidth: 'invalid' }))
+    let store = useAppSettingsStore()
+    expect(store.bookSourcesSidebarWidth).toBe(DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH)
+
+    store.setBookSourcesSidebarWidth(100)
+    expect(store.bookSourcesSidebarWidth).toBe(MIN_BOOK_SOURCES_SIDEBAR_WIDTH)
+    expect(JSON.parse(localStorage.getItem('legado_app_settings')!).bookSourcesSidebarWidth)
+      .toBe(MIN_BOOK_SOURCES_SIDEBAR_WIDTH)
+
+    setActivePinia(createPinia())
+    store = useAppSettingsStore()
+    store.setBookSourcesSidebarWidth(900)
+    expect(store.bookSourcesSidebarWidth).toBe(MAX_BOOK_SOURCES_SIDEBAR_WIDTH)
   })
 })

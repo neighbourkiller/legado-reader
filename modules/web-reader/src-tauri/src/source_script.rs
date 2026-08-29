@@ -899,4 +899,31 @@ mod tests {
         let error = run("Packages.java.io.File('/tmp')", 1_000).unwrap_err();
         assert_eq!(error.code, "UNSUPPORTED_ANDROID_API");
     }
+
+    #[test]
+    fn shared_quickjs_host_fixtures_match_android_expected_values() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Fixture {
+            id: String,
+            code: String,
+            bindings: Value,
+            android_expected: Vec<String>,
+        }
+
+        let fixtures: Vec<Fixture> = serde_json::from_str(include_str!(
+            "../../../../testdata/source-compat/quickjs-host-fixtures.json"
+        ))
+        .unwrap();
+        for fixture in fixtures {
+            let response = run_with_bindings(&fixture.code, fixture.bindings, 1_000)
+                .unwrap_or_else(|error| panic!("{}: {}", fixture.id, error.message));
+            let actual = response
+                .result
+                .as_str()
+                .map(|value| vec![value.to_string()])
+                .unwrap_or_default();
+            assert_eq!(actual, fixture.android_expected, "{}", fixture.id);
+        }
+    }
 }

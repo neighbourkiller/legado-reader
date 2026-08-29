@@ -72,6 +72,11 @@ export interface RuleExecutionContext {
   variableTarget?: Record<string, unknown>
   variableSnapshot?: string
   variableInitial?: Record<string, string>
+  /**
+   * Android AnalyzeRule.getElements 兼容开关：链式规则的末段也必须继续
+   * 作为元素选择器，不能按 getString 的属性提取语义解释。
+   */
+  selectElementsOnly?: boolean
 }
 
 export type RuleErrorCode =

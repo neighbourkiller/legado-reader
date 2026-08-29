@@ -198,6 +198,15 @@ export async function parseListAsync(
   )
 }
 
+/** 对应 Android AnalyzeRule.getElements：规则各段都返回节点而非末段字符串值。 */
+export async function parseElementListAsync(
+  content: unknown,
+  rule: string,
+  options: Partial<RuleExecutionContext>,
+): Promise<unknown[]> {
+  return parseListAsync(content, rule, { ...options, selectElementsOnly: true })
+}
+
 export async function parseStringAsync(
   context: unknown,
   rule: string,

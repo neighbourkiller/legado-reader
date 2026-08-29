@@ -62,8 +62,16 @@ export const useBookSourceStore = defineStore('bookSource', () => {
   }
 
   async function addSource(source: BookSource) {
-    await saveBookSource(source as unknown as Record<string, unknown>)
+    await saveBookSource(normalizeSourceGroup(source) as unknown as Record<string, unknown>)
     await loadSources()
+  }
+
+  function normalizeSourceGroup(source: BookSource): BookSource {
+    const group = source.bookSourceGroup?.trim()
+    if (group) return { ...source, bookSourceGroup: group }
+
+    const { bookSourceGroup: _bookSourceGroup, ...sourceWithoutGroup } = source
+    return sourceWithoutGroup
   }
 
   async function deleteSource(bookSourceUrl: string) {
@@ -162,17 +170,22 @@ export const useBookSourceStore = defineStore('bookSource', () => {
   async function importPreparedSources(
     preview: SourceImportPreview,
     useReplacement: boolean,
+    sourceGroup?: string,
   ): Promise<SourceImportResult> {
     if (useReplacement && preview.errors.length > 0) {
       throw new Error(`有 ${preview.errors.length} 条书源替换失败，请改为导入原始书源或修正规则`)
     }
     const validList = useReplacement ? preview.replaced : preview.original
-    const uniqueCount = await importBookSourcesToDB(validList)
+    const group = sourceGroup?.trim()
+    const sourcesToImport = group
+      ? validList.map(source => ({ ...source, bookSourceGroup: group }))
+      : validList
+    const uniqueCount = await importBookSourcesToDB(sourcesToImport)
     await loadSources()
     return {
-      total: validList.length,
+      total: sourcesToImport.length,
       unique: uniqueCount,
-      duplicates: validList.length - uniqueCount,
+      duplicates: sourcesToImport.length - uniqueCount,
       changed: useReplacement ? preview.changed : 0,
       replacementErrors: preview.errors.length,
     }
@@ -228,6 +241,23 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     }
   }
 
+  async function setSourcesEnabled(bookSourceUrls: string[], enabled: boolean) {
+    const targets = new Set(bookSourceUrls)
+    for (const source of sources.value) {
+      if (!targets.has(source.bookSourceUrl)) continue
+      source.enabled = enabled
+      await saveBookSource(source as unknown as Record<string, unknown>)
+    }
+  }
+
+  async function deleteSources(bookSourceUrls: string[]) {
+    const targets = new Set(bookSourceUrls)
+    for (const bookSourceUrl of targets) {
+      await deleteBookSourceFromDB(bookSourceUrl)
+      sources.value = sources.value.filter(source => source.bookSourceUrl !== bookSourceUrl)
+    }
+  }
+
   function getEnabledSources(): BookSource[] {
     return sources.value.filter(s => s.enabled)
   }
@@ -236,7 +266,7 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     if (originalUrl && originalUrl !== source.bookSourceUrl) {
       await deleteBookSourceFromDB(originalUrl)
     }
-    await saveBookSource(source as unknown as Record<string, unknown>)
+    await saveBookSource(normalizeSourceGroup(source) as unknown as Record<string, unknown>)
     await loadSources()
   }
 
@@ -273,6 +303,8 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     importPreparedSources,
     toggleSource,
     setAllSourcesEnabled,
+    setSourcesEnabled,
+    deleteSources,
     getEnabledSources,
   }
 })

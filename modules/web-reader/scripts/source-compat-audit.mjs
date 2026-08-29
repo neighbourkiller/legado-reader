@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+
+const auditContract = JSON.parse(readFileSync(
+  new URL('../../../testdata/source-compat/audit-contract.json', import.meta.url), 'utf8',
+))
 
 const dbPath = process.argv.slice(2).find(argument => argument !== '--')
 if (!dbPath || !existsSync(dbPath)) {
@@ -49,7 +53,8 @@ const entries = rows.map(({ data_json: json }) => {
 })
 
 const summary = {
-  engineVersion: 2,
+  schemaVersion: auditContract.schemaVersion,
+  engineVersion: auditContract.engineVersion,
   generatedAt: new Date().toISOString(),
   sourceCount: entries.length,
   targetCount: entries.filter(item => [0, 2].includes(item.type)).length,

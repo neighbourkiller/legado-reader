@@ -878,6 +878,14 @@ const toggleDebug = () => {
     startDebug()
   }
 }
+
+async function runDebugInput(input: string) {
+  debugKeyword.value = input
+  await nextTick()
+  await startDebug()
+}
+
+defineExpose({ runDebugInput })
 </script>
 
 <style scoped>

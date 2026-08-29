@@ -12,7 +12,9 @@ import { RuleExecutionError } from './RuleTypes'
 import { isLegadoTrue } from './TocParser'
 import { formatOnlineContent } from './ContentParser'
 import { applyTextReplaceRule } from './RuleParser'
-import fixtures from '../../../../../testdata/source-compat/rule-fixtures.json'
+import { getSharedSourceFixtures, runSourceFixture } from '@/source/audit/SourceFixtureRunner'
+
+const fixtures = getSharedSourceFixtures()
 
 describe('Legado 规则编译器', () => {
   it('不会拆开引号、括号和 JS 中的组合符', () => {
@@ -166,16 +168,8 @@ describe('XPath 兼容模式', () => {
 
 describe('共享 source-compat 夹具验证', () => {
   fixtures.forEach((fixture) => {
-    if (fixture.id === 'yingshu-reverse-axis-first') return
     it(`验证夹具 [${fixture.id}]`, () => {
-      if (fixture.mode === 'string') {
-        const actual = evaluateRuleString(fixture.html, fixture.rule, { compatibilityMode: 'legado' })
-        expect(actual ? [actual] : []).toEqual(fixture.androidExpected)
-      } else {
-        const elements = evaluateRuleList(fixture.html, fixture.rule, { compatibilityMode: 'legado' })
-        const actual = elements.map(el => evaluateRuleString(el as Element, '@text'))
-        expect(actual).toEqual(fixture.androidExpected)
-      }
+      expect(runSourceFixture(fixture)).toMatchObject({ passed: true, tauriActual: fixture.androidExpected })
     })
   })
 })
@@ -410,4 +404,3 @@ describe('G2: 跨语法链式管道', () => {
     expect(evaluateRuleString(html, rule)).toBe('作者：天蚕土豆')
   })
 })
-

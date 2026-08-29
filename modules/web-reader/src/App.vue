@@ -86,6 +86,11 @@ html, body, #app {
 html.desktop-with-titlebar .el-message:not(.is-bottom) {
   margin-top: 36px;
 }
+
+/* 批测全屏对话框会 Teleport 到 body，桌面非全屏时需避开自绘标题栏。 */
+html.desktop-with-titlebar .source-audit-overlay .el-overlay-dialog {
+  top: 36px;
+}
 </style>
 
 <style scoped>

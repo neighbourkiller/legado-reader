@@ -78,4 +78,48 @@ describe('bookSource store - updateSource 主键重命名原子操作', () => {
     expect(store.sources.length).toBe(1)
     expect(store.sources[0].bookSourceName).toBe('更新名称')
   })
+
+  it('批量启用只修改显式选择的书源', async () => {
+    mockSources.push({
+      bookSourceName: '第二书源',
+      bookSourceUrl: 'https://second.example.com',
+      bookSourceType: 0,
+      enabled: false,
+    })
+    const store = useBookSourceStore()
+    await store.loadSources()
+
+    await store.setSourcesEnabled(['https://second.example.com'], true)
+
+    expect(store.sources.find(item => item.bookSourceUrl === 'https://second.example.com')?.enabled).toBe(true)
+    expect(store.sources.find(item => item.bookSourceUrl === 'https://old.example.com')?.enabled).toBe(true)
+    expect(db.saveBookSource).toHaveBeenCalledTimes(1)
+  })
+
+  it('批量删除只移除显式选择的书源', async () => {
+    mockSources.push(
+      {
+        bookSourceName: '第二书源',
+        bookSourceUrl: 'https://second.example.com',
+        bookSourceType: 0,
+        enabled: true,
+      },
+      {
+        bookSourceName: '保留书源',
+        bookSourceUrl: 'https://keep.example.com',
+        bookSourceType: 0,
+        enabled: true,
+      },
+    )
+    const store = useBookSourceStore()
+    await store.loadSources()
+
+    await store.deleteSources([
+      'https://old.example.com',
+      'https://second.example.com',
+    ])
+
+    expect(store.sources.map(item => item.bookSourceUrl)).toEqual(['https://keep.example.com'])
+    expect(db.deleteBookSource).not.toHaveBeenCalledWith('https://keep.example.com')
+  })
 })

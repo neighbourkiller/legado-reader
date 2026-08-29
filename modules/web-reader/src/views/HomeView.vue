@@ -140,11 +140,14 @@
       class="forty-dialog"
     >
       <div class="dialog-body">
-        <p class="dialog-desc">
+        <p v-if="platform.isDesktop" class="dialog-desc">
+          当前模块为 <strong>Tauri 桌面客户端</strong>，图书、阅读进度和设置均持久化保存在本机 SQLite 与应用数据文件中。
+        </p>
+        <p v-else class="dialog-desc">
           当前模块为 <strong>Web 纯前端阅读器</strong>，图书及进度均持久化保存在本地浏览器 IndexedDB 中。
         </p>
         <p class="dialog-desc">
-          如需订阅 RSS 资讯与网络内容流，请配合 Legado Android 客户端使用。您可以通过主页「传书」按钮随时导入本地电子书进行沉浸阅读。
+          当前客户端暂不支持订阅 RSS 资讯与网络内容流。如需使用该功能，请配合 Legado Android 客户端；您仍可通过主页「传书」按钮随时导入本地电子书阅读。
         </p>
       </div>
       <template #footer>
