@@ -59,7 +59,7 @@
       <!-- Bottom: GitHub Link & Theme Toggle -->
       <div class="bottom-icons">
         <a
-          href="https://github.com/neighbourkiller/legado"
+          href="https://github.com/neighbourkiller/legado-reader"
           target="_blank"
           rel="noopener noreferrer"
           class="github-link"

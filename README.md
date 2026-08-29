@@ -6,7 +6,7 @@
 
 同一套 [`modules/web-reader`](./modules/web-reader) 代码同时提供纯前端 Web 阅读器和桌面客户端阅读器。
 
-[桌面版下载](https://github.com/neighbourkiller/legado/releases) · [原 Legado 项目](https://github.com/LegadoTeam/legado)
+[桌面版下载](https://github.com/neighbourkiller/legado-reader/releases) · [原 Legado 项目](https://github.com/LegadoTeam/legado)
 
 </div>
 
@@ -76,7 +76,7 @@ pnpm build:desktop
 pnpm test
 ```
 
-仓库的桌面发布流程目前生成 Linux x86_64 的 DEB、RPM、tar.gz，以及 Windows x86_64 的 MSI 和便携版 EXE，可在 [Releases](https://github.com/neighbourkiller/legado/releases) 页面下载。
+仓库的桌面发布流程目前生成 Linux x86_64 的 DEB、RPM、tar.gz，以及 Windows x86_64 的 MSI 和便携版 EXE，可在 [Releases](https://github.com/neighbourkiller/legado-reader/releases) 页面下载。
 
 ## 技术栈
 

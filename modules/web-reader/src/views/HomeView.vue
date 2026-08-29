@@ -119,7 +119,7 @@
         <div class="dialog-footer">
           <el-button type="primary" @click="showBookSourceModal = false">知道了</el-button>
           <a
-            href="https://github.com/neighbourkiller/legado"
+            href="https://github.com/neighbourkiller/legado-reader"
             target="_blank"
             rel="noopener noreferrer"
             class="dialog-link-btn"

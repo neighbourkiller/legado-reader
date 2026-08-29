@@ -24,10 +24,11 @@
 
 <script setup lang="ts">
 import packageInfo from '../../../package.json'
+import { openExternalUrl } from '@/platform/externalBrowser'
 
 const clientType = import.meta.env.VITE_APP_TARGET === 'desktop' ? 'Tauri 桌面客户端' : 'Web 客户端'
-const openProject = () => window.open('https://github.com/neighbourkiller/legado', '_blank', 'noopener,noreferrer')
-const openIssues = () => window.open('https://github.com/neighbourkiller/legado/issues', '_blank', 'noopener,noreferrer')
+const openProject = () => openExternalUrl('https://github.com/neighbourkiller/legado-reader')
+const openIssues = () => openExternalUrl('https://github.com/neighbourkiller/legado-reader/issues')
 </script>
 
 <style scoped>
