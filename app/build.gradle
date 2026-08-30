@@ -205,6 +205,14 @@ android {
     }
 }
 
+// 候选书源差分以外部私有夹具为输入；只强制重跑单元测试任务，避免让
+// `--rerun-tasks` 重新编译整个 Android 应用及依赖模块。
+tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+    if (project.hasProperty('sourceCandidateRun')) {
+        inputs.property('sourceCandidateRun', project.property('sourceCandidateRun'))
+    }
+}
+
 dependencies {
     //compileOnly "com.android.tools.build:gradle:$agp_version"
     //noinspection GradleDependency,GradlePackageUpdate

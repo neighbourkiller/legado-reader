@@ -8,7 +8,13 @@ pub mod storage;
 mod webdav;
 
 use app_files::open_app_data_dir;
-use source_audit::{clear_source_audit_history, load_source_audit_history, save_source_audit_run};
+use source_audit::{
+    clear_source_audit_history, complete_source_audit_cli, complete_source_audit_replay,
+    exit_source_audit_cli, fail_source_audit_cli, get_source_audit_cli_options,
+    load_source_audit_cli_sources, load_source_audit_history, load_source_audit_replay_bundle,
+    mark_source_audit_cli_started, parse_source_audit_cli_options, save_source_audit_run,
+    start_source_audit_cli_watchdog,
+};
 use source_http::{
     check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
     open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
@@ -26,44 +32,53 @@ use webdav::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let audit_cli_state = parse_source_audit_cli_options(&std::env::args().collect::<Vec<_>>())
+        .unwrap_or_else(|error| {
+            eprintln!("书源批测命令行参数无效: {error}");
+            std::process::exit(2);
+        });
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .setup(|app| {
+        .setup(move |app| {
+            app.manage(audit_cli_state.clone());
+            start_source_audit_cli_watchdog(app.handle().clone(), audit_cli_state.clone());
             let source_cache_path = app.path().app_data_dir().ok().map(|directory| {
                 let _ = std::fs::create_dir_all(&directory);
                 directory.join("source_script_cache.json")
             });
             app.manage(AppState::new(source_cache_path));
 
-            let storage_result: Result<std::sync::Arc<storage::StorageDb>, String> = (|| {
-                let app_data_dir = app
-                    .path()
-                    .app_data_dir()
-                    .map_err(|e| format!("无法确定应用数据目录: {e}"))?;
-                std::fs::create_dir_all(&app_data_dir)
-                    .map_err(|e| format!("无法创建应用数据目录: {e}"))?;
+            if audit_cli_state.requires_internal_storage() {
+                let storage_result: Result<std::sync::Arc<storage::StorageDb>, String> = (|| {
+                    let app_data_dir = app
+                        .path()
+                        .app_data_dir()
+                        .map_err(|e| format!("无法确定应用数据目录: {e}"))?;
+                    std::fs::create_dir_all(&app_data_dir)
+                        .map_err(|e| format!("无法创建应用数据目录: {e}"))?;
 
-                let db_filename = if cfg!(debug_assertions) {
-                    "legado_reader.dev.db"
-                } else {
-                    "legado_reader.db"
+                    let db_filename = if cfg!(debug_assertions) {
+                        "legado_reader.dev.db"
+                    } else {
+                        "legado_reader.db"
+                    };
+                    let db_path = app_data_dir.join(db_filename);
+                    let storage_db = storage::StorageDb::open(&db_path)
+                        .map_err(|e| format!("数据库初始化失败: {e}"))?;
+                    Ok(std::sync::Arc::new(storage_db))
+                })();
+
+                let storage_init_state = storage::models::StorageInitState {
+                    result: std::sync::Arc::new(storage_result.clone()),
                 };
-                let db_path = app_data_dir.join(db_filename);
-                let storage_db = storage::StorageDb::open(&db_path)
-                    .map_err(|e| format!("数据库初始化失败: {e}"))?;
-                Ok(std::sync::Arc::new(storage_db))
-            })();
+                app.manage(storage_init_state);
 
-            let storage_init_state = storage::models::StorageInitState {
-                result: std::sync::Arc::new(storage_result.clone()),
-            };
-            app.manage(storage_init_state);
-
-            if let Ok(db) = storage_result {
-                app.manage(db);
+                if let Ok(db) = storage_result {
+                    app.manage(db);
+                }
             }
             app.manage(std::sync::Arc::new(storage::backup_session::BackupSessionManager::new()));
 
@@ -103,6 +118,14 @@ pub fn run() {
             load_source_audit_history,
             save_source_audit_run,
             clear_source_audit_history,
+            get_source_audit_cli_options,
+            mark_source_audit_cli_started,
+            load_source_audit_cli_sources,
+            load_source_audit_replay_bundle,
+            complete_source_audit_cli,
+            complete_source_audit_replay,
+            fail_source_audit_cli,
+            exit_source_audit_cli,
             get_webdav_config,
             save_webdav_config,
             test_webdav_connection,

@@ -35,10 +35,19 @@ export interface SourceAuditRun {
   schemaVersion: 1
   engineVersion: number
   mode: SourceAuditMode
+  scope?: 'all' | 'enabled' | 'text' | 'image'
   startedAt: number
   completedAt?: number
   status: 'running' | 'completed' | 'cancelled'
   entries: SourceAuditEntry[]
+  summary?: SourceAuditRunSummary
+}
+
+export interface SourceAuditRunSummary {
+  sourceCount: number
+  verificationStatus: Record<string, number>
+  stageStatus: Record<string, Record<string, number>>
+  errorCodes: Record<string, number>
 }
 
 export type SourceAuditErrorCategory =
@@ -67,4 +76,6 @@ export interface SourceAuditDebugContext {
   bookUrl?: string
   tocUrl?: string
   chapterUrl?: string
+  book?: Record<string, unknown>
+  chapter?: Record<string, unknown>
 }

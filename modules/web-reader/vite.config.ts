@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
@@ -8,6 +8,7 @@ import { fileURLToPath, URL } from 'node:url'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const isDesktop = mode === 'desktop' || process.env.VITE_APP_TARGET === 'desktop'
+  const isSourceAudit = process.env.LEGADO_SOURCE_AUDIT === '1'
 
   return {
     plugins: [
@@ -29,9 +30,17 @@ export default defineConfig(({ mode }) => {
     ...(isDesktop
       ? {
           server: {
-            port: 1420,
+            port: isSourceAudit ? 1421 : 1420,
             strictPort: true,
             host: '127.0.0.1',
+            hmr: isSourceAudit ? false : undefined,
+            watch: isSourceAudit ? null : undefined,
+            fs: {
+              allow: [
+                searchForWorkspaceRoot(process.cwd()),
+                fileURLToPath(new URL('../../testdata', import.meta.url)),
+              ],
+            },
           },
           clearScreen: false,
         }

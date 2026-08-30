@@ -285,8 +285,11 @@ export function compileChainedStep(stepStr: string, isLastStep: boolean): Chaine
       directive = rawExpr
       expression = rawExpr
     } else {
-      const isBracket = /\[[!\d\s,-]/.test(expression)
-      const extracted = extractIndexSpec(expression)
+      // Legado 旧式链规则允许首段写成 @tag.0；单个前导 @ 只是链首标记，
+      // 不应作为 CSS 选择器的一部分传给 querySelectorAll。@@ 仍由 detectMode
+      // 保留为显式 default 模式，不走此单字符去除分支。
+      const isBracket = /\[[!\d\s,-]/.test(rawExpr)
+      const extracted = extractIndexSpec(rawExpr)
       expression = extracted.selector
       spec = extracted.spec
       bracketSyntax = isBracket

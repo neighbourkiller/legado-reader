@@ -4,6 +4,7 @@ import { parseExploreUrlOptions } from '@/source/engine/SourceDebugHelper'
 import {
   SecurityChallengeError,
   SourceEngine,
+  type SourceEngineRequestTrace,
   type TocExecutionOptions,
 } from '@/source/engine/SourceEngine'
 import { RuleExecutionError } from '@/source/engine/RuleTypes'
@@ -19,9 +20,18 @@ import {
   type SourceAuditErrorCategory,
   type SourceAuditMode,
   type SourceAuditRun,
+  type SourceAuditRunSummary,
   type SourceAuditStage,
   type SourceAuditStageResult,
 } from './SourceAuditTypes'
+import {
+  createSourceAuditDiagnosticBundle,
+  sanitizeRequestTrace,
+  sanitizeFailureDiagnostic,
+  type SourceAuditDiagnosticBundle,
+  type SourceAuditFailureDiagnostic,
+  type SourceAuditRequestDiagnostic,
+} from './SourceAuditDiagnostics'
 
 export interface SourceAuditEngine {
   search(source: BookSource, keyword: string, onProgress?: (info: {
@@ -54,6 +64,8 @@ export interface SourceAuditRunnerOptions {
   engineFactory?: () => SourceAuditEngine
   idFactory?: (sourceUrl: string) => Promise<string>
   onUpdate?: (run: SourceAuditRun) => void
+  /** 仅在用户显式指定私有诊断目录时启用，响应正文不会进入普通历史报告。 */
+  captureDiagnostics?: boolean
 }
 
 export interface ClassifiedAuditError {
@@ -61,6 +73,9 @@ export interface ClassifiedAuditError {
   field?: string
   status: 'failed' | 'unsupported' | 'needs-action'
 }
+
+const MAX_DIAGNOSTIC_TRACES_PER_SOURCE = 8
+const MAX_DIAGNOSTIC_BODY_CHARS = 32 * 1024 * 1024
 
 class AuditEmptyResultError extends Error {
   readonly code = 'EMPTY_RESULT'
@@ -147,6 +162,22 @@ function createSkipped(code: string): SourceAuditStageResult {
   return { status: 'skipped', code }
 }
 
+export function summarizeSourceAuditRun(run: Pick<SourceAuditRun, 'entries'>): SourceAuditRunSummary {
+  const verificationStatus: Record<string, number> = {}
+  const stageStatus: Record<string, Record<string, number>> = {}
+  const errorCodes: Record<string, number> = {}
+  for (const entry of run.entries) {
+    verificationStatus[entry.verificationStatus] = (verificationStatus[entry.verificationStatus] || 0) + 1
+    for (const [stage, result] of Object.entries(entry.stages)) {
+      if (!result) continue
+      const statuses = stageStatus[stage] ||= {}
+      statuses[result.status] = (statuses[result.status] || 0) + 1
+      if (result.code) errorCodes[result.code] = (errorCodes[result.code] || 0) + 1
+    }
+  }
+  return { sourceCount: run.entries.length, verificationStatus, stageStatus, errorCodes }
+}
+
 function nonVolumeChapters(chapters: TocItem[]): TocItem[] {
   return chapters.filter(chapter => !chapter.isVolume && Boolean(chapter.url))
 }
@@ -170,13 +201,19 @@ function imageFromPayload(payload: OnlineChapterPayload) {
 export class SourceAuditRunner {
   private stopped = false
   private readonly debugContexts = new Map<string, SourceAuditDebugContext>()
+  private readonly traces = new Map<string, SourceAuditRequestDiagnostic[]>()
+  private readonly failures = new Map<string, Partial<Record<SourceAuditStage, SourceAuditFailureDiagnostic>>>()
+  private capturedDiagnosticBodyChars = 0
   private activeRun?: SourceAuditRun
   private readonly engineFactory: () => SourceAuditEngine
   private readonly idFactory: (sourceUrl: string) => Promise<string>
   private readonly concurrency: number
 
   constructor(private readonly options: SourceAuditRunnerOptions) {
-    this.engineFactory = options.engineFactory || (() => new SourceEngine())
+    this.engineFactory = options.engineFactory || (() => new SourceEngine({
+      persistSourceVariables: false,
+      onRequestTrace: options.captureDiagnostics ? trace => this.recordTrace(trace) : undefined,
+    }))
     this.idFactory = options.idFactory || createSourceAuditId
     this.concurrency = Math.min(3, Math.max(1, Math.trunc(options.concurrency ?? 1)))
   }
@@ -196,10 +233,45 @@ export class SourceAuditRunner {
     return undefined
   }
 
+  createDiagnosticBundle(run: SourceAuditRun, sources: BookSource[]): SourceAuditDiagnosticBundle {
+    return createSourceAuditDiagnosticBundle(run, sources, this.traces, this.debugContexts, this.failures)
+  }
+
+  private recordFailure(
+    sourceId: string,
+    stage: SourceAuditStage,
+    error: unknown,
+    classified: ClassifiedAuditError,
+  ) {
+    const items = this.failures.get(sourceId) || {}
+    items[stage] = sanitizeFailureDiagnostic(error, stage, classified)
+    this.failures.set(sourceId, items)
+  }
+
+  private recordTrace(trace: SourceEngineRequestTrace) {
+    const items = this.traces.get(trace.sourceId) || []
+    const sanitized = sanitizeRequestTrace(trace)
+    const bodyChars = (sanitized.body?.length || 0) + (sanitized.transformedBody?.length || 0)
+    if (this.capturedDiagnosticBodyChars + bodyChars > MAX_DIAGNOSTIC_BODY_CHARS) {
+      if (sanitized.body) sanitized.bodyTruncated = true
+      if (sanitized.transformedBody) sanitized.transformedBodyTruncated = true
+      sanitized.body = undefined
+      sanitized.transformedBody = undefined
+    } else {
+      this.capturedDiagnosticBodyChars += bodyChars
+    }
+    if (items.length >= MAX_DIAGNOSTIC_TRACES_PER_SOURCE) items.splice(4, 1)
+    items.push(sanitized)
+    this.traces.set(trace.sourceId, items)
+  }
+
   async run(sources: BookSource[]): Promise<SourceAuditRun> {
     this.stopped = false
     this.activeRun = undefined
     this.debugContexts.clear()
+    this.traces.clear()
+    this.failures.clear()
+    this.capturedDiagnosticBodyChars = 0
     const entries = await Promise.all(sources.map(source => this.createEntry(source)))
     const run: SourceAuditRun = {
       schemaVersion: SOURCE_AUDIT_SCHEMA_VERSION,
@@ -230,6 +302,7 @@ export class SourceAuditRunner {
     }
     run.status = this.stopped ? 'cancelled' : 'completed'
     run.completedAt = Date.now()
+    run.summary = summarizeSourceAuditRun(run)
     this.emit()
     return run
   }
@@ -306,6 +379,7 @@ export class SourceAuditRunner {
         return undefined
       }
       const classified = classifySourceAuditError(error)
+      this.recordFailure(entry.sourceId, stage, error, classified)
       const channel = entry.stages[stage]?.channel
       this.setStage(entry, stage, {
         status: classified.status,
@@ -373,6 +447,7 @@ export class SourceAuditRunner {
 
     const searchBook = searchResults[0]
     debug.bookUrl = searchBook.bookUrl
+    debug.book = structuredClone(searchBook as unknown as Record<string, unknown>)
     const info = await this.executeStage(entry, 'bookInfo', async () => {
       const value = await engine.getBookInfo(source, searchBook)
       if (!value.name && !searchBook.name) throw new AuditEmptyResultError('ruleBookInfo.name')
@@ -395,6 +470,7 @@ export class SourceAuditRunner {
         : undefined,
     }
     debug.tocUrl = book.tocUrl
+    debug.book = structuredClone(book as unknown as Record<string, unknown>)
     const chapters = await this.executeStage(entry, 'toc', async () => {
       const value = await engine.getToc(source, book, undefined, {
         maxPages: this.options.mode === 'quick' ? 1 : 100,
@@ -409,6 +485,7 @@ export class SourceAuditRunner {
 
     const samples = sampleChapters(nonVolumeChapters(chapters), this.options.mode)
     debug.chapterUrl = samples[0]?.url
+    debug.chapter = samples[0] ? structuredClone(samples[0] as unknown as Record<string, unknown>) : undefined
     const payloads = await this.executeStage(entry, 'content', async () => {
       const values: OnlineChapterPayload[] = []
       for (const chapter of samples) {

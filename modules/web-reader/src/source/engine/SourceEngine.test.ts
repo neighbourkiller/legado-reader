@@ -249,6 +249,34 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     expect(mockTransport.request).toHaveBeenCalledWith(expect.objectContaining({ body: 'q=%E5%A4%A7%E5%A5%89&page=1' }))
   })
 
+  it('为批测注入独立传输并按真实阶段报告请求轨迹', async () => {
+    const traces: Array<{ stage?: string; status?: number }> = []
+    const engine = new SourceEngine({
+      transport: mockTransport,
+      persistSourceVariables: false,
+      onRequestTrace: trace => traces.push({ stage: trace.stage, status: trace.response?.status }),
+    })
+    await engine.search(source, '测试')
+    expect(traces).toEqual([expect.objectContaining({ stage: 'search', status: 200 })])
+  })
+
+  it('响应转换失败时仍把原始响应交给批测诊断', async () => {
+    const traces: Array<{ response?: SourceResponse; error?: unknown }> = []
+    const engine = new SourceEngine({
+      transport: mockTransport,
+      persistSourceVariables: false,
+      onRequestTrace: trace => traces.push({ response: trace.response, error: trace.error }),
+    })
+    const scripted = {
+      ...source,
+      searchUrl: '/search,{"method":"POST","body":"q={{key}}&page={{page}}","bodyJs":"result"}',
+    }
+    await expect(engine.search(scripted, '测试')).rejects.toThrow('UNSUPPORTED_JAVASCRIPT')
+    expect(traces).toHaveLength(1)
+    expect(traces[0].response?.status).toBe(200)
+    expect(traces[0].error).toBeTruthy()
+  })
+
   it('把详情阶段变量写入书籍实体而不是污染书源变量', async () => {
     const engine = new SourceEngine()
     const book = { bookUrl: 'https://example.com/book/100', variableMap: { inherited: 'book' } }
@@ -521,4 +549,3 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     spy.mockRestore()
   })
 })
-

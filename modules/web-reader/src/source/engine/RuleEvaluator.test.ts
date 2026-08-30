@@ -52,6 +52,11 @@ describe('Legado DOM/JSON 执行器', () => {
     expect(evaluateRuleString(attrHtml, 'img@aria-label')).toBe('标题')
   })
 
+  it('兼容链首单个 @ 与旧式 tag.索引选择器', () => {
+    const html = '<ul><li>第一项</li><li>第二项</li></ul>'
+    expect(evaluateRuleString(html, '@li.0@text')).toBe('第一项')
+  })
+
   it('支持完整的 IR 语法树结构与步骤编译', () => {
     const compiled = compileRule('div.box@tag.p[-1:0]@text##foo##bar')
     expect(compiled.tree?.type).toBe('combination')

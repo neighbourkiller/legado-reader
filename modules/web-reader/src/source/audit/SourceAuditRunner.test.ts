@@ -56,6 +56,10 @@ describe('SourceAuditRunner', () => {
     const run = await runner.run([source])
 
     expect(run.status).toBe('completed')
+    expect(run.summary).toMatchObject({
+      sourceCount: 1,
+      verificationStatus: { 'live-passed': 1 },
+    })
     expect(run.entries[0].verificationStatus).toBe('live-passed')
     expect(run.entries[0].stages.content).toMatchObject({ status: 'passed', count: 1 })
     expect(engine.search).toHaveBeenCalledWith(source, '夹具关键词', expect.any(Function))
@@ -175,5 +179,37 @@ describe('批测错误归一化', () => {
     expect(classifySourceAuditError(new RuleExecutionError('webview', {
       code: 'WEBJS_EXECUTION_FAILED', rule: '<webjs>', mode: 'legado',
     }))).toEqual({ code: 'WEBVIEW_ERROR', field: undefined, status: 'failed' })
+  })
+
+  it('普通报告只保留归一化分类，私有诊断包保留受控底层错误码', async () => {
+    const engine = successfulEngine({
+      search: vi.fn(async () => {
+        throw new RuleExecutionError('包含敏感规则的错误消息', {
+          code: 'INVALID_XPATH', stage: 'search', field: 'ruleSearch.bookList',
+          rule: '@XPath://secret[', mode: 'legado',
+        })
+      }),
+    })
+    const runner = new SourceAuditRunner({
+      mode: 'quick', captureDiagnostics: true, engineFactory: () => engine, idFactory: async () => 'source-id',
+    })
+
+    const run = await runner.run([source])
+    const bundle = runner.createDiagnosticBundle(run, [source])
+
+    expect(run.entries[0].stages.search).toEqual(expect.objectContaining({
+      status: 'failed', code: 'RULE_SYNTAX_ERROR', field: 'ruleSearch.bookList',
+    }))
+    expect(run.entries[0].stages.search).not.toHaveProperty('rawCode')
+    expect(bundle.cases[0].failures?.search).toEqual({
+      category: 'RULE_SYNTAX_ERROR',
+      status: 'failed',
+      name: 'RuleExecutionError',
+      rawCode: 'INVALID_XPATH',
+      stage: 'search',
+      field: 'ruleSearch.bookList',
+      compatibilityMode: 'legado',
+    })
+    expect(JSON.stringify(bundle.cases[0].failures)).not.toContain('secret')
   })
 })

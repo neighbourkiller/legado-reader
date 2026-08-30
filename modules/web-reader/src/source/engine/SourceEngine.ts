@@ -1,6 +1,6 @@
 import type { BookSource, OnlineChapterPayload, SearchResult, SearchRule } from '@/source/types/BookSource'
 import { getTransport } from '@/source/transport'
-import type { SourceRequest, SourceResponse, CfDiagnostics } from '@/source/transport/SourceTransport'
+import type { SourceRequest, SourceResponse, SourceTransport, CfDiagnostics } from '@/source/transport/SourceTransport'
 import { parseSearchResults } from './SearchParser'
 import { parseBookInfo, type BookInfo } from './BookInfoParser'
 import { parseToc, type TocItem } from './TocParser'
@@ -39,6 +39,24 @@ export interface SecurityDiagnostics {
 export interface TocExecutionOptions {
   /** 目录分页上限。默认保持现有 100 页行为，批量快速测试可显式限制为 1。 */
   maxPages?: number
+}
+
+export interface SourceEngineRequestTrace {
+  sourceId: string
+  stage: RuleExecutionContext['stage']
+  request: SourceRequest
+  response?: SourceResponse
+  transformedResponse?: SourceResponse
+  error?: unknown
+}
+
+export interface SourceEngineOptions {
+  /** 批测/重放必须关闭，避免 @put/java.put 把测试变量写回真实书源。 */
+  persistSourceVariables?: boolean
+  /** 测试诊断钩子只存在于内存；持久化前必须由审计层脱敏。 */
+  onRequestTrace?: (trace: SourceEngineRequestTrace) => void
+  /** 测试可注入传输实现；正常运行仍使用平台传输。 */
+  transport?: SourceTransport
 }
 
 /** 启发式检测页面是否为防爬验证/浏览器质询拦截页 */
@@ -489,6 +507,16 @@ export async function parseSearchUrlAsync(
 }
 
 export class SourceEngine {
+  private readonly persistSourceVariables: boolean
+
+  constructor(private readonly options: SourceEngineOptions = {}) {
+    this.persistSourceVariables = options.persistSourceVariables !== false
+  }
+
+  private async getSourceTransport(): Promise<SourceTransport> {
+    return this.options.transport || getTransport()
+  }
+
   private async callMainJs(
     source: BookSource,
     functionName: string,
@@ -524,8 +552,9 @@ export class SourceEngine {
     charset?: string,
     timeout?: number,
     options: Partial<SourceRequest> = {},
+    stage: RuleExecutionContext['stage'] = 'unknown',
   ): Promise<SourceResponse> {
-    const transport = await getTransport()
+    const transport = await this.getSourceTransport()
 
     // WebView 通道：书源标记需要 WebView 且 transport 支持
     const useWebView = options.useWebView ?? source.useWebView ?? false
@@ -546,11 +575,17 @@ export class SourceEngine {
       bodyJs: options.bodyJs,
     }
     if (useWebView && transport.webviewFetch) {
-      await waitForConcurrentRate(source)
-      const response = await transport.webviewFetch({
-        ...request,
-      })
-      return this.applyRequestScripts(source, response, request)
+      let response: SourceResponse | undefined
+      try {
+        await waitForConcurrentRate(source)
+        response = await transport.webviewFetch({ ...request })
+        const transformedResponse = await this.applyRequestScripts(source, response, request)
+        this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
+        return transformedResponse
+      } catch (error) {
+        this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, error })
+        throw error
+      }
     }
 
     // 默认 reqwest 快速通道
@@ -564,7 +599,10 @@ export class SourceEngine {
         if (response.status < 500 || attempt === attempts) break
       } catch (error) {
         lastError = error
-        if (attempt === attempts) throw error
+        if (attempt === attempts) {
+          this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, error })
+          throw error
+        }
       }
     }
     if (!response) throw lastError instanceof Error ? lastError : new Error('书源请求失败')
@@ -589,7 +627,14 @@ export class SourceEngine {
       }
     }
 
-    return this.applyRequestScripts(source, response, request)
+    try {
+      const transformedResponse = await this.applyRequestScripts(source, response, request)
+      this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
+      return transformedResponse
+    } catch (error) {
+      this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, error })
+      throw error
+    }
   }
 
   private async applyRequestScripts(
@@ -657,7 +702,7 @@ export class SourceEngine {
       if (context.variableInitial?.[key] !== value) targetMap[key] = value
     }
     context.variableTarget.variableMap = targetMap
-    if (context.variableTarget === source as unknown as Record<string, unknown>) {
+    if (this.persistSourceVariables && context.variableTarget === source as unknown as Record<string, unknown>) {
       source.variableMap = targetMap
       await saveBookSource(source as unknown as Record<string, unknown>)
     }
@@ -688,7 +733,7 @@ export class SourceEngine {
   async fetchSourceAsset(source: BookSource, url: string, refererUrl: string): Promise<{ body: Uint8Array; mime: string }> {
     const headers = getSourceHeaders(source, refererUrl)
     headers.Accept = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-    const response = await this.executeRequest(source, url, 'GET', headers, undefined, undefined, 25000)
+    const response = await this.executeRequest(source, url, 'GET', headers, undefined, undefined, 25000, {}, 'image')
     if (response.status >= 400) throw createHttpError(response, `请求图片失败 (HTTP ${response.status})`)
     const mime = Object.entries(response.headers)
       .find(([name]) => name.toLowerCase() === 'content-type')?.[1]?.split(';')[0] || 'application/octet-stream'
@@ -762,6 +807,7 @@ export class SourceEngine {
       searchReq.charset,
       25000,
       searchReq,
+      'search',
     )
 
     if (onProgress) {
@@ -861,7 +907,7 @@ export class SourceEngine {
     const context = this.createRuleContext(source, 'explore', { page, baseUrl: source.bookSourceUrl })
     const request = await parseSearchUrlAsync(targetExploreUrl, '', source, page, context)
     const response = await this.executeRequest(
-      source, request.url, request.method, request.headers, request.body, request.charset, 25000, request,
+      source, request.url, request.method, request.headers, request.body, request.charset, 25000, request, 'explore',
     )
     if (onProgress) {
       onProgress({
@@ -934,6 +980,7 @@ export class SourceEngine {
       request.charset,
       undefined,
       request,
+      'bookInfo',
     )
 
     if (response.status >= 400) {
@@ -1019,7 +1066,7 @@ export class SourceEngine {
         const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
         if (visited.has(requestKey)) break
         visited.add(requestKey)
-        const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request)
+        const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request, 'toc')
         if (response.status >= 400) throw createHttpError(response, `请求目录页失败 (HTTP ${response.status})`)
         html = decodeResponse(response.body, response.charset || 'utf-8')
         effectiveBaseUrl = response.finalUrl || requestUrl.href
@@ -1091,7 +1138,7 @@ export class SourceEngine {
       visitedUrls.add(requestKey)
       page += 1
 
-      const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request)
+      const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request, 'content')
 
       if (response.status >= 400) {
         throw createHttpError(response, `请求正文页失败 (HTTP ${response.status})`)
@@ -1104,7 +1151,7 @@ export class SourceEngine {
       // 检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
       const challenge = detectSecurityChallenge(html, response)
       if (challenge.isChallenge) {
-        const transport = await getTransport()
+        const transport = await this.getSourceTransport()
         if (source.useWebView && transport.solveChallenge) {
           const solveResult = await transport.solveChallenge(source.bookSourceUrl, currentUrl, 5000)
           if (solveResult.success && solveResult.html) {

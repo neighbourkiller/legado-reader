@@ -1,0 +1,493 @@
+schema_version: 1
+kind: legado_source_audit_workflow
+language: zh-CN
+name: Tauri 书源审计与兼容性修补
+
+document_control:
+  source_document: /home/syusuke/projects/legado/test-source.md
+  purpose: workflow_specification
+  execute_on_load: false
+  execution_requires_explicit_request: true
+
+workspace:
+  repository: /home/syusuke/projects/legado
+  primary_module: modules/web-reader
+  required_instruction_files:
+    - AGENTS.md
+    - modules/web-reader/docs/source-audit-agent-workflow.md
+
+objective:
+  - 使用现有书源审计工具测试已导入且启用的书源
+  - 汇总并聚类失败模式
+  - 通过离线重放和 Android Legado 行为对照确认引擎兼容缺口
+  - 对 Tauri 书源引擎实施最小且通用的修补
+  - 完成统一回归验证
+
+coordination:
+  coordinator_role: primary_agent
+  parallel_delegation_allowed: true
+  code_change_owner: primary_agent
+  rules:
+    - 子 Agent 只返回证据，不修改引擎代码
+    - 只有主 Agent 可以修改引擎代码
+    - 主 Agent 必须汇总各方证据后再实施修复
+    - 禁止多个 Agent 并发修改同一引擎文件
+  agents:
+    - id: agent_a
+      responsibility:
+        - static_inventory
+        - live_audit
+        - result_summary
+      write_engine_code: false
+    - id: agent_b
+      responsibility:
+        - offline_replay
+        - failure_clustering
+      write_engine_code: false
+    - id: agent_c
+      responsibility:
+        - android_semantics_validation
+        - shared_fixture_validation
+      write_engine_code: false
+
+inputs:
+  book_source_database:
+    path: /home/syusuke/.local/share/io.legado.reader/legado_reader.dev.db
+    access: read_only
+    mutation_forbidden: true
+
+outputs:
+  root_directory:
+    path: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01
+    required_mode: "0700"
+    private: true
+  artifacts:
+    configured_report: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/report.json
+    static_report: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/static-audit.json
+    quick_report: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-audit.json
+    quick_diagnostics_directory: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-diagnostics
+    quick_diagnostics_bundle: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-diagnostics/diagnostics-v1.json
+    quick_replay_report: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-replay.json
+    candidate_manifest: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-candidates.json
+    candidate_fixture_directory: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/candidate-fixtures
+    differential_report_directory: /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/differentials
+  privacy:
+    diagnostics_sensitive: true
+    prohibit_upload: true
+    prohibit_publication: true
+    prohibit_git_commit: true
+    prohibit_response_body_dump: true
+    prohibited_response_fields:
+      - full_response_body
+      - cookie
+      - token
+      - authorization
+      - sensitive_url
+
+audit_parameters:
+  scope: enabled
+  initial_mode: quick
+  concurrency: 1
+  allowed_concurrency:
+    minimum: 1
+    maximum: 3
+
+principles:
+  communication_language: zh-CN
+  preserve_existing_uncommitted_changes: true
+  prohibit_unrelated_overwrite: true
+  prohibit_unrelated_rollback: true
+  prohibit_unrelated_formatting: true
+  network_requests_to_target_sources_allowed: true
+  source_database_read_only: true
+  source_configuration_mutation_forbidden: true
+  empty_result_is_not_sufficient_for_engine_change: true
+  general_semantic_fix_only: true
+  domain_specific_patch_forbidden: true
+  source_name_specific_patch_forbidden: true
+  fixed_content_patch_forbidden: true
+  unsupported_android_api_must_be_explicit: true
+  platform_calls_must_use: src/platform/
+  vue_pages_must_not_directly_couple_tauri_api: true
+
+default_non_engine_error_codes:
+  - NETWORK_ERROR
+  - DNS_ERROR
+  - TIMEOUT
+  - HTTP_ERROR
+  - SECURITY_CHALLENGE
+  - NEEDS_LOGIN
+
+engine_gap_confirmation:
+  all_required: true
+  required_state_before_patch: confirmed_engine_gap
+  prohibited_direct_transitions:
+    - unresolved_to_confirmed_engine_gap
+    - error_category_to_confirmed_engine_gap
+  conditions:
+    - captured_response_is_stably_replayable_offline
+    - android_actual_result_differs_from_tauri_result_on_same_minimal_input
+
+phases:
+  - id: static_inventory
+    order: 1
+    owner: agent_a
+    working_directory: /home/syusuke/projects/legado/modules/web-reader
+    depends_on: []
+    command:
+      shell: >-
+        pnpm audit:sources:static --
+        /home/syusuke/.local/share/io.legado.reader/legado_reader.dev.db
+        > /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/static-audit.json
+    network_access: false
+    report_is_online_proof: false
+    summarize:
+      - total_source_count
+      - enabled_source_count
+      - source_type_distribution
+      - xpath_capability_distribution
+      - jsonpath_capability_distribution
+      - javascript_capability_distribution
+      - main_js_capability_distribution
+      - webview_capability_distribution
+      - image_decryption_capability_distribution
+      - static_unsupported_items
+      - priority_capability_groups_for_live_audit
+
+  - id: live_quick_audit
+    order: 2
+    owner: agent_a
+    working_directory: /home/syusuke/projects/legado/modules/web-reader
+    depends_on:
+      - static_inventory
+    preconditions:
+      - output_root_mode_is_0700
+      - database_exists
+      - database_is_opened_read_only
+    command:
+      argv:
+        - pnpm
+        - audit:sources:live
+        - --
+        - --db
+        - /home/syusuke/.local/share/io.legado.reader/legado_reader.dev.db
+        - --output
+        - /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-audit.json
+        - --diagnostics
+        - /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-diagnostics
+        - --mode
+        - quick
+        - --scope
+        - enabled
+        - --concurrency
+        - "1"
+    exit_codes:
+      "0": completed_without_failed_stage
+      "1": report_generated_with_test_failures
+      "2": argument_load_or_write_failure
+    exit_code_policy:
+      read_report_when_exit_code_is_1: true
+      treat_exit_code_1_as_tool_failure: false
+    aggregate_dimensions:
+      stages:
+        - static
+        - login
+        - search
+        - explore
+        - bookInfo
+        - toc
+        - content
+        - image
+      group_by:
+        - error_code
+        - source_capability
+        - request_channel
+        - field_location
+        - response_characteristic
+        - rule_syntax
+      request_channels:
+        - reqwest
+        - webview
+    private_failure_metadata:
+      source: cases[].failures[stage]
+      allowed_fields:
+        - category
+        - status
+        - name
+        - rawCode
+        - stage
+        - field
+        - compatibilityMode
+      prohibited_fields:
+        - message
+        - rule
+        - cause
+      rule_syntax_error_is_final_attribution: false
+    diagnosis_strategy:
+      prioritize_common_earliest_failure: true
+      prohibit_blind_per_site_fixing: true
+
+  - id: offline_replay_and_attribution
+    order: 3
+    owner: agent_b
+    working_directory: /home/syusuke/projects/legado/modules/web-reader
+    depends_on:
+      - live_quick_audit
+    command:
+      argv:
+        - pnpm
+        - audit:sources:replay
+        - --
+        - --input
+        - /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-diagnostics/diagnostics-v1.json
+        - --output
+        - /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-replay.json
+    attribution_rules:
+      - id: online_failed_offline_passed
+        priority_targets:
+          - transport
+          - cookie
+          - character_encoding
+          - redirect
+          - response_transform
+          - webview
+          - security_challenge
+        prohibit_declarative_parser_change: true
+      - id: online_and_offline_failed
+        actions:
+          - verify_response_contains_target_data
+          - inspect_field_rule
+          - inspect_tauri_parser_boundary
+      - id: empty_result
+        actions:
+          - reject_login_page
+          - reject_captcha_page
+          - reject_empty_shell
+          - reject_encrypted_envelope
+          - reject_error_page
+        engine_gap_requires_android_success_on_same_response: true
+      - id: rule_syntax_error
+        inspect:
+          - RuleParser
+          - RuleCompiler
+          - RuleEvaluator
+          - XPathConverter
+          - JSONPath
+          - combination_and_index_semantics
+      - id: js_execution_error_or_unsupported_android_api
+        inspect:
+          - QuickJS_host_api
+          - variables
+          - java_compatibility_bridge
+          - response_transform_hook
+        require_safe_independent_cross_platform_assessment: true
+      - id: webview_error
+        inspect:
+          - webview_lifecycle
+          - execution_context
+          - cookie_synchronization
+          - page_load_completion_boundary
+    replay_output_contract:
+      fields:
+        - originalCategory
+        - rawCode
+        - field
+        - attribution.state
+        - attribution.candidateCause
+        - attribution.evidence
+        - attribution.confirmationRequired
+        - responseEligibility.kind
+        - responseEligibility.replayEligible
+        - responseEligibility.targetDataEvidence
+        - responseEligibility.evidence
+        - summary.byStatus
+        - summary.byAttributionState
+        - summary.byCandidateCause
+        - summary.byResponseKind
+        - summary.readyForDifferential
+      allowed_attribution_states:
+        - candidate
+        - unresolved
+        - ineligible_response
+        - blocked_missing_target_data
+        - blocked_missing_field
+        - ready_for_differential
+      candidate_causes:
+        - ONLINE_PIPELINE
+        - NETWORK_OR_SITE
+        - RULE_OR_ENGINE_SEMANTICS
+        - SCRIPT_OR_HOST_SEMANTICS
+        - WEBVIEW_RUNTIME
+        - ANDROID_API_CAPABILITY
+        - UNKNOWN
+      replay_can_confirm_engine_gap: false
+    response_eligibility_gate:
+      runs_before_semantic_attribution: true
+      ineligible_kinds:
+        - http-error
+        - login
+        - security-challenge
+        - empty-shell
+      empty_result_requires_target_data_evidence: true
+      syntax_candidate_requires_failed_field: true
+    candidate_manifest_command:
+      argv:
+        - pnpm
+        - audit:sources:candidates
+        - --
+        - --input
+        - /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-replay.json
+        - --output
+        - /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-candidates.json
+    attribution_state_machine:
+      initial: unresolved
+      transitions:
+        - from: unresolved
+          to: candidate
+          requires:
+            - reproducible_evidence_or_explicit_boundary
+        - from: candidate
+          to: confirmed_engine_gap
+          requires:
+            - stable_offline_reproduction
+            - android_actual_result
+            - tauri_actual_result
+            - same_minimal_sanitized_input
+            - android_tauri_difference
+    engine_gap_record_required_fields:
+      - failed_stage
+      - failed_field
+      - sanitized_request_information
+      - response_capture_status
+      - offline_replay_result
+      - android_expected_result
+      - tauri_actual_result
+      - earliest_causal_failure
+      - affected_sources_or_capability_groups
+
+  - id: android_tauri_differential_fixture
+    order: 4
+    owner: agent_c
+    depends_on:
+      - offline_replay_and_attribution
+    fixture_root: testdata/source-compat/
+    requirements:
+      - extract_minimal_sanitized_stable_input_from_real_failure
+      - android_expected_must_come_from_actual_analyze_rule_or_rhino_execution
+      - reproduce_difference_before_fix
+      - prohibit_full_real_webpage
+      - prohibit_cookie
+      - prohibit_token
+      - prohibit_user_data
+      - promote_to_confirmed_engine_gap_only_after_actual_android_tauri_difference
+    baseline_commands:
+      - pnpm audit:sources:fixtures
+      - pnpm audit:sources:android-fixtures
+    candidate_commands:
+      extract_private_fixture:
+        for_each: candidates[state=ready_for_differential]
+        command: >-
+          pnpm audit:sources:extract-candidate --
+          --diagnostics /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-diagnostics/diagnostics-v1.json
+          --replay /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/quick-replay.json
+          --candidate {candidateId}
+          --output /home/syusuke/.local/state/legado-reader/source-audit/2026-08-30-agent-run-01/candidate-fixtures/{candidateId}.json
+      privacy_review:
+        required_before_promotion: true
+        fields:
+          - privacyReview.minimized
+          - privacyReview.sanitized
+        automatic_extract_defaults_to_false: true
+      run_differential:
+        command: >-
+          pnpm audit:sources:differential --
+          --fixture /绝对路径/candidate-fixture.json
+          --output /绝对路径/differential.json
+    completion_gate:
+      require_same_input_hash: true
+      require_android_actual: true
+      require_tauri_actual: true
+      require_privacy_review: true
+      no_difference_result: differential_same_result
+      missing_fixture_result: blocked_missing_candidate_fixture
+      observed_difference_result: confirmed_engine_gap_candidate
+      baseline_success_is_not_candidate_differential: true
+
+  - id: engine_patch
+    order: 5
+    owner: primary_agent
+    depends_on:
+      - android_tauri_differential_fixture
+    eligibility: confirmed_engine_gap_only
+    candidate_files:
+      - modules/web-reader/src/source/engine/RuleParser.ts
+      - modules/web-reader/src/source/engine/RuleCompiler.ts
+      - modules/web-reader/src/source/engine/RuleEvaluator.ts
+      - modules/web-reader/src/source/engine/XPathConverter.ts
+      - modules/web-reader/src/source/engine/SearchParser.ts
+      - modules/web-reader/src/source/engine/BookInfoParser.ts
+      - modules/web-reader/src/source/engine/TocParser.ts
+      - modules/web-reader/src/source/engine/ContentParser.ts
+      - modules/web-reader/src/source/engine/SourceEngine.ts
+      - modules/web-reader/src/platform/sourceScripts.ts
+      - modules/web-reader/src-tauri/src/source_script.rs
+      - modules/web-reader/src-tauri/src/source_http.rs
+      - modules/web-reader/src-tauri/src/cookie_store.rs
+    requirements:
+      - minimal_correct_change
+      - add_regression_test
+      - preserve_standard_and_legado_mode_boundary
+      - preserve_non_persistent_source_variables_during_audit
+    prohibited:
+      - modify_source_json_to_hide_engine_problem
+      - add_domain_condition
+      - add_source_name_condition
+
+  - id: regression_validation
+    order: 6
+    owner: primary_agent
+    depends_on:
+      - engine_patch
+    required_commands:
+      - pnpm test
+      - pnpm build:web
+      - pnpm build:desktop-ui
+      - pnpm exec vue-tsc --build --force
+      - cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+      - pnpm audit:sources:fixtures
+      - pnpm audit:sources:android-fixtures
+      - git diff --check
+    post_fix_requirements:
+      - replay_original_diagnostics_bundle
+      - confirm_target_difference_is_removed
+      - rerun_quick_audit_for_originally_failed_capability_group
+    optional:
+      - run_full_mode_for_representative_quick_pass_sources
+    prohibited_automation:
+      - bypass_login
+      - bypass_captcha
+      - bypass_paywall
+      - bypass_security_challenge
+
+final_report:
+  required_sections:
+    - tested_scope_and_source_count
+    - summary_by_stage_error_code_and_capability
+    - confirmed_engine_gaps_and_evidence_chain
+    - excluded_network_login_site_or_rule_problems
+    - modified_files_and_general_semantics
+    - added_android_tauri_shared_fixtures
+    - before_after_replay_and_live_audit_changes
+    - executed_tests_and_results
+    - unsupported_or_unverified_boundaries
+    - release_package_commit_and_push_status
+  evidence_labels:
+    - confirmed_fact
+    - evidence_based_inference
+    - unverified_hypothesis
+  reject_summary_only_pass_statement: true
+  explicitly_state_if_not_performed:
+    - real_release
+    - packaging
+    - commit
+    - push

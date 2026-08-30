@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm dev:audit-ui",
+    "devUrl": "http://127.0.0.1:1421"
+  }
+}

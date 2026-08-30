@@ -56,7 +56,7 @@ export interface CompiledRule {
 
 export interface RuleExecutionContext {
   compatibilityMode: CompatibilityMode
-  stage?: 'search' | 'explore' | 'bookInfo' | 'toc' | 'content' | 'login' | 'unknown'
+  stage?: 'search' | 'explore' | 'bookInfo' | 'toc' | 'content' | 'image' | 'login' | 'unknown'
   field?: string
   baseUrl?: string
   redirectUrl?: string

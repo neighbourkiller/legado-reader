@@ -9,7 +9,7 @@ const auditContract = JSON.parse(readFileSync(
 
 const dbPath = process.argv.slice(2).find(argument => argument !== '--')
 if (!dbPath || !existsSync(dbPath)) {
-  console.error('用法: pnpm audit:sources -- /绝对路径/legado_reader.db')
+  console.error('用法: pnpm audit:sources:static -- /绝对路径/legado_reader.db')
   process.exit(2)
 }
 
@@ -54,6 +54,7 @@ const entries = rows.map(({ data_json: json }) => {
 
 const summary = {
   schemaVersion: auditContract.schemaVersion,
+  kind: 'source-static-audit',
   engineVersion: auditContract.engineVersion,
   generatedAt: new Date().toISOString(),
   sourceCount: entries.length,
