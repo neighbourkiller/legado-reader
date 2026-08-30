@@ -207,7 +207,7 @@ const groups: SettingGroup[] = [
     title: '设置',
     items: [
       { key: 'backup', title: '备份与恢复', description: '备份或恢复客户端数据', icon: UploadFilled },
-      { key: 'theme', title: '主题设置', description: '调整界面主题与颜色', icon: Brush },
+      { key: 'theme', title: '主题设置', description: '调整界面主题、颜色与字体', icon: Brush },
       { key: 'replaceRules', title: '替换管理', description: '管理标题、正文与书源替换规则', icon: MagicStick },
       ...(isDesktopBuild
         ? [{ key: 'other' as const, title: '其他设置', description: '与客户端功能相关的设置', icon: Tools }]

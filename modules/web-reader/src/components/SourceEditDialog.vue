@@ -296,7 +296,7 @@ const handleSave = () => {
 }
 
 .json-textarea :deep(textarea) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
   font-size: 12px;
   line-height: 1.5;
 }

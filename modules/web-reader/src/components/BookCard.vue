@@ -234,7 +234,7 @@ const handleCommand = (command: string) => {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   line-clamp: 3;
-  font-family: "Songti SC", "SimSun", "Noto Serif CJK SC", serif;
+  font-family: var(--legado-font-ui);
 }
 
 .cover-author {

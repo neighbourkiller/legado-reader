@@ -55,6 +55,8 @@ describe('应用偏好持久化', () => {
         color: 'rgba(255, 241, 118, 0.5)',
       },
       bookSourcesSidebarWidth: DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH,
+      uiFont: 'bundled',
+      codeFont: 'bundled',
     })
 
     store.setBookshelfClickAction('reader')
@@ -68,6 +70,8 @@ describe('应用偏好持久化', () => {
         color: 'rgba(255, 241, 118, 0.5)',
       },
       bookSourcesSidebarWidth: DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH,
+      uiFont: 'bundled',
+      codeFont: 'bundled',
     })
 
     store.setReaderScrollInfiniteLoading(false)
@@ -76,6 +80,25 @@ describe('应用偏好持久化', () => {
       readerThemeSyncPreference: 'sync',
       readerScrollInfiniteLoading: false,
     })
+  })
+
+  it('字体偏好默认使用内置字体，并能独立持久化系统字体选项', () => {
+    const store = useAppSettingsStore()
+    expect(store.uiFont).toBe('bundled')
+    expect(store.codeFont).toBe('bundled')
+
+    store.setUiFont('system')
+    store.setCodeFont('system')
+
+    expect(JSON.parse(localStorage.getItem('legado_app_settings')!)).toMatchObject({
+      uiFont: 'system',
+      codeFont: 'system',
+    })
+
+    setActivePinia(createPinia())
+    const restoredStore = useAppSettingsStore()
+    expect(restoredStore.uiFont).toBe('system')
+    expect(restoredStore.codeFont).toBe('system')
   })
 
   it('书源侧栏宽度使用安全默认值、限制范围并持久化', () => {

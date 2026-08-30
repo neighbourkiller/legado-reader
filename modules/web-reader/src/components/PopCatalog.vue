@@ -99,7 +99,7 @@ const gotoChapter = (chapter: BookChapter) => {
   .title {
     font-size: 18px;
     font-weight: 400;
-    font-family: FZZCYSK, sans-serif;
+    font-family: var(--legado-font-ui);
     margin: 0 0 16px 0;
     color: #ed4259;
     width: fit-content;

@@ -13,7 +13,7 @@
       </div>
       <GlobalDownloadProgress />
       <ThemeSyncDialog />
-      <GlobalHomeButton v-if="isDesktop" />
+      <GlobalHomeButton />
       <GlobalSettingsButton />
     </div>
   </el-config-provider>
@@ -28,11 +28,13 @@ import ThemeSyncDialog from '@/components/ThemeSyncDialog.vue'
 import GlobalHomeButton from '@/components/GlobalHomeButton.vue'
 import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
+import { useAppSettingsStore } from '@/stores/appSettings'
 
 const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 // Initialize theme globally
 useTheme()
+useAppSettingsStore()
 
 const { isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen()
 

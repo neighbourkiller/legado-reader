@@ -18,9 +18,11 @@ describe('Web 阅读器功能入口', () => {
     expect(router.hasRoute('search')).toBe(false)
   })
 
-  it('全局设置入口不再受 desktop 条件限制', () => {
+  it('全局主页与设置入口不再受 desktop 条件限制', () => {
     const app = source('../App.vue')
     const settings = source('../views/SettingsView.vue')
+    expect(app).toContain('<GlobalHomeButton />')
+    expect(app).not.toContain('<GlobalHomeButton v-if="isDesktop" />')
     expect(app).toContain('<GlobalSettingsButton />')
     expect(app).not.toContain('<GlobalSettingsButton v-if="isDesktop" />')
     expect(source('../components/GlobalSettingsButton.vue')).toContain('!isBookSourcesRoute')

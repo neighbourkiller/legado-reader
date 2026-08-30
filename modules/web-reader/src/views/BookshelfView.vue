@@ -511,7 +511,7 @@ const saveEditBook = async () => {
   flex-direction: row;
   overflow: hidden;
   position: relative;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--legado-font-ui);
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
@@ -692,7 +692,7 @@ const saveEditBook = async () => {
 .navigation-title {
   font-size: 26px;
   font-weight: 500;
-  font-family: 'FZZCYSK', "Songti SC", "SimSun", "Noto Serif CJK SC", serif;
+  font-family: var(--legado-font-ui);
   letter-spacing: 0.05em;
   line-height: 1.2;
 }
@@ -700,7 +700,7 @@ const saveEditBook = async () => {
 .navigation-sub-title {
   font-size: 15px;
   font-weight: 300;
-  font-family: 'FZZCYSK', "Songti SC", "SimSun", "Noto Serif CJK SC", serif;
+  font-family: var(--legado-font-ui);
   margin-top: 14px;
   letter-spacing: 0.05em;
 }
@@ -734,7 +734,7 @@ const saveEditBook = async () => {
 
 .recent-title {
   font-size: 14px;
-  font-family: 'FZZCYSK', "Songti SC", "SimSun", serif;
+  font-family: var(--legado-font-ui);
   letter-spacing: 0.05em;
 }
 

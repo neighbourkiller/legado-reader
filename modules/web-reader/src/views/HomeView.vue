@@ -284,7 +284,7 @@ const processFiles = async (files: File[]) => {
   flex-direction: column;
   justify-content: space-between;
   color: #ffffff;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--legado-font-ui);
   background-color: #1b1f22;
 }
 

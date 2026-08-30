@@ -63,6 +63,16 @@ html.dark .el-input__inner::placeholder {
   color: #6c6e72 !important;
 }
 
+html.dark .auto-height-input .el-textarea__inner {
+  color: #e5eaf3 !important;
+  background-color: #303030 !important;
+  box-shadow: 0 0 0 1px #484848 inset !important;
+}
+
+html.dark .auto-height-input .el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
+}
+
 html.dark .el-input .el-input__count-inner {
   background: transparent !important;
   color: #8c8c8c !important;

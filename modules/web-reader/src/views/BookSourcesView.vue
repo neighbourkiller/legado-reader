@@ -74,16 +74,6 @@
             </div>
 
             <div class="content-header-actions">
-              <el-radio-group v-model="activeViewMode" size="default">
-                <el-radio-button value="edit">
-                  <el-icon><Edit /></el-icon>
-                  <span>编辑区</span>
-                </el-radio-button>
-                <el-radio-button value="debug" :disabled="isDrafting">
-                  <el-icon><VideoPlay /></el-icon>
-                  <span>调试区</span>
-                </el-radio-button>
-              </el-radio-group>
               <el-dropdown v-if="activeViewMode === 'edit'" @command="handleEditorToolCommand">
                 <el-button>工具<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
@@ -97,6 +87,16 @@
                 <el-icon><Check /></el-icon>
                 {{ isDrafting ? '创建书源' : '保存修改' }}
               </el-button>
+              <el-radio-group v-model="activeViewMode" size="default">
+                <el-radio-button value="edit">
+                  <el-icon><Edit /></el-icon>
+                  <span>编辑区</span>
+                </el-radio-button>
+                <el-radio-button value="debug" :disabled="isDrafting">
+                  <el-icon><VideoPlay /></el-icon>
+                  <span>调试区</span>
+                </el-radio-button>
+              </el-radio-group>
             </div>
           </div>
 
@@ -178,7 +178,7 @@
                 clearable
                 :prefix-icon="Link"
                 @keyup.enter="handleImport"
-                class="sharp-input"
+                class="sharp-input source-code-input"
               />
               <div class="quick-examples">
                 <span class="example-label">推荐示例：</span>
@@ -206,7 +206,7 @@
                 type="textarea"
                 :rows="8"
                 placeholder="在此粘贴书源 JSON 内容..."
-                class="sharp-textarea"
+                class="sharp-textarea source-code-input"
               />
               <div class="import-file-bar">
                 <el-button @click="triggerFileImport" class="sharp-btn">从本地 JSON 文件导入</el-button>
@@ -312,11 +312,16 @@ import SourceBatchAuditDialog from '@/components/SourceBatchAuditDialog.vue'
 import BookSourceSidebar from '@/components/BookSourceSidebar.vue'
 import { copyTextToClipboard } from '@/platform/clipboard'
 import { openExternalUrl } from '@/platform/externalBrowser'
+import { saveJsonFile } from '@/platform/exportFiles'
 import { platform } from '@/platform/capabilities'
 import { loadSourceAuditHistory } from '@/platform/sourceAuditHistory'
 import { createSourceAuditId } from '@/source/audit/SourceAuditRunner'
 import { SOURCE_ENGINE_VERSION, type SourceAuditEntry, type SourceAuditRun } from '@/source/audit/SourceAuditTypes'
 import { getAuditStatus, getRuleCompatibilityStatus } from '@/source/audit/SourceStatusPresentation'
+import {
+  createBookSourceJsonFileName,
+  serializeLegadoBookSources,
+} from '@/source/export/BookSourceExport'
 
 const router = useRouter()
 const bookSourceStore = useBookSourceStore()
@@ -754,6 +759,18 @@ const handleCommand = async (command: string, source: BookSource) => {
       }
       break
 
+    case 'exportJson':
+      try {
+        const path = await saveJsonFile(
+          serializeLegadoBookSources([source]),
+          createBookSourceJsonFileName(source),
+        )
+        if (path) ElMessage.success('书源 JSON 已导出')
+      } catch {
+        ElMessage.error('导出失败，请重试')
+      }
+      break
+
     case 'openWebsite': {
       let target = source.bookSourceUrl?.trim() || ''
       if (!target.startsWith('http://') && !target.startsWith('https://')) {
@@ -932,6 +949,8 @@ const handleDelete = async (bookSourceUrl: string) => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  font-synthesis: none;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 原始 page-header (保持完全一致) */
@@ -1147,7 +1166,11 @@ const handleDelete = async (bookSourceUrl: string) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
+  font-weight: 400;
+  letter-spacing: 0.01em;
 }
 
 .source-actions {
@@ -1225,7 +1248,7 @@ const handleDelete = async (bookSourceUrl: string) => {
 
 .selected-name {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--el-text-color-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1243,7 +1266,11 @@ const handleDelete = async (bookSourceUrl: string) => {
 .selected-url {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1284,6 +1311,16 @@ const handleDelete = async (bookSourceUrl: string) => {
   flex-direction: column;
   gap: 12px;
   padding-top: 6px;
+}
+
+.source-code-input :deep(.el-input__inner),
+.source-code-input :deep(.el-textarea__inner),
+.import-hint code {
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
+  font-weight: 400;
+  letter-spacing: 0.01em;
 }
 
 .import-hint {

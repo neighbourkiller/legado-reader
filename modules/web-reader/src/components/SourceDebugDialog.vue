@@ -1038,7 +1038,7 @@ const copyLogs = async () => {
   background: #1e1e1e;
   color: #d4d4d4;
   padding: 10px 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
   font-size: 12px;
   line-height: 1.6;
 }

@@ -34,6 +34,18 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
     expect(content).toContain('v-model="formData.bookSourceComment"')
   })
 
+  it('按自然语言与规则语义分离 UI 字体和代码字体', () => {
+    const content = readFileSync(panelPath, 'utf-8')
+    expect(content).toContain(`:class="{ 'rule-font-fields': activeSection !== 'base' }"`)
+    expect(content).toMatch(/v-model="formData\.bookSourceName"[^>]+class="sharp-input"/)
+    expect(content).not.toMatch(/v-model="formData\.bookSourceName"[^>]+code-input/)
+    expect(content).not.toMatch(/v-model="formData\.bookSourceComment"[^>]+code-input/)
+    expect(content).toMatch(/v-model="formData\.bookSourceUrl"[^>]+code-input/)
+    expect(content).toMatch(/v-model="formData\.concurrentRate"[^>]+code-input/)
+    expect(content).toContain("font-feature-settings: 'calt' 0, 'liga' 0")
+    expect(content).toContain('font-variant-ligatures: none')
+  })
+
   it('详情页规则包含此前缺失的 intro、author、coverUrl 等全部核心字段', () => {
     const content = readFileSync(panelPath, 'utf-8')
     expect(content).toContain('v-model="formData.ruleBookInfo.intro"')
@@ -88,5 +100,19 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
     expect(content).toContain('save: handleSave')
     expect(content).toContain('reset: handleReset')
     expect(content).toContain('convertToCss: handleConvertToCss')
+  })
+
+  it('表单可变输入框与普通输入框同样式并严格按内容行数增高', () => {
+    const content = readFileSync(panelPath, 'utf-8')
+    expect(content.match(/:autosize="\{ minRows: 1 \}"/g)).toHaveLength(14)
+    expect(content.match(/class="sharp-input auto-height-input/g)).toHaveLength(14)
+    expect(content).not.toContain('maxRows')
+    expect(content).toContain('overflow-y: hidden !important')
+    expect(content).toContain('wrap="soft"')
+    expect(content).toContain('v-model="jsonText"\n          type="textarea"\n          :rows="24"')
+
+    const theme = readFileSync(resolve(__dirname, '../assets/styles/element-theme.css'), 'utf-8')
+    expect(theme).toContain('html.dark .auto-height-input .el-textarea__inner')
+    expect(theme).toContain('background-color: #303030 !important')
   })
 })

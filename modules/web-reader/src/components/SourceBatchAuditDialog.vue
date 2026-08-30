@@ -458,7 +458,7 @@ watch(activeTab, tab => {
 </script>
 
 <style scoped>
-.audit-tabs { height: calc(100vh - 80px); }
+.audit-tabs { height: calc(100vh - 80px); font-variant-numeric: tabular-nums; }
 .audit-toolbar, .audit-filters, .fixture-summary, .diff-counts {
   display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;
 }
@@ -514,11 +514,14 @@ watch(activeTab, tab => {
   max-inline-size: 100%;
   overflow: hidden;
   color: var(--el-text-color-secondary);
-  font-family: var(--el-font-family);
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.audit-matrix :deep(code) { font-family: var(--legado-font-code); font-feature-settings: 'calt' 0, 'liga' 0; font-variant-ligatures: none; }
 .audit-matrix :deep(button.audit-stage-badge) {
   appearance: none;
   background: var(--el-bg-color);

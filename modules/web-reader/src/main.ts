@@ -58,6 +58,7 @@ async function bootstrap() {
       import('element-plus/dist/index.css'),
       import('element-plus/theme-chalk/dark/css-vars.css'),
       import('@/assets/styles/element-theme.css'),
+      import('@/assets/styles/typography.css'),
     ])
     const app = vue.createApp(App)
     app.use(pinia.createPinia())

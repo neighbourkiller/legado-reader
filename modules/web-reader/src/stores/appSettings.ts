@@ -6,6 +6,11 @@ import { getPreference, setPreference } from '@/storage/preferences'
 export type BookshelfClickAction = 'detail' | 'reader'
 export type ReaderThemeSyncPreference = 'none' | 'sync' | 'independent'
 export type SearchEngine = 'bing' | 'baidu' | 'google'
+export type UiFontPreference = 'bundled' | 'system'
+export type CodeFontPreference = 'bundled' | 'system'
+
+export const DEFAULT_UI_FONT: UiFontPreference = 'bundled'
+export const DEFAULT_CODE_FONT: CodeFontPreference = 'bundled'
 
 export const DEFAULT_BOOK_SOURCES_SIDEBAR_WIDTH = 400
 export const MIN_BOOK_SOURCES_SIDEBAR_WIDTH = 340
@@ -26,6 +31,14 @@ interface StoredAppSettings {
   searchEngine?: SearchEngine
   lastHighlightStyle?: HighlightStyleRecord
   bookSourcesSidebarWidth?: number
+  uiFont?: UiFontPreference
+  codeFont?: CodeFontPreference
+}
+
+function applyFontPreferences(uiFont: UiFontPreference, codeFont: CodeFontPreference) {
+  if (typeof document === 'undefined') return
+  document.documentElement.dataset.uiFont = uiFont
+  document.documentElement.dataset.codeFont = codeFont
 }
 
 function loadStoredSettings(): StoredAppSettings {
@@ -61,6 +74,8 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
   const bookSourcesSidebarWidth = ref(
     clampBookSourcesSidebarWidth(stored.bookSourcesSidebarWidth),
   )
+  const uiFont = ref<UiFontPreference>(stored.uiFont === 'system' ? 'system' : DEFAULT_UI_FONT)
+  const codeFont = ref<CodeFontPreference>(stored.codeFont === 'system' ? 'system' : DEFAULT_CODE_FONT)
   const lastHighlightStyle = ref<HighlightStyleRecord>(
     stored.lastHighlightStyle?.kind === 'underline'
       ? {
@@ -74,6 +89,8 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
         },
   )
 
+  applyFontPreferences(uiFont.value, codeFont.value)
+
   const persistSettings = () => {
     saveError.value = null
     const payload = JSON.stringify({
@@ -83,6 +100,8 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
       searchEngine: searchEngine.value,
       lastHighlightStyle: { ...lastHighlightStyle.value },
       bookSourcesSidebarWidth: bookSourcesSidebarWidth.value,
+      uiFont: uiFont.value,
+      codeFont: codeFont.value,
     } satisfies StoredAppSettings)
 
     setPreference(STORAGE_KEY, payload).catch(err => {
@@ -122,6 +141,25 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     persistSettings()
   }
 
+  const setUiFont = (font: UiFontPreference) => {
+    uiFont.value = font
+    applyFontPreferences(uiFont.value, codeFont.value)
+    persistSettings()
+  }
+
+  const setCodeFont = (font: CodeFontPreference) => {
+    codeFont.value = font
+    applyFontPreferences(uiFont.value, codeFont.value)
+    persistSettings()
+  }
+
+  const setFonts = (ui: UiFontPreference, code: CodeFontPreference) => {
+    uiFont.value = ui
+    codeFont.value = code
+    applyFontPreferences(uiFont.value, codeFont.value)
+    persistSettings()
+  }
+
   return {
     bookshelfClickAction,
     readerThemeSyncPreference,
@@ -129,6 +167,8 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     searchEngine,
     lastHighlightStyle,
     bookSourcesSidebarWidth,
+    uiFont,
+    codeFont,
     saveError,
     setBookshelfClickAction,
     setReaderThemeSyncPreference,
@@ -136,5 +176,8 @@ export const useAppSettingsStore = defineStore('appSettings', () => {
     setSearchEngine,
     setLastHighlightStyle,
     setBookSourcesSidebarWidth,
+    setUiFont,
+    setCodeFont,
+    setFonts,
   }
 })

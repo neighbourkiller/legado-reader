@@ -893,6 +893,7 @@ defineExpose({ runDebugInput })
   display: flex;
   flex-direction: column;
   height: 100%;
+  font-variant-numeric: tabular-nums;
 }
 
 .debug-toolbar {
@@ -926,6 +927,17 @@ defineExpose({ runDebugInput })
 
 .debug-keyword-input {
   flex: 1;
+}
+
+.debug-keyword-input :deep(.el-input__inner),
+.explore-item-url,
+.bk-url,
+.url-text {
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
+  font-weight: 400;
+  letter-spacing: 0.01em;
 }
 
 .help-btn {
@@ -1180,7 +1192,9 @@ defineExpose({ runDebugInput })
   background: #141416;
   border: 1px solid var(--el-border-color-lighter);
   padding: 8px 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
   font-size: 11px;
   line-height: 1.6;
   overflow-y: auto;
@@ -1307,7 +1321,7 @@ defineExpose({ runDebugInput })
   background: var(--el-fill-color-darker);
   padding: 1px 4px;
   border-radius: 3px;
-  font-family: monospace;
+  font-family: var(--legado-font-code);
   font-size: 11px;
 }
 </style>

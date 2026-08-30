@@ -14,9 +14,22 @@ describe('书源管理工作台布局', () => {
     expect(manager).toContain('handleEditorSave')
     expect(manager).toContain('handleEditorToolCommand')
     expect(sidebar).toContain('批量测试')
+    expect(sidebar).toContain('command="exportJson"')
+    expect(sidebar).toContain('导出JSON')
+    expect(manager).toContain('serializeLegadoBookSources([source])')
     expect(sidebar).toContain('全选当前结果')
     expect(manager).not.toContain('handleEnableAll')
     expect(manager).not.toContain('handleClearAll')
+  })
+
+  it('编辑与调试切换固定在编辑专属操作之后', () => {
+    const actions = manager.slice(
+      manager.indexOf('<div class="content-header-actions">'),
+      manager.indexOf('</div>', manager.indexOf('<div class="content-header-actions">')),
+    )
+
+    expect(actions.indexOf('handleEditorToolCommand')).toBeLessThan(actions.indexOf('v-model="activeViewMode"'))
+    expect(actions.indexOf('handleEditorSave')).toBeLessThan(actions.indexOf('v-model="activeViewMode"'))
   })
 
   it('宽屏侧栏可调节并在窄屏复用为抽屉', () => {
@@ -31,5 +44,14 @@ describe('书源管理工作台布局', () => {
     expect(sidebar).toContain('ruleStatus(source)')
     expect(sidebar).toContain('auditStatus(source)')
     expect(sidebar).toContain('source-meta-row')
+  })
+
+  it('统计数字稳定对齐，并弱化列表 URL 的代码排版', () => {
+    expect(manager).toContain('font-variant-numeric: tabular-nums')
+    expect(sidebar).toContain('font-variant-numeric: tabular-nums')
+    expect(sidebar).toContain('var(--el-text-color-placeholder)')
+    expect(sidebar).toContain("font-feature-settings: 'calt' 0, 'liga' 0")
+    expect(sidebar).toContain('font-variant-ligatures: none')
+    expect(sidebar).toContain("'is-placeholder': !draftSource?.bookSourceUrl")
   })
 })

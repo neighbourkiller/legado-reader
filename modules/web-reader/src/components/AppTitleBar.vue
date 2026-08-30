@@ -89,7 +89,7 @@ onUnmounted(() => unlistenResize?.())
   color: #30343a;
   background: #edf0f3;
   border-bottom: 1px solid #dfe3e8;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--legado-font-ui);
   user-select: none;
   transition: color 0.25s ease, background-color 0.25s ease, border-color 0.25s ease;
 }

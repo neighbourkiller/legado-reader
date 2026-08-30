@@ -89,7 +89,9 @@
             <span class="draft-badge">草稿</span>
             <span class="source-name">{{ draftSource?.bookSourceName || '新书源（编辑中）' }}</span>
           </div>
-          <div class="source-url">{{ draftSource?.bookSourceUrl || '待配置书源基础 URL' }}</div>
+          <div class="source-url" :class="{ 'is-placeholder': !draftSource?.bookSourceUrl }">
+            {{ draftSource?.bookSourceUrl || '待配置书源基础 URL' }}
+          </div>
         </div>
         <el-button text size="small" type="danger" @click.stop="emit('cancel-draft')">放弃</el-button>
       </div>
@@ -173,6 +175,7 @@
                   <el-dropdown-item command="toggleCompatibility">语义模式：{{ source.webReaderCompatibilityMode === 'standard' ? 'standard' : 'legado' }}</el-dropdown-item>
                   <el-dropdown-item command="auth"><el-icon><Key /></el-icon>网页登录/验证</el-dropdown-item>
                   <el-dropdown-item command="copy"><el-icon><CopyDocument /></el-icon>复制规则</el-dropdown-item>
+                  <el-dropdown-item command="exportJson"><el-icon><Download /></el-icon>导出JSON</el-dropdown-item>
                   <el-dropdown-item command="openWebsite"><el-icon><Link /></el-icon>打开源网站</el-dropdown-item>
                   <el-dropdown-item command="delete" divided class="delete-action-item"><el-icon><Delete /></el-icon>删除书源</el-dropdown-item>
                 </el-dropdown-menu>
@@ -192,6 +195,7 @@ import {
   CopyDocument,
   DataAnalysis,
   Delete,
+  Download,
   Edit,
   Key,
   Link,
@@ -321,6 +325,7 @@ function ruleStatus(source: BookSource) {
   color: var(--el-text-color-primary);
   background: var(--el-bg-color-overlay);
   border: 1px solid var(--el-border-color);
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebar-toolbar {
@@ -386,11 +391,12 @@ function ruleStatus(source: BookSource) {
 .selection-checkbox { flex-shrink: 0; }
 .source-info { min-width: 0; flex: 1; }
 .source-name-row { min-width: 0; gap: 5px; }
-.source-name { min-width: 0; overflow: hidden; color: var(--el-text-color-primary); font-size: 13.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.source-name { min-width: 0; overflow: hidden; color: var(--el-text-color-primary); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .source-item.is-active .source-name { color: var(--el-color-primary); }
 .source-top-badge { flex-shrink: 0; font-size: 12px; }
 .draft-badge { flex-shrink: 0; padding: 1px 6px; color: #fff; background: var(--el-color-primary); font-size: 11px; }
-.source-url { margin-top: 3px; overflow: hidden; color: var(--el-text-color-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.source-url { margin-top: 3px; overflow: hidden; color: var(--el-text-color-placeholder); font-family: var(--legado-font-code); font-feature-settings: 'calt' 0, 'liga' 0; font-variant-ligatures: none; font-size: 11.5px; font-weight: 400; letter-spacing: 0.01em; text-overflow: ellipsis; white-space: nowrap; }
+.source-url.is-placeholder { font-family: var(--legado-font-ui); letter-spacing: normal; }
 .source-meta-row { min-height: 20px; margin-top: 6px; gap: 5px; overflow: hidden; }
 .source-meta-row :deep(.el-tag) { height: 19px; padding: 0 5px; font-size: 10.5px; }
 .source-group { max-width: 92px; overflow: hidden; color: var(--el-text-color-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

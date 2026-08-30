@@ -15,7 +15,12 @@
     <div class="panel-body">
       <!-- 表单可视化编辑 -->
       <div v-show="activeSection !== 'json'" class="form-pane">
-        <el-form label-position="top" size="default" class="source-form">
+        <el-form
+          label-position="top"
+          size="default"
+          class="source-form"
+          :class="{ 'rule-font-fields': activeSection !== 'base' }"
+        >
           <!-- 1. 基本设置 -->
           <div v-show="activeSection === 'base'" class="sub-tab-pane">
             <div class="form-section">
@@ -53,7 +58,7 @@
                 </el-form-item>
               </div>
               <el-form-item label="书源基础 URL" required>
-                <el-input v-model="formData.bookSourceUrl" placeholder="https://www.example.com" class="sharp-input" />
+                <el-input v-model="formData.bookSourceUrl" placeholder="https://www.example.com" class="sharp-input code-input" />
               </el-form-item>
 
               <div class="form-switches-grid">
@@ -81,21 +86,21 @@
                 <template #title><strong>网络与鉴权配置</strong><span class="collapse-summary">请求头、并发、登录与 URL 匹配</span></template>
                 <div class="advanced-config-body">
                   <el-form-item label="自定义请求头">
-                    <el-input v-model="formData.header" type="textarea" :rows="3" placeholder="JSON 格式请求头对象" class="sharp-textarea code-textarea" />
+                    <el-input v-model="formData.header" type="textarea" :autosize="{ minRows: 1 }" resize="none" wrap="soft" placeholder="JSON 格式请求头对象" class="sharp-input auto-height-input code-textarea" />
                     <div class="field-help">Header JSON，例如 {&quot;User-Agent&quot;: &quot;...&quot;, &quot;Referer&quot;: &quot;...&quot;}</div>
                   </el-form-item>
                   <div class="form-grid-2">
                     <el-form-item label="并发限制 / 请求间隔">
-                      <el-input v-model="formData.concurrentRate" placeholder="例如：1000（毫秒）" class="sharp-input" />
+                      <el-input v-model="formData.concurrentRate" placeholder="例如：1000（毫秒）" class="sharp-input code-input" />
                       <div class="field-help"><code>concurrentRate</code></div>
                     </el-form-item>
                     <el-form-item label="登录地址">
-                      <el-input v-model="formData.loginUrl" placeholder="如 https://example.com/login" class="sharp-input" />
+                      <el-input v-model="formData.loginUrl" placeholder="如 https://example.com/login" class="sharp-input code-input" />
                       <div class="field-help"><code>loginUrl</code></div>
                     </el-form-item>
                   </div>
                   <el-form-item label="书籍详情 URL 正则匹配">
-                    <el-input v-model="formData.bookUrlPattern" placeholder="如 https?://.*example\\.com/book/\\d+" class="sharp-input" />
+                    <el-input v-model="formData.bookUrlPattern" placeholder="如 https?://.*example\\.com/book/\\d+" class="sharp-input code-input" />
                     <div class="field-help"><code>bookUrlPattern</code></div>
                   </el-form-item>
                 </div>
@@ -104,7 +109,7 @@
                 <template #title><strong>说明与备注</strong><span class="collapse-summary">使用说明、账号提示与注意事项</span></template>
                 <div class="advanced-config-body">
                   <el-form-item label="书源说明注释">
-                    <el-input v-model="formData.bookSourceComment" type="textarea" :rows="3" placeholder="书源作者使用说明、账号密码提示或注意事项..." class="sharp-textarea" />
+                    <el-input v-model="formData.bookSourceComment" type="textarea" :autosize="{ minRows: 1 }" resize="none" wrap="soft" placeholder="书源作者使用说明、账号密码提示或注意事项..." class="sharp-input auto-height-input" />
                     <div class="field-help"><code>bookSourceComment</code></div>
                   </el-form-item>
                 </div>
@@ -120,9 +125,11 @@
                 <el-input
                   v-model="formData.searchUrl"
                   type="textarea"
-                  :rows="2"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="例如：https://example.com/search?keyword={{key}}"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
               <el-form-item label="搜索校验关键字 (checkKeyWord)">
@@ -152,7 +159,7 @@
                 </el-form-item>
               </div>
               <el-form-item label="简介规则 (intro)">
-                <el-input v-model="formData.ruleSearch.intro" type="textarea" :rows="2" placeholder="如 .intro@text" class="sharp-textarea" />
+                <el-input v-model="formData.ruleSearch.intro" type="textarea" :autosize="{ minRows: 1 }" resize="none" wrap="soft" placeholder="如 .intro@text" class="sharp-input auto-height-input" />
               </el-form-item>
               <div class="form-grid-2">
                 <el-form-item label="分类/状态 (kind)">
@@ -190,9 +197,11 @@
                 <el-input
                   v-model="formData.exploreUrl"
                   type="textarea"
-                  :rows="3"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="例如：&#10;玄幻::https://example.com/sort/1_{{page}}&#10;都市::https://example.com/sort/2_{{page}}"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
             </div>
@@ -219,7 +228,7 @@
                 </el-form-item>
               </div>
               <el-form-item label="简介规则 (intro)">
-                <el-input v-model="formData.ruleExplore.intro" type="textarea" :rows="2" placeholder="如 .intro@text" class="sharp-textarea" />
+                <el-input v-model="formData.ruleExplore.intro" type="textarea" :autosize="{ minRows: 1 }" resize="none" wrap="soft" placeholder="如 .intro@text" class="sharp-input auto-height-input" />
               </el-form-item>
               <div class="form-grid-2">
                 <el-form-item label="分类/状态 (kind)">
@@ -248,9 +257,11 @@
                 <el-input
                   v-model="formData.ruleBookInfo.init"
                   type="textarea"
-                  :rows="2"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="通常留空，若详情页需二次请求或执行 JS 前置逻辑在此填写"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
             </div>
@@ -277,9 +288,11 @@
                 <el-input
                   v-model="formData.ruleBookInfo.intro"
                   type="textarea"
-                  :rows="3"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="如 #intro@text 或 .description@text"
-                  class="sharp-textarea"
+                  class="sharp-input auto-height-input"
                 />
               </el-form-item>
               <div class="form-grid-2">
@@ -351,18 +364,22 @@
                 <el-input
                   v-model="formData.ruleToc.formatJs"
                   type="textarea"
-                  :rows="2"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="如用于正则替换章节名中冗余文字的 JS 脚本"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
               <el-form-item label="目录刷新前执行 JS (preUpdateJs)">
                 <el-input
                   v-model="formData.ruleToc.preUpdateJs"
                   type="textarea"
-                  :rows="2"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="获取目录前执行的预处理 JS 脚本"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
             </div>
@@ -376,9 +393,11 @@
                 <el-input
                   v-model="formData.ruleContent.content"
                   type="textarea"
-                  :rows="3"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="如 #content@text 或 //div[@id='content']/text()"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
               <div class="form-grid-2">
@@ -396,9 +415,11 @@
                 <el-input
                   v-model="formData.ruleContent.replaceRegex"
                   type="textarea"
-                  :rows="3"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="如 ##广告内容## 或 ##匹配正则##替换内容"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
               <el-form-item label="资源过滤正则 (sourceRegex)">
@@ -412,9 +433,11 @@
                 <el-input
                   v-model="formData.ruleContent.webJs"
                   type="textarea"
-                  :rows="2"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="在目标网页上下文中执行的 JS 脚本（如触发动态点击等）"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
               <div class="form-grid-2">
@@ -433,9 +456,11 @@
                 <el-input
                   v-model="formData.ruleContent.imageDecode"
                   type="textarea"
-                  :rows="2"
+                  :autosize="{ minRows: 1 }"
+                  resize="none"
+                  wrap="soft"
                   placeholder="针对混淆/异或加密图片数据的解密脚本"
-                  class="sharp-textarea code-textarea"
+                  class="sharp-input auto-height-input code-textarea"
                 />
               </el-form-item>
             </div>
@@ -825,6 +850,10 @@ defineExpose({
   padding: 0 16px;
 }
 
+.source-form :deep(.el-form-item__label) {
+  font-weight: 400;
+}
+
 .sub-tab-pane {
   display: flex;
   flex-direction: column;
@@ -886,7 +915,7 @@ defineExpose({
 }
 
 .setting-tile > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.setting-tile strong { color: var(--el-text-color-primary); font-size: 13px; }
+.setting-tile strong { color: var(--el-text-color-primary); font-size: 13px; font-weight: 550; }
 .setting-tile span { color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.35; }
 
 .advanced-config-collapse {
@@ -907,7 +936,17 @@ defineExpose({
 .collapse-summary { margin-left: 8px; color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
 .advanced-config-body { padding: 16px 20px 2px; }
 .field-help { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.4; }
-.field-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.field-help code {
+  padding: 1px 4px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 2px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
+  font-size: 11px;
+}
 
 .helper-hint {
   font-size: 12px;
@@ -919,14 +958,45 @@ defineExpose({
 .helper-hint code {
   background: var(--el-fill-color);
   padding: 2px 5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
 }
 
+.code-input :deep(.el-input__inner),
+.rule-font-fields :deep(.el-input__inner),
+.rule-font-fields :deep(.el-textarea__inner),
 .code-textarea :deep(textarea) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
   font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   line-height: 1.5;
   border-radius: 0 !important;
+}
+
+.auto-height-input :deep(.el-textarea__inner) {
+  min-height: var(--el-component-size, 32px) !important;
+  padding: 5px 11px;
+  overflow-x: hidden;
+  overflow-y: hidden !important;
+  color: var(--el-input-text-color, var(--el-text-color-regular));
+  background-color: var(--el-input-bg-color, var(--el-fill-color-blank));
+  border: 0;
+  border-radius: 0 !important;
+  box-shadow: 0 0 0 1px var(--el-input-border-color, var(--el-border-color)) inset;
+  line-height: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.auto-height-input :deep(.el-textarea__inner:hover) {
+  box-shadow: 0 0 0 1px var(--el-input-hover-border-color, var(--el-border-color-hover)) inset;
+}
+
+.auto-height-input :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px var(--el-input-focus-border-color, var(--el-color-primary)) inset;
 }
 
 .json-pane {
@@ -950,8 +1020,12 @@ defineExpose({
 }
 
 .json-textarea :deep(textarea) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--legado-font-code);
+  font-feature-settings: 'calt' 0, 'liga' 0;
+  font-variant-ligatures: none;
   font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
   line-height: 1.6;
   border-radius: 0 !important;
 }
