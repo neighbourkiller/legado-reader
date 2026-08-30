@@ -1,6 +1,6 @@
 [package]
 name = "legado-reader"
-version = "1.26.8300"
+version = "1.26.8310"
 edition = "2021"
 
 [lib]
