@@ -916,7 +916,7 @@ defineExpose({
 
 .setting-tile > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .setting-tile strong { color: var(--el-text-color-primary); font-size: 13px; font-weight: 550; }
-.setting-tile span { color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.35; }
+.setting-tile span { color: var(--legado-text-muted, var(--el-text-color-secondary)); font-size: 11.5px; line-height: 1.35; }
 
 .advanced-config-collapse {
   background: var(--el-bg-color-overlay);
@@ -933,14 +933,14 @@ defineExpose({
 
 .advanced-config-collapse :deep(.el-collapse-item__wrap) { background: var(--el-bg-color-overlay); }
 .advanced-config-collapse :deep(.el-collapse-item__content) { padding-bottom: 0; }
-.collapse-summary { margin-left: 8px; color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
+.collapse-summary { margin-left: 8px; color: var(--legado-text-muted, var(--el-text-color-secondary)); font-size: 12px; font-weight: 400; }
 .advanced-config-body { padding: 16px 20px 2px; }
-.field-help { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.4; }
+.field-help { margin-top: 5px; color: var(--legado-text-muted, var(--el-text-color-secondary)); font-size: 11.5px; line-height: 1.4; }
 .field-help code {
   padding: 1px 4px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 2px;
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
   background: var(--el-fill-color);
   font-family: var(--legado-font-code);
   font-feature-settings: 'calt' 0, 'liga' 0;
@@ -950,7 +950,7 @@ defineExpose({
 
 .helper-hint {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
   line-height: 1.5;
   margin-top: 6px;
 }
@@ -1016,7 +1016,7 @@ defineExpose({
 
 .json-tip {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
 }
 
 .json-textarea :deep(textarea) {

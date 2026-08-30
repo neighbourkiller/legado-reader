@@ -11,15 +11,21 @@
         </span>
       </div>
       <div class="header-actions">
-        <el-button @click="openImportDialog">
-          <el-icon><Download /></el-icon>
-          导入书源
-        </el-button>
         <el-dropdown @command="handleNavigateCommand">
-          <el-button>前往<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <button
+            type="button"
+            class="navigate-menu-button"
+            aria-label="前往"
+            title="前往"
+          >
+            <svg class="navigate-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 6h14M5 10h14M5 14h14M5 18h14" />
+            </svg>
+          </button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="bookshelf"><el-icon><Reading /></el-icon>书架</el-dropdown-item>
+              <el-dropdown-item command="import"><el-icon><Download /></el-icon>导入书源</el-dropdown-item>
+              <el-dropdown-item command="bookshelf" divided><el-icon><Reading /></el-icon>书架</el-dropdown-item>
               <el-dropdown-item command="search"><el-icon><Search /></el-icon>搜索书籍</el-dropdown-item>
               <el-dropdown-item command="settings"><el-icon><Setting /></el-icon>设置</el-dropdown-item>
             </el-dropdown-menu>
@@ -289,7 +295,6 @@ import {
   Edit,
   VideoPlay,
   Reading,
-  ArrowDown,
   Check,
   MagicStick,
   Menu,
@@ -502,7 +507,8 @@ watch(isNarrowLayout, narrow => {
 })
 
 function handleNavigateCommand(command: string) {
-  if (command === 'bookshelf') router.push('/bookshelf')
+  if (command === 'import') openImportDialog()
+  else if (command === 'bookshelf') router.push('/bookshelf')
   else if (command === 'search') goToSearch()
   else if (command === 'settings') router.push('/settings')
 }
@@ -979,7 +985,7 @@ const handleDelete = async (bookSourceUrl: string) => {
 
 .source-count-tag {
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
   background: var(--el-fill-color);
   padding: 3px 10px;
   border-radius: 0;
@@ -991,6 +997,58 @@ const handleDelete = async (bookSourceUrl: string) => {
   gap: 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.navigate-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 32px;
+  padding: 0;
+  color: var(--el-text-color-regular);
+  border: 0;
+  border-radius: var(--el-border-radius-base);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color .15s ease;
+}
+
+.navigate-menu-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--el-text-color-regular);
+}
+
+.navigate-menu-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.navigate-menu-button:focus {
+  background: transparent;
+  outline: none;
+}
+
+.navigate-menu-button:hover {
+  background: var(--el-fill-color-light);
+}
+
+.navigate-menu-button:focus-visible {
+  background: transparent;
+  outline: 1px solid var(--el-border-color-darker);
+  outline-offset: 1px;
+}
+
+.navigate-menu-button:active {
+  background: var(--el-fill-color);
+}
+
+.navigate-menu-button:hover .navigate-menu-icon,
+.navigate-menu-button:focus-visible .navigate-menu-icon {
+  color: var(--el-color-primary);
 }
 
 /* 双栏工作台架构 */
@@ -1162,7 +1220,7 @@ const handleDelete = async (bookSourceUrl: string) => {
 
 .source-url {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1265,7 +1323,7 @@ const handleDelete = async (bookSourceUrl: string) => {
 
 .selected-url {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
   font-family: var(--legado-font-code);
   font-feature-settings: 'calt' 0, 'liga' 0;
   font-variant-ligatures: none;
@@ -1338,7 +1396,7 @@ const handleDelete = async (bookSourceUrl: string) => {
 }
 
 .example-label {
-  color: var(--el-text-color-secondary);
+  color: var(--legado-text-muted, var(--el-text-color-secondary));
 }
 
 .example-tag {
@@ -1466,6 +1524,23 @@ const handleDelete = async (bookSourceUrl: string) => {
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar-resizer::after { transition: none; }
+  .navigate-menu-button { transition: none; }
+}
+
+html:not(.dark) .book-sources-view :deep(.el-tag--success) {
+  --el-tag-text-color: #3d7a20;
+}
+
+html:not(.dark) .book-sources-view :deep(.el-tag--warning) {
+  --el-tag-text-color: #8a5500;
+}
+
+html:not(.dark) .book-sources-view :deep(.el-tag--danger) {
+  --el-tag-text-color: #b5473e;
+}
+
+html:not(.dark) .book-sources-view :deep(.el-tag--info) {
+  --el-tag-text-color: #60656d;
 }
 </style>
 

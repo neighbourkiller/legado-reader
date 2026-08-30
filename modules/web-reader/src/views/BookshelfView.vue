@@ -605,7 +605,7 @@ const saveEditBook = async () => {
 }
 
 .bookshelf-index-wrapper.light .navigation-sub-title {
-  color: #b1b1b1;
+  color: var(--legado-text-subtle, #858a92);
 }
 
 .bookshelf-index-wrapper.light .search-wrapper :deep(.el-input__wrapper) {
@@ -618,11 +618,11 @@ const saveEditBook = async () => {
 }
 
 .bookshelf-index-wrapper.light .search-wrapper :deep(.el-input__inner::placeholder) {
-  color: #a0a0a0;
+  color: var(--legado-text-subtle, #858a92);
 }
 
 .bookshelf-index-wrapper.light .recent-title {
-  color: #b1b1b1;
+  color: var(--legado-text-muted, #686d75);
 }
 
 .bookshelf-index-wrapper.light .recent-book-badge.is-primary {

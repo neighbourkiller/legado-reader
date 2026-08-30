@@ -395,11 +395,11 @@ function ruleStatus(source: BookSource) {
 .source-item.is-active .source-name { color: var(--el-color-primary); }
 .source-top-badge { flex-shrink: 0; font-size: 12px; }
 .draft-badge { flex-shrink: 0; padding: 1px 6px; color: #fff; background: var(--el-color-primary); font-size: 11px; }
-.source-url { margin-top: 3px; overflow: hidden; color: var(--el-text-color-placeholder); font-family: var(--legado-font-code); font-feature-settings: 'calt' 0, 'liga' 0; font-variant-ligatures: none; font-size: 11.5px; font-weight: 400; letter-spacing: 0.01em; text-overflow: ellipsis; white-space: nowrap; }
+.source-url { margin-top: 3px; overflow: hidden; color: var(--legado-text-muted, var(--el-text-color-secondary)); font-family: var(--legado-font-code); font-feature-settings: 'calt' 0, 'liga' 0; font-variant-ligatures: none; font-size: 11.5px; font-weight: 400; letter-spacing: 0.01em; text-overflow: ellipsis; white-space: nowrap; }
 .source-url.is-placeholder { font-family: var(--legado-font-ui); letter-spacing: normal; }
 .source-meta-row { min-height: 20px; margin-top: 6px; gap: 5px; overflow: hidden; }
 .source-meta-row :deep(.el-tag) { height: 19px; padding: 0 5px; font-size: 10.5px; }
-.source-group { max-width: 92px; overflow: hidden; color: var(--el-text-color-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.source-group { max-width: 92px; overflow: hidden; color: var(--legado-text-muted, var(--el-text-color-secondary)); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .source-group::after { content: '·'; margin-left: 5px; color: var(--el-border-color-darker); }
 .source-actions { flex-shrink: 0; gap: 6px; }
 .more-btn { width: 26px; height: 28px; padding: 0; border: 0; color: var(--el-text-color-secondary); background: transparent; font-size: 22px; line-height: 24px; cursor: pointer; }

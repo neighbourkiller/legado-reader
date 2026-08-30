@@ -185,7 +185,7 @@ const handleCommand = (command: string) => {
   background-color: rgba(255, 255, 255, 0.05);
 }
 
-:global(html:not(.dark)) .book-item-card:hover {
+html:not(.dark) .book-item-card:hover {
   background-color: rgba(0, 0, 0, 0.04);
 }
 
@@ -277,7 +277,7 @@ const handleCommand = (command: string) => {
   transition: color 0.2s ease;
 }
 
-:global(html:not(.dark)) .book-title {
+html:not(.dark) .book-title {
   color: #33373d;
 }
 
@@ -308,11 +308,11 @@ const handleCommand = (command: string) => {
   color: #ffffff;
 }
 
-:global(html:not(.dark)) .more-btn {
+html:not(.dark) .more-btn {
   color: #606266;
 }
 
-:global(html:not(.dark)) .more-btn:hover {
+html:not(.dark) .more-btn:hover {
   background: rgba(0, 0, 0, 0.08);
   color: #111827;
 }
@@ -335,7 +335,7 @@ const handleCommand = (command: string) => {
   white-space: nowrap;
 }
 
-:global(html:not(.dark)) .sub-info {
+html:not(.dark) .sub-info {
   color: #6b6b6b;
 }
 
@@ -362,9 +362,9 @@ const handleCommand = (command: string) => {
   text-align: left;
 }
 
-:global(html:not(.dark)) .dur-chapter,
-:global(html:not(.dark)) .last-chapter {
-  color: #969ba3;
+html:not(.dark) .dur-chapter,
+html:not(.dark) .last-chapter {
+  color: var(--legado-text-muted, #686d75);
 }
 </style>
 
