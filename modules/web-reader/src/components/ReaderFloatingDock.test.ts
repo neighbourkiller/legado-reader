@@ -9,7 +9,10 @@ describe('阅读器沉浸式浮岛控制栏测试', () => {
 
     const content = readFileSync(dockPath, 'utf-8')
     expect(content).toContain('reader-floating-dock')
-    expect(content).toContain('backdrop-filter: blur(20px)')
+    expect(content).toContain('backdrop-filter: blur(26px) saturate(145%)')
+    expect(content).toContain('--dock-glass-background')
+    expect(content).toContain('prefers-reduced-motion: reduce')
+    expect(content).toContain(':inert="!visible"')
     expect(content).toContain('to-shelf')
     expect(content).toContain('toggle-catalog')
     expect(content).toContain('toggle-settings')

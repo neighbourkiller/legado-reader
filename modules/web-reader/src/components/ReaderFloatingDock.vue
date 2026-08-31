@@ -6,6 +6,8 @@
       night: isNight,
       day: !isNight,
     }"
+    :aria-hidden="!visible"
+    :inert="!visible"
     @click.stop
   >
     <div class="reader-floating-dock" role="toolbar" aria-label="阅读控制栏">
@@ -259,50 +261,77 @@ const handleMoreCommand = (command: string) => {
   position: fixed;
   bottom: 28px;
   left: 50%;
-  transform: translateX(-50%) translateY(0);
+  transform: translateX(-50%) translateY(0) scale(1);
   z-index: 1000;
   opacity: 1;
-  transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1),
-              opacity 0.35s cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition: transform 0.24s cubic-bezier(0.2, 0.9, 0.3, 1),
+              opacity 0.18s ease;
   pointer-events: auto;
   user-select: none;
 }
 
 .reader-floating-dock-container.hidden {
   opacity: 0;
-  transform: translateX(-50%) translateY(32px);
+  transform: translateX(-50%) translateY(18px) scale(0.96);
   pointer-events: none;
 }
 
+.reader-floating-dock-container.day {
+  --dock-glass-background: linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(245, 239, 227, 0.5));
+  --dock-glass-background-solid: rgba(250, 247, 240, 0.96);
+  --dock-glass-border: rgba(255, 255, 255, 0.78);
+  --dock-glass-highlight: rgba(255, 255, 255, 0.95);
+  --dock-glass-shadow: 0 18px 48px rgba(74, 63, 45, 0.18),
+                       0 4px 14px rgba(74, 63, 45, 0.1),
+                       inset 0 1px 0 rgba(255, 255, 255, 0.88),
+                       inset 0 -1px 0 rgba(83, 68, 42, 0.08);
+  --dock-text-color: #2c2925;
+  --dock-focus-ring: rgba(91, 83, 70, 0.48);
+  --dock-hover-background: rgba(75, 67, 55, 0.1);
+  --dock-divider-color: rgba(76, 67, 54, 0.16);
+}
+
+.reader-floating-dock-container.night {
+  --dock-glass-background: linear-gradient(135deg, rgba(50, 50, 55, 0.72), rgba(20, 20, 24, 0.58));
+  --dock-glass-background-solid: rgba(29, 29, 33, 0.96);
+  --dock-glass-border: rgba(255, 255, 255, 0.16);
+  --dock-glass-highlight: rgba(255, 255, 255, 0.42);
+  --dock-glass-shadow: 0 20px 54px rgba(0, 0, 0, 0.48),
+                       0 5px 16px rgba(0, 0, 0, 0.3),
+                       inset 0 1px 0 rgba(255, 255, 255, 0.14),
+                       inset 0 -1px 0 rgba(0, 0, 0, 0.28);
+  --dock-text-color: #ecebe8;
+  --dock-focus-ring: rgba(236, 235, 232, 0.52);
+  --dock-hover-background: rgba(255, 255, 255, 0.11);
+  --dock-divider-color: rgba(255, 255, 255, 0.14);
+}
+
 .reader-floating-dock {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 6px 12px;
+  overflow: hidden;
+  color: var(--dock-text-color);
+  background: var(--dock-glass-background);
+  border: 1px solid var(--dock-glass-border);
   border-radius: 9999px;
-  box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.18),
-              0 4px 12px -2px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--dock-glass-shadow);
+  backdrop-filter: blur(26px) saturate(145%);
+  -webkit-backdrop-filter: blur(26px) saturate(145%);
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
-/* 白天浅色模式 */
-.day .reader-floating-dock {
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  color: #27272a;
-}
-
-/* 夜间深色模式 */
-.night .reader-floating-dock {
-  background: rgba(30, 30, 34, 0.88);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #e4e4e7;
-  box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.5),
-              0 4px 12px -2px rgba(0, 0, 0, 0.3);
+.reader-floating-dock::before {
+  position: absolute;
+  top: 0;
+  left: 12%;
+  width: 76%;
+  height: 1px;
+  content: '';
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--dock-glass-highlight), transparent);
 }
 
 .dock-item,
@@ -330,8 +359,14 @@ const handleMoreCommand = (command: string) => {
 
 .dock-item:hover:not(:disabled),
 :slotted(.dock-item:hover:not(:disabled)) {
-  background: rgba(125, 125, 125, 0.12);
+  background: var(--dock-hover-background);
   transform: translateY(-1px);
+}
+
+.dock-item:focus-visible,
+:slotted(.dock-item:focus-visible) {
+  background: var(--dock-hover-background);
+  box-shadow: inset 0 0 0 2px var(--dock-focus-ring);
 }
 
 .dock-item:active:not(:disabled),
@@ -385,7 +420,22 @@ const handleMoreCommand = (command: string) => {
   width: 1px;
   height: 24px;
   margin: 0 4px;
-  background: rgba(125, 125, 125, 0.18);
+  background: var(--dock-divider-color);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .reader-floating-dock {
+    background: var(--dock-glass-background-solid);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-floating-dock-container,
+  .reader-floating-dock,
+  .dock-item,
+  :slotted(.dock-item) {
+    transition: none;
+  }
 }
 
 @media screen and (max-width: 768px) {

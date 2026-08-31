@@ -5,7 +5,9 @@
       :class="{
         'desktop-app': isDesktop,
         'desktop-app-with-titlebar': isDesktop && !isFullscreen,
+        'reader-surface-active': isReaderRoute,
       }"
+      :style="readerSurfaceStyle"
     >
       <AppTitleBar v-if="isDesktop && !isFullscreen" />
       <div class="app-content">
@@ -20,7 +22,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
@@ -29,6 +32,12 @@ import GlobalHomeButton from '@/components/GlobalHomeButton.vue'
 import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
 import { useAppSettingsStore } from '@/stores/appSettings'
+import { useReadingStore } from '@/stores/reading'
+import {
+  READER_SURFACE_BACKGROUND_PROPERTY,
+  resolveReaderSurfaceBackground,
+  syncReaderSurfaceDocument,
+} from '@/reader/readerSurface'
 
 const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 
@@ -36,7 +45,24 @@ const isDesktop = import.meta.env.VITE_APP_TARGET === 'desktop'
 useTheme()
 useAppSettingsStore()
 
+const route = useRoute()
+const readingStore = useReadingStore()
 const { isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen()
+
+const isReaderRoute = computed(() => route.name === 'reader')
+const readerSurfaceBackground = computed(() =>
+  resolveReaderSurfaceBackground(readingStore.settings.theme)
+)
+const readerSurfaceStyle = computed(() => isReaderRoute.value
+  ? { [READER_SURFACE_BACKGROUND_PROPERTY]: readerSurfaceBackground.value }
+  : undefined
+)
+
+const stopWatchingReaderSurface = watch(
+  [isReaderRoute, readerSurfaceBackground],
+  ([active, background]) => syncReaderSurfaceDocument(active, background),
+  { immediate: true, flush: 'sync' },
+)
 
 const syncDesktopTitlebarClass = (fullscreen: boolean) => {
   if (typeof document === 'undefined') return
@@ -68,7 +94,9 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeyDown)
   stopWatchingFullscreen()
+  stopWatchingReaderSurface()
   document.documentElement.classList.remove('desktop-with-titlebar')
+  syncReaderSurfaceDocument(false, readerSurfaceBackground.value)
 })
 </script>
 
@@ -92,6 +120,13 @@ html.desktop-with-titlebar .el-message:not(.is-bottom) {
 /* 批测全屏对话框会 Teleport 到 body，桌面非全屏时需避开自绘标题栏。 */
 html.desktop-with-titlebar .source-audit-overlay .el-overlay-dialog {
   top: 36px;
+}
+
+/* 阅读页滚动时根画布也保持阅读主题，避免 WebView 合成帧露出全局主题。 */
+html.reader-surface-active,
+html.reader-surface-active body,
+html.reader-surface-active #app {
+  background: var(--reader-surface-background, #f4eee1);
 }
 </style>
 
@@ -122,6 +157,15 @@ html.desktop-with-titlebar .source-audit-overlay .el-overlay-dialog {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+.app-container.reader-surface-active,
+.app-container.reader-surface-active .app-content {
+  background: var(--reader-surface-background, #f4eee1);
+}
+
+.app-container.reader-surface-active .app-content {
+  overscroll-behavior: none;
 }
 
 .desktop-app .app-content > :deep(*) {

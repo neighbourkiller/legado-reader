@@ -270,6 +270,7 @@ import {
   READER_PAGE_TURN_GUIDE_VERSION,
   shouldShowReaderPageTurnGuide,
 } from '@/reader/pageTurnGuide'
+import { isPointerNearReaderDock } from '@/reader/dockVisibility'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
@@ -352,7 +353,8 @@ const pageContentRef = ref<HTMLElement>()
 let readingSessionStartedAt = 0
 
 // 胶囊栏与沉浸隐匿控制
-const dockVisible = ref(true)
+const dockVisible = ref(false)
+const pointerNearDock = ref(false)
 let dockHideTimer: number | undefined
 const moreMenuVisible = ref(false)
 const currentTimeStr = ref('')
@@ -370,49 +372,50 @@ const currentChapterTitle = computed(() => {
   return ch?.title || currentBook.value?.name || ''
 })
 
-const resetDockTimer = () => {
+const clearDockHideTimer = () => {
   if (dockHideTimer !== undefined) {
     window.clearTimeout(dockHideTimer)
     dockHideTimer = undefined
   }
-  if (
-    popCataVisible.value ||
-    readSettingsVisible.value ||
-    bookmarkDrawerVisible.value ||
-    downloadDialogVisible.value ||
-    moreMenuVisible.value
-  ) {
-    dockVisible.value = true
+}
+
+const dockInteractionLocked = computed(() =>
+  popCataVisible.value ||
+  readSettingsVisible.value ||
+  bookmarkDrawerVisible.value ||
+  downloadDialogVisible.value ||
+  moreMenuVisible.value
+)
+
+const showDock = () => {
+  clearDockHideTimer()
+  dockVisible.value = true
+}
+
+const scheduleDockHide = () => {
+  if (!dockVisible.value || dockHideTimer !== undefined) return
+  if (pointerNearDock.value || dockInteractionLocked.value) {
+    showDock()
     return
   }
   dockHideTimer = window.setTimeout(() => {
-    if (
-      !popCataVisible.value &&
-      !readSettingsVisible.value &&
-      !bookmarkDrawerVisible.value &&
-      !downloadDialogVisible.value &&
-      !moreMenuVisible.value
-    ) {
-      dockVisible.value = false
-    }
-  }, 2800)
+    dockHideTimer = undefined
+    if (!dockInteractionLocked.value) dockVisible.value = false
+  }, 220)
 }
 
-const showDock = () => {
-  dockVisible.value = true
-  resetDockTimer()
-}
-
-const handleWindowMouseMove = (e: MouseEvent) => {
-  if (window.innerHeight - e.clientY < 110) {
-    dockVisible.value = true
-    if (dockHideTimer !== undefined) {
-      window.clearTimeout(dockHideTimer)
-      dockHideTimer = undefined
-    }
-    return
+const handleWindowMouseMove = (event: MouseEvent) => {
+  pointerNearDock.value = isPointerNearReaderDock({
+    clientX: event.clientX,
+    clientY: event.clientY,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  })
+  if (pointerNearDock.value) {
+    showDock()
+  } else {
+    scheduleDockHide()
   }
-  showDock()
 }
 
 watch(
@@ -425,13 +428,9 @@ watch(
   ],
   ([cata, setting, bkm, dl, more]) => {
     if (cata || setting || bkm || dl || more) {
-      dockVisible.value = true
-      if (dockHideTimer !== undefined) {
-        window.clearTimeout(dockHideTimer)
-        dockHideTimer = undefined
-      }
+      showDock()
     } else {
-      resetDockTimer()
+      scheduleDockHide()
     }
   },
 )
@@ -1268,14 +1267,12 @@ const flushReadingSession = async (
   })
 }
 
-// 点击屏幕切换悬浮控制栏
+// 触屏窄界面没有 hover，保留点击正文切换控制栏；桌面端仅由底部邻近热区唤出。
 const handleWrapperClick = () => {
+  if (!miniInterface.value) return
   if (dockVisible.value) {
     dockVisible.value = false
-    if (dockHideTimer !== undefined) {
-      window.clearTimeout(dockHideTimer)
-      dockHideTimer = undefined
-    }
+    clearDockHideTimer()
   } else {
     showDock()
   }
@@ -1771,7 +1768,6 @@ onMounted(async () => {
 
     updateCurrentTime()
     timeInterval = window.setInterval(updateCurrentTime, 10000)
-    resetDockTimer()
 
     scrollObserver = new IntersectionObserver(onReachBottom, {
       rootMargin: '-100% 0% 20% 0%',
@@ -1799,7 +1795,7 @@ onUnmounted(() => {
   document.removeEventListener('pointerup', onSelectionPointerUp)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (timeInterval !== undefined) clearInterval(timeInterval)
-  if (dockHideTimer !== undefined) clearTimeout(dockHideTimer)
+  clearDockHideTimer()
   if (progressFrame !== null) window.cancelAnimationFrame(progressFrame)
   if (paginationMeasureFrame !== undefined) window.cancelAnimationFrame(paginationMeasureFrame)
   popCataVisible.value = false
