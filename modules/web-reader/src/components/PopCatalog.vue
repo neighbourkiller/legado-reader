@@ -41,7 +41,7 @@ const emit = defineEmits<{
   getContent: [index: number]
 }>()
 
-const isNight = computed(() => readSettings.value.theme === 6)
+const isNight = computed(() => readSettings.value.theme === 6 || readSettings.value.theme === 7)
 const popupTheme = computed(() => {
   const themeIdx = readSettings.value.theme ?? 1
   return {

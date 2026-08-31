@@ -1,6 +1,6 @@
 <template>
   <button
-    v-if="!isHomeRoute && !isBookSourcesRoute"
+    v-if="!isHomeRoute && !isBookSourcesRoute && !isReaderRoute"
     type="button"
     class="global-home-button"
     aria-label="回到主页"
@@ -19,6 +19,7 @@ const route = useRoute()
 const router = useRouter()
 const isHomeRoute = computed(() => route.path === '/')
 const isBookSourcesRoute = computed(() => route.path === '/book-sources')
+const isReaderRoute = computed(() => route.path.startsWith('/reader'))
 </script>
 
 <style scoped>

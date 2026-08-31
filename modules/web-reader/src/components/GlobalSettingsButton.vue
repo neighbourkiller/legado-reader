@@ -1,6 +1,6 @@
 <template>
   <button
-    v-if="!isBookSourcesRoute"
+    v-if="!isBookSourcesRoute && !isReaderRoute"
     type="button"
     class="global-settings-button"
     :class="{ active: isSettingsRoute }"
@@ -20,6 +20,7 @@ const route = useRoute()
 const router = useRouter()
 const isSettingsRoute = computed(() => route.path.startsWith('/settings'))
 const isBookSourcesRoute = computed(() => route.path === '/book-sources')
+const isReaderRoute = computed(() => route.path.startsWith('/reader'))
 
 const openSettings = () => {
   if (!isSettingsRoute.value) {

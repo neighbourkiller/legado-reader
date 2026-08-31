@@ -65,6 +65,11 @@ const settings: SettingsConfig = {
       content: '#ede7da url(' + content_6 + ') repeat',
       popup: '#ede7da url(' + popup_6 + ') repeat',
     },
+    {
+      body: '#18181b',
+      content: '#18181b',
+      popup: '#222226',
+    },
   ],
   fonts: [
     'Microsoft YaHei, PingFangSC-Regular, HelveticaNeue-Light, Helvetica Neue Light, sans-serif',

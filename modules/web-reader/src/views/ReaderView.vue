@@ -9,135 +9,91 @@
     }"
     @click="handleWrapperClick"
   >
-    <!-- 左侧经典浮动工具栏 -->
-    <div class="tool-bar" :style="leftBarTheme" @click.stop>
-      <div class="tools">
-        <!-- 目录 -->
+    <!-- 常驻淡雅微页眉 -->
+    <header class="reader-hud-header" :class="{ night: isNight }">
+      <span class="hud-chapter-title" :title="currentChapterTitle">{{ currentChapterTitle }}</span>
+    </header>
+
+    <!-- 常驻淡雅微页脚 -->
+    <footer class="reader-hud-footer" :class="{ night: isNight }">
+      <span class="hud-time">{{ currentTimeStr }}</span>
+      <span class="hud-progress">{{ progressDisplayStr }}</span>
+    </footer>
+
+    <!-- 底部统一悬浮毛玻璃胶囊栏 (Floating Dock) -->
+    <ReaderFloatingDock
+      :visible="dockVisible"
+      :is-first-chapter="isFirstChapter"
+      :is-last-chapter="isLastChapter"
+      :is-bookmarked="isCurrentPositionBookmarked"
+      :can-open-book-detail="canOpenBookDetail"
+      :chapter-loading="chapterLoading"
+      :is-online-book="currentBook?.format === 'online'"
+      :is-fullscreen="isFullscreen"
+      :is-night="isNight"
+      @to-shelf="toShelf"
+      @toggle-bookmark="toggleCurrentBookmark"
+      @prev-chapter="toPreChapter"
+      @next-chapter="toNextChapter"
+      @refresh-chapter="refreshCurrentChapter"
+      @download="downloadDialogVisible = true"
+      @to-book-detail="toBookDetail"
+      @toggle-fullscreen="toggleFullscreen"
+      @to-top="toTop"
+      @to-bottom="toBottom"
+      @open-bookmarks-drawer="openBookmarksDrawer"
+      @more-menu-visible-change="(val: boolean) => moreMenuVisible = val"
+    >
+      <!-- 目录 Popover -->
+      <template #catalog-trigger>
         <el-popover
-          placement="right"
+          placement="top"
           :width="popupWidth"
           trigger="click"
           :show-arrow="false"
           v-model:visible="popCataVisible"
-          popper-class="pop-cata"
+          popper-class="pop-cata reader-dock-popover"
           :popper-options="readerPopoverOptions"
         >
           <PopCatalog @getContent="getContent" class="popup" />
           <template #reference>
-            <div class="tool-icon">
-              <div class="iconfont">&#58905;</div>
-              <div class="icon-text">目录</div>
-            </div>
+            <button
+              type="button"
+              class="dock-item"
+              title="目录"
+            >
+              <el-icon class="dock-icon"><List /></el-icon>
+              <span class="dock-label">目录</span>
+            </button>
           </template>
         </el-popover>
+      </template>
 
-        <!-- 设置 -->
+      <!-- 排版设置 Popover -->
+      <template #settings-trigger>
         <el-popover
-          placement="right"
+          placement="top"
           :width="popupWidth"
           trigger="click"
           :show-arrow="false"
           v-model:visible="readSettingsVisible"
-          popper-class="pop-setting"
+          popper-class="pop-setting reader-dock-popover"
           :popper-options="readerPopoverOptions"
         >
           <ReadSettings class="popup" />
           <template #reference>
-            <div class="tool-icon">
-              <div class="iconfont">&#58971;</div>
-              <div class="icon-text">设置</div>
-            </div>
+            <button
+              type="button"
+              class="dock-item"
+              title="排版与设置"
+            >
+              <el-icon class="dock-icon"><IconPalette /></el-icon>
+              <span class="dock-label">设置</span>
+            </button>
           </template>
         </el-popover>
-
-        <!-- 书架 -->
-        <div class="tool-icon" @click="toShelf">
-          <div class="iconfont">&#58892;</div>
-          <div class="icon-text">书架</div>
-        </div>
-
-        <!-- 书籍详情 -->
-        <div v-if="canOpenBookDetail" class="tool-icon" @click="toBookDetail">
-          <el-icon class="action-icon"><DetailIcon /></el-icon>
-          <div class="icon-text">详情</div>
-        </div>
-
-        <!-- 刷新当前章节正文 -->
-        <div
-          class="tool-icon"
-          :class="{ 'no-point': chapterLoading }"
-          title="重新请求并覆盖本章缓存"
-          @click="refreshCurrentChapter"
-        >
-          <el-icon class="action-icon"><RefreshIcon /></el-icon>
-          <div class="icon-text">刷新</div>
-        </div>
-
-        <!-- 离线下载 -->
-        <div
-          class="tool-icon"
-          :class="{ 'no-point': currentBook?.format !== 'online' }"
-          title="下载章节供离线阅读"
-          @click="downloadDialogVisible = true"
-        >
-          <el-icon class="action-icon"><DownloadIcon /></el-icon>
-          <div class="icon-text">下载</div>
-        </div>
-
-        <!-- 全屏 -->
-        <div class="tool-icon" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏 (F11/ESC)' : '全屏阅读 (F11)'">
-          <div class="iconfont">&#58907;</div>
-          <div class="icon-text">{{ isFullscreen ? '退出' : '全屏' }}</div>
-        </div>
-
-        <!-- 顶部 -->
-        <div class="tool-icon" @click="toTop">
-          <div class="iconfont">&#58914;</div>
-          <div class="icon-text">顶部</div>
-        </div>
-
-        <!-- 底部 -->
-        <div class="tool-icon" @click="toBottom">
-          <div class="iconfont">&#58915;</div>
-          <div class="icon-text">底部</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 紧贴正文右侧的书签按钮 -->
-    <div class="bookmark-bar" :style="rightBarTheme" @click.stop>
-      <div
-        class="tool-icon"
-        :class="{ active: isCurrentPositionBookmarked }"
-        title="查看本书书签"
-        @click="openBookmarksDrawer"
-      >
-        <el-icon class="action-icon"><BookmarkIcon /></el-icon>
-        <div class="icon-text">书签</div>
-      </div>
-    </div>
-
-    <!-- 右侧经典浮动工具栏 -->
-    <div class="read-bar" :style="rightBarTheme" @click.stop>
-      <div class="tools">
-        <div
-          class="tool-icon"
-          :class="{ 'no-point': isFirstChapter }"
-          @click="toPreChapter"
-        >
-          <div class="iconfont">&#58920;</div>
-          <span v-if="miniInterface">上一章</span>
-        </div>
-        <div
-          class="tool-icon"
-          :class="{ 'no-point': isLastChapter }"
-          @click="toNextChapter"
-        >
-          <span v-if="miniInterface">下一章</span>
-          <div class="iconfont">&#58913;</div>
-        </div>
-      </div>
-    </div>
+      </template>
+    </ReaderFloatingDock>
 
     <!-- 正文阅读区域 -->
     <div
@@ -261,7 +217,9 @@ import {
   Download as DownloadIcon,
   Refresh as RefreshIcon,
   CollectionTag as BookmarkIcon,
+  List,
 } from '@element-plus/icons-vue'
+import IconPalette from '@/components/icons/IconPalette.vue'
 import { useReadingStore, type ChapterPayload } from '@/stores/reading'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import type { ReaderPageAnimation } from '@/parsers/types'
@@ -275,6 +233,7 @@ import ReaderSelectionMenu from '@/components/ReaderSelectionMenu.vue'
 import ReplaceRuleDialog from '@/components/ReplaceRuleDialog.vue'
 import HighlightEditDialog from '@/components/HighlightEditDialog.vue'
 import ReaderPageTurnGuide from '@/components/ReaderPageTurnGuide.vue'
+import ReaderFloatingDock from '@/components/ReaderFloatingDock.vue'
 import themeConfig from '@/config/themeConfig'
 import jump from '@/plugins/jump'
 import { trimChapterWindowBeforeAppend } from '@/utils/chapterWindow'
@@ -340,7 +299,6 @@ const {
 const chapterData = ref<ChapterPayload[]>([])
 const rawChapterData = ref<ChapterPayload[]>([])
 const chapterLoading = ref(false)
-const showToolBar = ref(false)
 const downloadDialogVisible = ref(false)
 const bookmarkDrawerVisible = ref(false)
 const bookmarkSaving = ref(false)
@@ -373,10 +331,10 @@ const readerPopoverOptions = computed(() => ({
       name: 'preventOverflow',
       options: {
         padding: {
-          top: isDesktopBuild && !isFullscreen.value ? 36 : 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
+          top: isDesktopBuild && !isFullscreen.value ? 36 : 12,
+          right: 12,
+          bottom: 72,
+          left: 12,
         },
       },
     },
@@ -393,6 +351,91 @@ const pageViewportRef = ref<HTMLElement>()
 const pageContentRef = ref<HTMLElement>()
 let readingSessionStartedAt = 0
 
+// 胶囊栏与沉浸隐匿控制
+const dockVisible = ref(true)
+let dockHideTimer: number | undefined
+const moreMenuVisible = ref(false)
+const currentTimeStr = ref('')
+let timeInterval: number | undefined
+
+const updateCurrentTime = () => {
+  const now = new Date()
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  currentTimeStr.value = `${hours}:${minutes}`
+}
+
+const currentChapterTitle = computed(() => {
+  const ch = chapters.value[currentChapterIndex.value]
+  return ch?.title || currentBook.value?.name || ''
+})
+
+const resetDockTimer = () => {
+  if (dockHideTimer !== undefined) {
+    window.clearTimeout(dockHideTimer)
+    dockHideTimer = undefined
+  }
+  if (
+    popCataVisible.value ||
+    readSettingsVisible.value ||
+    bookmarkDrawerVisible.value ||
+    downloadDialogVisible.value ||
+    moreMenuVisible.value
+  ) {
+    dockVisible.value = true
+    return
+  }
+  dockHideTimer = window.setTimeout(() => {
+    if (
+      !popCataVisible.value &&
+      !readSettingsVisible.value &&
+      !bookmarkDrawerVisible.value &&
+      !downloadDialogVisible.value &&
+      !moreMenuVisible.value
+    ) {
+      dockVisible.value = false
+    }
+  }, 2800)
+}
+
+const showDock = () => {
+  dockVisible.value = true
+  resetDockTimer()
+}
+
+const handleWindowMouseMove = (e: MouseEvent) => {
+  if (window.innerHeight - e.clientY < 110) {
+    dockVisible.value = true
+    if (dockHideTimer !== undefined) {
+      window.clearTimeout(dockHideTimer)
+      dockHideTimer = undefined
+    }
+    return
+  }
+  showDock()
+}
+
+watch(
+  [
+    popCataVisible,
+    readSettingsVisible,
+    bookmarkDrawerVisible,
+    downloadDialogVisible,
+    moreMenuVisible,
+  ],
+  ([cata, setting, bkm, dl, more]) => {
+    if (cata || setting || bkm || dl || more) {
+      dockVisible.value = true
+      if (dockHideTimer !== undefined) {
+        window.clearTimeout(dockHideTimer)
+        dockHideTimer = undefined
+      }
+    } else {
+      resetDockTimer()
+    }
+  },
+)
+
 // 章节状态
 const currentChapterIndex = computed(() => currentBook.value?.currentChapter ?? 0)
 const isFirstChapter = computed(() => currentChapterIndex.value <= 0)
@@ -400,16 +443,16 @@ const isLastChapter = computed(
   () => currentChapterIndex.value >= (chapters.value.length || 1) - 1
 )
 
-// 主题与颜色计算 (theme === 6 为夜间模式)
-const isNight = computed(() => settings.value.theme === 6)
+// 主题与颜色计算 (theme === 6 或 7 为夜间深色模式)
+const isNight = computed(() => settings.value.theme === 6 || settings.value.theme === 7)
 const bodyColor = computed(
-  () => themeConfig.themes[settings.value.theme]?.body || '#ede7da'
+  () => themeConfig.themes[settings.value.theme]?.body || '#f4eee1'
 )
 const chapterColor = computed(
-  () => themeConfig.themes[settings.value.theme]?.content || '#ede7da'
+  () => themeConfig.themes[settings.value.theme]?.content || '#f4eee1'
 )
 const popupColor = computed(
-  () => themeConfig.themes[settings.value.theme]?.popup || '#ede7da'
+  () => themeConfig.themes[settings.value.theme]?.popup || '#faf6ee'
 )
 
 // 响应式宽度与样式
@@ -423,9 +466,9 @@ const readWidth = computed(() => {
 
 const popupWidth = computed(() => {
   if (!miniInterface.value) {
-    return (settings.value.readWidth || 800) - 33
+    return Math.min(settings.value.readWidth || 800, window.innerWidth - 32)
   } else {
-    return window.innerWidth - 33
+    return window.innerWidth - 24
   }
 })
 
@@ -433,10 +476,19 @@ const bodyTheme = computed(() => ({
   background: bodyColor.value,
 }))
 
-const chapterTheme = computed(() => ({
-  background: chapterColor.value,
-  width: readWidth.value,
-}))
+const chapterTheme = computed(() => {
+  let textColor = '#262626'
+  if (settings.value.theme === 6) {
+    textColor = '#666666'
+  } else if (settings.value.theme === 7) {
+    textColor = '#d4d4d8'
+  }
+  return {
+    background: chapterColor.value,
+    width: readWidth.value,
+    color: textColor,
+  }
+})
 
 type PageTransitionDirection = 'forward' | 'backward'
 
@@ -690,23 +742,23 @@ const turnPaginationPage = async (direction: PageTransitionDirection) => {
   return true
 }
 
-// 左侧工具栏贴紧正文左边缘
-const leftBarTheme = computed(() => ({
-  background: popupColor.value,
-  marginLeft: miniInterface.value
-    ? '0'
-    : -((settings.value.readWidth || 800) / 2 + 60) + 'px',
-  display: miniInterface.value && !showToolBar.value ? 'none' : 'block',
-}))
-
-// 右侧工具栏贴紧正文右边缘
-const rightBarTheme = computed(() => ({
-  background: popupColor.value,
-  marginRight: miniInterface.value
-    ? '0'
-    : -((settings.value.readWidth || 800) / 2 + 44) + 'px',
-  display: miniInterface.value && !showToolBar.value ? 'none' : 'block',
-}))
+// 底部 HUD 阅读进度文本显示
+const progressDisplayStr = computed(() => {
+  if (!chapters.value.length) return '0%'
+  const mode = settings.value.progressDisplayMode || 'percentage'
+  if (mode === 'page' && isPaginationMode.value) {
+    return `第 ${paginationPageIndex.value + 1} / ${Math.max(1, paginationPageCount.value)} 页`
+  }
+  const currentIdx = currentChapterIndex.value
+  const total = chapters.value.length
+  if (isPaginationMode.value && paginationPageCount.value > 1) {
+    const fraction = (paginationPageIndex.value + 1) / paginationPageCount.value
+    const percent = Math.min(100, Math.max(0, ((currentIdx + fraction) / total) * 100))
+    return `${percent.toFixed(1)}%`
+  }
+  const percent = Math.min(100, Math.max(0, Math.round(((currentIdx + 1) / total) * 100)))
+  return `${percent}%`
+})
 
 // 常用字体多变体与别名映射表（兼顾英文名、中文名、GB版、屏幕版等系统安装差异）
 const FONT_ALIAS_MAP: Record<string, string[]> = {
@@ -1216,10 +1268,16 @@ const flushReadingSession = async (
   })
 }
 
-// 点击屏幕切换移动端工具栏
+// 点击屏幕切换悬浮控制栏
 const handleWrapperClick = () => {
-  if (miniInterface.value) {
-    showToolBar.value = !showToolBar.value
+  if (dockVisible.value) {
+    dockVisible.value = false
+    if (dockHideTimer !== undefined) {
+      window.clearTimeout(dockHideTimer)
+      dockHideTimer = undefined
+    }
+  } else {
+    showDock()
   }
 }
 
@@ -1707,8 +1765,13 @@ onMounted(async () => {
     window.addEventListener('keyup', handleKeyPress)
     window.addEventListener('keydown', ignoreKeyPress)
     window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('mousemove', handleWindowMouseMove)
     document.addEventListener('pointerup', onSelectionPointerUp)
     document.addEventListener('visibilitychange', onVisibilityChange)
+
+    updateCurrentTime()
+    timeInterval = window.setInterval(updateCurrentTime, 10000)
+    resetDockTimer()
 
     scrollObserver = new IntersectionObserver(onReachBottom, {
       rootMargin: '-100% 0% 20% 0%',
@@ -1732,8 +1795,11 @@ onUnmounted(() => {
   window.removeEventListener('keydown', ignoreKeyPress)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('mousemove', handleWindowMouseMove)
   document.removeEventListener('pointerup', onSelectionPointerUp)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (timeInterval !== undefined) clearInterval(timeInterval)
+  if (dockHideTimer !== undefined) clearTimeout(dockHideTimer)
   if (progressFrame !== null) window.cancelAnimationFrame(progressFrame)
   if (paginationMeasureFrame !== undefined) window.cancelAnimationFrame(paginationMeasureFrame)
   popCataVisible.value = false
@@ -1891,128 +1957,55 @@ onBeforeRouteLeave(async (to, from) => {
     }
   }
 
-  .tool-bar {
+  .reader-hud-header {
     position: fixed;
     top: var(--reader-toolbar-top, 0px);
-    left: 50%;
-    z-index: 100;
+    left: 0;
+    width: 100%;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 28px;
+    font-size: 12px;
+    color: rgba(0, 0, 0, 0.42);
+    pointer-events: none;
+    user-select: none;
+    z-index: 80;
+    transition: color 0.25s ease;
 
-    .tools {
-      display: flex;
-      flex-direction: column;
+    .hud-chapter-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 60%;
+      letter-spacing: 0.5px;
+    }
 
-      .tool-icon {
-        box-sizing: content-box !important;
-        font-size: 18px;
-        width: 58px;
-        height: 48px;
-        text-align: center;
-        padding-top: 12px;
-        cursor: pointer;
-        outline: none;
-
-        .iconfont {
-          font-family: iconfont !important;
-          width: 16px;
-          height: 16px;
-          font-size: 16px;
-          margin: 0 auto 6px;
-        }
-
-        .action-icon {
-          display: block;
-          width: 16px;
-          height: 16px;
-          margin: 0 auto 6px;
-          font-size: 16px;
-        }
-
-        .icon-text {
-          font-size: 12px;
-          line-height: 1;
-        }
-
-        &.no-point {
-          opacity: 0.35;
-          pointer-events: none;
-        }
-      }
+    &.night {
+      color: rgba(255, 255, 255, 0.42);
     }
   }
 
-  .bookmark-bar {
-    position: fixed;
-    top: 72px;
-    right: 50%;
-    z-index: 100;
-
-    .tool-icon {
-      box-sizing: content-box !important;
-      width: 42px;
-      height: 43px;
-      padding-top: 10px;
-      text-align: center;
-      cursor: pointer;
-
-      .action-icon {
-        display: block;
-        width: 17px;
-        height: 17px;
-        margin: 0 auto 5px;
-        font-size: 17px;
-      }
-
-      .icon-text {
-        font-size: 12px;
-        line-height: 1;
-      }
-
-      &.active {
-        color: #e6a23c;
-      }
-
-      &.no-point {
-        opacity: 0.5;
-        pointer-events: none;
-      }
-    }
-  }
-
-  .read-bar {
+  .reader-hud-footer {
     position: fixed;
     bottom: 0;
-    right: 50%;
-    z-index: 100;
+    left: 0;
+    width: 100%;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    font-size: 12px;
+    color: rgba(0, 0, 0, 0.42);
+    pointer-events: none;
+    user-select: none;
+    z-index: 80;
+    transition: color 0.25s ease;
 
-    .tools {
-      display: flex;
-      flex-direction: column;
-
-      .tool-icon {
-        box-sizing: content-box !important;
-        font-size: 18px;
-        width: 42px;
-        height: 31px;
-        padding-top: 12px;
-        text-align: center;
-        align-items: center;
-        cursor: pointer;
-        outline: none;
-        margin-top: -1px;
-
-        .iconfont {
-          font-family: iconfont !important;
-          width: 16px;
-          height: 16px;
-          font-size: 16px;
-          margin: 0 auto 6px;
-        }
-
-        &.no-point {
-          opacity: 0.35;
-          pointer-events: none;
-        }
-      }
+    &.night {
+      color: rgba(255, 255, 255, 0.42);
     }
   }
 
@@ -2020,10 +2013,11 @@ onBeforeRouteLeave(async (to, from) => {
     font-family: 'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
       'Helvetica Neue Light', sans-serif;
     text-align: left;
-    padding: 0 65px;
+    padding: 38px 65px 72px;
     min-height: 100vh;
     margin: 0 auto;
     box-sizing: border-box;
+    transition: background-color 0.25s ease, color 0.25s ease;
 
     &.page-transition--chapter-fade {
       animation: reader-chapter-fade 200ms ease-out both;
@@ -2036,7 +2030,7 @@ onBeforeRouteLeave(async (to, from) => {
 
       .top-bar,
       .bottom-bar {
-        height: 64px;
+        height: 32px;
       }
 
       .loading {
@@ -2110,50 +2104,72 @@ onBeforeRouteLeave(async (to, from) => {
 .day {
   :deep(.popup) {
     box-shadow:
-      0 2px 4px rgba(0, 0, 0, 0.12),
-      0 0 6px rgba(0, 0, 0, 0.04);
-  }
-
-  .tool-icon {
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    margin-top: -1px;
-    color: #000;
-
-    .icon-text {
-      color: rgba(0, 0, 0, 0.4);
-    }
+      0 8px 24px rgba(0, 0, 0, 0.12),
+      0 2px 6px rgba(0, 0, 0, 0.04);
+    border-radius: 14px;
   }
 
   .chapter {
-    border: 1px solid #d8d8d8;
-    color: #262626;
+    color: #2b2621;
   }
 }
 
 .night {
   :deep(.popup) {
     box-shadow:
-      0 2px 4px rgba(0, 0, 0, 0.48),
-      0 0 6px rgba(0, 0, 0, 0.16);
-  }
-
-  .tool-icon {
-    border: 1px solid #444;
-    margin-top: -1px;
-    color: #666;
-
-    .icon-text {
-      color: #666;
-    }
+      0 12px 36px rgba(0, 0, 0, 0.5),
+      0 2px 8px rgba(0, 0, 0, 0.25);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .chapter {
-    border: 1px solid #444;
-    color: #666;
+    color: #d4d4d8;
+  }
+}
+
+:global(.reader-dock-popover) {
+  border-radius: 16px !important;
+  padding: 0 !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28) !important;
+}
+
+.dock-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  border-radius: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.18s ease, transform 0.18s ease, color 0.18s ease;
+
+  .dock-icon {
+    font-size: 19px;
+    line-height: 1;
   }
 
-  :deep(.popper__arrow) {
-    background: #666;
+  .dock-label {
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 500;
+    opacity: 0.85;
+  }
+
+  &:hover:not(:disabled) {
+    background: rgba(125, 125, 125, 0.12);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(1px);
   }
 }
 
@@ -2161,76 +2177,22 @@ onBeforeRouteLeave(async (to, from) => {
   .chapter-wrapper {
     padding: 0;
 
-    .tool-bar {
-      left: 0;
-      top: auto;
-      bottom: 0;
-      width: 100vw;
-      margin-left: 0 !important;
-
-      .tools {
-        flex-direction: row;
-        justify-content: space-around;
-
-        .tool-icon {
-          border: none;
-          flex: 1;
-          width: auto;
-          min-width: 0;
-          height: 48px;
-          padding-top: 6px;
-        }
-      }
+    .reader-hud-header {
+      padding: 0 14px;
+      height: 32px;
+      font-size: 11px;
     }
 
-    .read-bar {
-      right: 0;
-      top: 0;
-      bottom: auto;
-      width: 100vw;
-      margin-right: 0 !important;
-
-      .tools {
-        flex-direction: row;
-        justify-content: space-between;
-        padding: 0 15px;
-
-        .tool-icon {
-          border: none;
-          width: auto;
-          height: 40px;
-          padding-top: 6px;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-
-          .iconfont {
-            display: inline-block;
-            margin: 0;
-          }
-        }
-      }
-    }
-
-    .bookmark-bar {
-      top: 52px;
-      right: 8px;
-      margin-right: 0 !important;
-      border-radius: 6px;
-
-      .tool-icon {
-        border: none;
-        width: 40px;
-        height: 40px;
-        padding-top: 6px;
-      }
+    .reader-hud-footer {
+      padding: 0 14px;
+      height: 28px;
+      font-size: 11px;
     }
 
     .chapter {
       width: 100vw !important;
-      padding: 0 20px;
+      padding: 24px 16px 64px;
       box-sizing: border-box;
-      border: none !important;
     }
   }
 }

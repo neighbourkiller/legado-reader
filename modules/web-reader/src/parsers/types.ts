@@ -69,6 +69,7 @@ export interface ReadSettings {
   readWidth: number
   pageAnimation: ReaderPageAnimation
   jumpDuration: number
+  progressDisplayMode?: 'percentage' | 'page'
   lineHeight?: number
   backgroundColor?: string
   textColor?: string
@@ -89,6 +90,7 @@ export const DEFAULT_READ_SETTINGS: ReadSettings = {
   readWidth: 800,
   pageAnimation: 'scroll',
   jumpDuration: 1000,
+  progressDisplayMode: 'percentage',
   lineHeight: 1.8,
   backgroundColor: '#ede7da',
   textColor: '#333333',

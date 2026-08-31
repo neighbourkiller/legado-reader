@@ -15,11 +15,11 @@
             v-for="(themeColor, index) in themeColors"
             :key="index"
             :style="themeColor"
+            :title="themeNames[index]"
             @click="setTheme(index)"
             :class="{ selected: settings.theme === index }"
           >
-            <em v-if="index < 6" class="iconfont">&#58980;</em>
-            <em v-else class="moon-icon">{{ moonIcon }}</em>
+            <em class="iconfont">&#58980;</em>
           </span>
         </li>
 
@@ -219,6 +219,22 @@
             </span>
           </div>
         </li>
+
+        <!-- 进度展示 -->
+        <li class="page-animation">
+          <i>进度展示</i>
+          <div class="page-animation-items">
+            <span
+              v-for="mode in progressDisplayModes"
+              :key="mode.value"
+              class="page-animation-item"
+              :class="{ selected: (settings.progressDisplayMode || 'percentage') === mode.value }"
+              @click="setProgressDisplayMode(mode.value)"
+            >
+              {{ mode.label }}
+            </span>
+          </div>
+        </li>
       </ul>
     </div>
 
@@ -252,8 +268,7 @@ const saveDebounced = useDebounceFn(() => {
   store.updateSettings(settings.value)
 }, 400)
 
-const isNight = computed(() => settings.value.theme === 6)
-const moonIcon = computed(() => (settings.value.theme === 6 ? '' : ''))
+const isNight = computed(() => settings.value.theme === 6 || settings.value.theme === 7)
 
 const pageAnimations: Array<{ label: string; value: ReaderPageAnimation }> = [
   { label: '覆盖', value: 'cover' },
@@ -261,6 +276,27 @@ const pageAnimations: Array<{ label: string; value: ReaderPageAnimation }> = [
   { label: '仿真', value: 'simulation' },
   { label: '滚动', value: 'scroll' },
   { label: '无动画', value: 'none' },
+]
+
+const progressDisplayModes: Array<{ label: string; value: 'percentage' | 'page' }> = [
+  { label: '百分比', value: 'percentage' },
+  { label: '页码', value: 'page' },
+]
+
+const setProgressDisplayMode = (mode: 'percentage' | 'page') => {
+  settings.value.progressDisplayMode = mode
+  saveDebounced()
+}
+
+const themeNames = [
+  '暖白雅致',
+  '羊皮暖黄',
+  '护眼豆沙',
+  '晨露淡青',
+  '雅致粉黛',
+  '墨韵灰白',
+  '经典暗灰噪点',
+  '纯黑夜间',
 ]
 
 const themeColors = [
@@ -271,12 +307,13 @@ const themeColors = [
   { background: 'rgba(245, 228, 228, 0.8)' },
   { background: 'rgba(224, 224, 224, 0.8)' },
   { background: 'rgba(0, 0, 0, 0.5)' },
+  { background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.25)' },
 ]
 
 const popupTheme = computed(() => {
   const themeIdx = settings.value.theme ?? 1
   return {
-    background: themeConfig.themes[themeIdx]?.popup || '#ede7da',
+    background: themeConfig.themes[themeIdx]?.popup || '#ffffff',
   }
 })
 
@@ -674,12 +711,15 @@ const setPageAnimation = (animation: ReaderPageAnimation) => {
         }
 
         .page-animation-item {
-          width: 72px;
+          min-width: 64px;
+          width: auto;
+          padding: 0 14px;
           height: 32px;
           cursor: pointer;
-          border-radius: 2px;
+          border-radius: 4px;
           text-align: center;
           vertical-align: middle;
+          white-space: nowrap;
           display: inline-flex;
           align-items: center;
           justify-content: center;
