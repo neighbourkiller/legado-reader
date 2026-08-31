@@ -344,6 +344,7 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "输出路径没有父目录".to_string())?;
+    #[cfg(unix)]
     let parent_existed = parent.exists();
     std::fs::create_dir_all(parent).map_err(|error| format!("创建输出目录失败: {error}"))?;
     #[cfg(unix)]
@@ -378,6 +379,7 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
     let existed = path.exists();
     std::fs::create_dir_all(path).map_err(|error| format!("创建诊断目录失败: {error}"))?;
     #[cfg(unix)]

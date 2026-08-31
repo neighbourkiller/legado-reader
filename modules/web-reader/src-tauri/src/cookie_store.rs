@@ -119,13 +119,16 @@ impl CookieManager {
     }
 }
 
+#[cfg(unix)]
 fn secure_file(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| e.to_string())?;
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn secure_file(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
