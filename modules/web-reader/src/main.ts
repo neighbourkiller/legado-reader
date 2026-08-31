@@ -1,4 +1,3 @@
-import { runSourceAuditCliIfRequested } from '@/source/audit/SourceAuditBootstrap'
 import { clearDevModuleRecovery, recoverTransientDevModuleFailure } from '@/utils/devModuleRecovery'
 
 function escapeHtml(value: unknown): string {
@@ -24,7 +23,10 @@ function renderStartupFailure(title: string, description: string, error: unknown
 
 async function bootstrap() {
   try {
-    if (await runSourceAuditCliIfRequested()) return
+    if (import.meta.env.VITE_APP_TARGET === 'desktop') {
+      const { runSourceAuditCliIfRequested } = await import('@/source/audit/SourceAuditBootstrap')
+      if (await runSourceAuditCliIfRequested()) return
+    }
   } catch (error) {
     console.error('检测客户端启动模式失败:', error)
     renderStartupFailure(

@@ -1,22 +1,25 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::path::{Path, PathBuf};
 
-use base64::Engine;
 use aes::{Aes128, Aes192, Aes256};
+use base64::Engine;
+use cipher::{
+    block_padding::{NoPadding, Pkcs7},
+    BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit,
+};
 use des::{Des, TdesEde3};
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit, block_padding::{NoPadding, Pkcs7}};
+use regex::Regex;
 use reqwest::blocking::Client;
 use reqwest::cookie::{CookieStore, Jar};
 use rquickjs::{Context, Function, Runtime};
+use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
-use scraper::{Html, Selector};
-use regex::Regex;
 
-use crate::source_policy::validate_url;
+use crate::source_policy::{redirect_policy, validate_url, PublicDnsResolver};
 
 const DEFAULT_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 const DEFAULT_STACK_LIMIT: usize = 512 * 1024;
@@ -51,10 +54,20 @@ pub struct SourceScriptError {
 }
 
 fn script_error(code: &'static str, message: impl Into<String>) -> SourceScriptError {
-    SourceScriptError { code, stage: "javascript", message: message.into() }
+    SourceScriptError {
+        code,
+        stage: "javascript",
+        message: message.into(),
+    }
 }
 
-fn symmetric_crypto(action: &str, transformation: &str, key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+fn symmetric_crypto(
+    action: &str,
+    transformation: &str,
+    key: &[u8],
+    iv: &[u8],
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
     let upper = transformation.to_uppercase();
     let cbc_mode = upper.contains("/CBC/");
     let no_padding = upper.ends_with("/NOPADDING");
@@ -62,20 +75,46 @@ fn symmetric_crypto(action: &str, transformation: &str, key: &[u8], iv: &[u8], d
         ($cipher:ty) => {{
             if cbc_mode {
                 if action == "encrypt" {
-                    let cipher = cbc::Encryptor::<$cipher>::new_from_slices(key, iv).map_err(|e| e.to_string())?;
-                    if no_padding { cipher.encrypt_padded_vec_mut::<NoPadding>(data) } else { cipher.encrypt_padded_vec_mut::<Pkcs7>(data) }
+                    let cipher = cbc::Encryptor::<$cipher>::new_from_slices(key, iv)
+                        .map_err(|e| e.to_string())?;
+                    if no_padding {
+                        cipher.encrypt_padded_vec_mut::<NoPadding>(data)
+                    } else {
+                        cipher.encrypt_padded_vec_mut::<Pkcs7>(data)
+                    }
                 } else {
-                    let cipher = cbc::Decryptor::<$cipher>::new_from_slices(key, iv).map_err(|e| e.to_string())?;
-                    if no_padding { cipher.decrypt_padded_vec_mut::<NoPadding>(data).map_err(|e| e.to_string())? }
-                    else { cipher.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(|e| e.to_string())? }
+                    let cipher = cbc::Decryptor::<$cipher>::new_from_slices(key, iv)
+                        .map_err(|e| e.to_string())?;
+                    if no_padding {
+                        cipher
+                            .decrypt_padded_vec_mut::<NoPadding>(data)
+                            .map_err(|e| e.to_string())?
+                    } else {
+                        cipher
+                            .decrypt_padded_vec_mut::<Pkcs7>(data)
+                            .map_err(|e| e.to_string())?
+                    }
                 }
             } else if action == "encrypt" {
-                let cipher = ecb::Encryptor::<$cipher>::new_from_slice(key).map_err(|e| e.to_string())?;
-                if no_padding { cipher.encrypt_padded_vec_mut::<NoPadding>(data) } else { cipher.encrypt_padded_vec_mut::<Pkcs7>(data) }
+                let cipher =
+                    ecb::Encryptor::<$cipher>::new_from_slice(key).map_err(|e| e.to_string())?;
+                if no_padding {
+                    cipher.encrypt_padded_vec_mut::<NoPadding>(data)
+                } else {
+                    cipher.encrypt_padded_vec_mut::<Pkcs7>(data)
+                }
             } else {
-                let cipher = ecb::Decryptor::<$cipher>::new_from_slice(key).map_err(|e| e.to_string())?;
-                if no_padding { cipher.decrypt_padded_vec_mut::<NoPadding>(data).map_err(|e| e.to_string())? }
-                else { cipher.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(|e| e.to_string())? }
+                let cipher =
+                    ecb::Decryptor::<$cipher>::new_from_slice(key).map_err(|e| e.to_string())?;
+                if no_padding {
+                    cipher
+                        .decrypt_padded_vec_mut::<NoPadding>(data)
+                        .map_err(|e| e.to_string())?
+                } else {
+                    cipher
+                        .decrypt_padded_vec_mut::<Pkcs7>(data)
+                        .map_err(|e| e.to_string())?
+                }
             }
         }};
     }
@@ -87,13 +126,19 @@ fn symmetric_crypto(action: &str, transformation: &str, key: &[u8], iv: &[u8], d
             _ => return Err("AES key must be 16, 24 or 32 bytes".to_string()),
         }
     } else if upper.starts_with("DES/") {
-        if key.len() != 8 { return Err("DES key must be 8 bytes".to_string()); }
+        if key.len() != 8 {
+            return Err("DES key must be 8 bytes".to_string());
+        }
         apply_cipher!(Des)
     } else if upper.starts_with("DESEDE/") || upper.starts_with("3DES/") {
-        if key.len() != 24 { return Err("3DES key must be 24 bytes".to_string()); }
+        if key.len() != 24 {
+            return Err("3DES key must be 24 bytes".to_string());
+        }
         apply_cipher!(TdesEde3)
     } else {
-        return Err(format!("unsupported symmetric transformation: {transformation}"));
+        return Err(format!(
+            "unsupported symmetric transformation: {transformation}"
+        ));
     };
     Ok(result)
 }
@@ -119,9 +164,15 @@ enum XPathDirective {
 
 fn split_xpath_steps(xpath: &str) -> Result<Vec<XPathStep>, String> {
     let mut clean = xpath.trim();
-    if clean.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("@xpath:")) {
+    if clean
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("@xpath:"))
+    {
         clean = clean[7..].trim();
-    } else if clean.get(..6).is_some_and(|prefix| prefix.eq_ignore_ascii_case("xpath:")) {
+    } else if clean
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("xpath:"))
+    {
         clean = clean[6..].trim();
     }
     if let Some(rest) = clean.strip_prefix('.') {
@@ -159,7 +210,10 @@ fn split_xpath_steps(xpath: &str) -> Result<Vec<XPathStep>, String> {
             b'/' if bracket_depth == 0 => {
                 let raw = clean[start..index].trim();
                 if !raw.is_empty() {
-                    steps.push(XPathStep { combinator: pending, raw: raw.to_string() });
+                    steps.push(XPathStep {
+                        combinator: pending,
+                        raw: raw.to_string(),
+                    });
                 }
                 if bytes.get(index + 1) == Some(&b'/') {
                     pending = XPathCombinator::Descendant;
@@ -178,7 +232,10 @@ fn split_xpath_steps(xpath: &str) -> Result<Vec<XPathStep>, String> {
     }
     let raw = clean[start..].trim();
     if !raw.is_empty() {
-        steps.push(XPathStep { combinator: pending, raw: raw.to_string() });
+        steps.push(XPathStep {
+            combinator: pending,
+            raw: raw.to_string(),
+        });
     }
     if steps.is_empty() {
         return Err("XPath contains no selectable steps".to_string());
@@ -193,10 +250,18 @@ fn css_string(value: &str) -> String {
 fn relative_xpath_to_css(path: &str) -> Result<String, String> {
     let direct_child = path.trim_start().starts_with("./") && !path.trim_start().starts_with(".//");
     let steps = split_xpath_steps(path)?;
-    let mut selector = if direct_child { "> ".to_string() } else { String::new() };
+    let mut selector = if direct_child {
+        "> ".to_string()
+    } else {
+        String::new()
+    };
     for (index, step) in steps.iter().enumerate() {
-        if matches!(step.raw.to_ascii_lowercase().as_str(), "text()" | "html()") || step.raw.starts_with('@') {
-            return Err(format!("unsupported relative XPath extraction in predicate: {path}"));
+        if matches!(step.raw.to_ascii_lowercase().as_str(), "text()" | "html()")
+            || step.raw.starts_with('@')
+        {
+            return Err(format!(
+                "unsupported relative XPath extraction in predicate: {path}"
+            ));
         }
         if index > 0 {
             selector.push_str(match step.combinator {
@@ -225,7 +290,10 @@ fn xpath_predicate_to_css(predicate: &str) -> Result<String, String> {
 
     let not_relative = Regex::new(r"(?i)^not\s*\(\s*(\.(?://|/).+)\s*\)$").unwrap();
     if let Some(capture) = not_relative.captures(value) {
-        return Ok(format!(":not(:has({}))", relative_xpath_to_css(&capture[1])?));
+        return Ok(format!(
+            ":not(:has({}))",
+            relative_xpath_to_css(&capture[1])?
+        ));
     }
     if value.starts_with(".//") || value.starts_with("./") {
         return Ok(format!(":has({})", relative_xpath_to_css(value)?));
@@ -234,25 +302,47 @@ fn xpath_predicate_to_css(predicate: &str) -> Result<String, String> {
     let and_re = Regex::new(r"(?i)\s+and\s+").unwrap();
     let parts = and_re.split(value).collect::<Vec<_>>();
     if parts.len() > 1 {
-        return parts.into_iter().map(xpath_predicate_to_css).collect::<Result<Vec<_>, _>>().map(|parts| parts.join(""));
+        return parts
+            .into_iter()
+            .map(xpath_predicate_to_css)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|parts| parts.join(""));
     }
 
     let patterns = [
-        (r#"(?i)^contains\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#, "*="),
-        (r#"(?i)^starts-with\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#, "^="),
-        (r#"(?i)^ends-with\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#, "$="),
+        (
+            r#"(?i)^contains\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#,
+            "*=",
+        ),
+        (
+            r#"(?i)^starts-with\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#,
+            "^=",
+        ),
+        (
+            r#"(?i)^ends-with\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)$"#,
+            "$=",
+        ),
     ];
     for (pattern, operator) in patterns {
         let regex = Regex::new(pattern).unwrap();
         if let Some(capture) = regex.captures(value) {
-            return Ok(format!("[{}{}\"{}\"]", &capture[1], operator, css_string(&capture[2])));
+            return Ok(format!(
+                "[{}{}\"{}\"]",
+                &capture[1],
+                operator,
+                css_string(&capture[2])
+            ));
         }
     }
 
     let equality = Regex::new(r#"^@([\w:-]+)\s*(=|!=)\s*['\"]([^'\"]*)['\"]$"#).unwrap();
     if let Some(capture) = equality.captures(value) {
         let selector = format!("[{}=\"{}\"]", &capture[1], css_string(&capture[3]));
-        return Ok(if &capture[2] == "!=" { format!(":not({selector})") } else { selector });
+        return Ok(if &capture[2] == "!=" {
+            format!(":not({selector})")
+        } else {
+            selector
+        });
     }
     let exists = Regex::new(r"^@([\w:-]+)$").unwrap();
     if let Some(capture) = exists.captures(value) {
@@ -262,9 +352,16 @@ fn xpath_predicate_to_css(predicate: &str) -> Result<String, String> {
     if let Some(capture) = not_exists.captures(value) {
         return Ok(format!(":not([{}])", &capture[1]));
     }
-    let not_contains = Regex::new(r#"(?i)^not\s*\(\s*contains\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)\s*\)$"#).unwrap();
+    let not_contains = Regex::new(
+        r#"(?i)^not\s*\(\s*contains\s*\(\s*@([\w:-]+)\s*,\s*['\"]([^'\"]*)['\"]\s*\)\s*\)$"#,
+    )
+    .unwrap();
     if let Some(capture) = not_contains.captures(value) {
-        return Ok(format!(":not([{}*=\"{}\"])", &capture[1], css_string(&capture[2])));
+        return Ok(format!(
+            ":not([{}*=\"{}\"])",
+            &capture[1],
+            css_string(&capture[2])
+        ));
     }
     Err(format!("unsupported XPath predicate: [{value}]"))
 }
@@ -273,10 +370,19 @@ fn xpath_step_to_css(step: &str) -> Result<String, String> {
     let bytes = step.as_bytes();
     let tag_end = step.find('[').unwrap_or(step.len());
     let tag = step[..tag_end].trim();
-    if tag != "*" && (tag.is_empty() || !tag.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))) {
+    if tag != "*"
+        && (tag.is_empty()
+            || !tag
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
+    {
         return Err(format!("unsupported XPath step: {step}"));
     }
-    let mut selector = if tag == "*" { "*".to_string() } else { tag.to_string() };
+    let mut selector = if tag == "*" {
+        "*".to_string()
+    } else {
+        tag.to_string()
+    };
     let mut index = tag_end;
     while index < bytes.len() {
         if bytes[index] != b'[' {
@@ -289,7 +395,9 @@ fn xpath_step_to_css(step: &str) -> Result<String, String> {
         while index < bytes.len() && depth > 0 {
             let ch = bytes[index];
             if let Some(expected) = quote {
-                if ch == expected { quote = None; }
+                if ch == expected {
+                    quote = None;
+                }
             } else {
                 match ch {
                     b'\'' | b'"' => quote = Some(ch),
@@ -343,19 +451,26 @@ fn portable_xpath_strings(rule: &str, content: &str) -> Result<Vec<String>, Stri
         return Err("XPath selector is empty".to_string());
     }
 
-    let selector = Selector::parse(&selector).map_err(|error| format!("converted XPath selector is invalid: {error}"))?;
+    let selector = Selector::parse(&selector)
+        .map_err(|error| format!("converted XPath selector is invalid: {error}"))?;
     let document = Html::parse_document(content);
     let mut values = Vec::new();
     for element in document.select(&selector) {
         match &directive {
             XPathDirective::Element | XPathDirective::Html => values.push(element.html()),
-            XPathDirective::DirectText => values.extend(element.children()
-                .filter_map(|node| node.value().as_text())
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())),
-            XPathDirective::DescendantText => values.extend(element.text()
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())),
+            XPathDirective::DirectText => values.extend(
+                element
+                    .children()
+                    .filter_map(|node| node.value().as_text())
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty()),
+            ),
+            XPathDirective::DescendantText => values.extend(
+                element
+                    .text()
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty()),
+            ),
             XPathDirective::Attribute(name) => {
                 if let Some(value) = element.value().attr(name) {
                     values.push(value.to_string());
@@ -368,59 +483,151 @@ fn portable_xpath_strings(rule: &str, content: &str) -> Result<Vec<String>, Stri
 
 fn portable_rule_strings(rule: &str, content: &str) -> Result<Vec<String>, String> {
     let trimmed = rule.trim();
-    if let Some(pattern) = trimmed.strip_prefix("@Regex:").or_else(|| trimmed.strip_prefix("@regex:")) {
+    if let Some(pattern) = trimmed
+        .strip_prefix("@Regex:")
+        .or_else(|| trimmed.strip_prefix("@regex:"))
+    {
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
-        return Ok(regex.captures_iter(content).filter_map(|capture| {
-            capture.get(1).or_else(|| capture.get(0)).map(|value| value.as_str().to_string())
-        }).collect());
+        return Ok(regex
+            .captures_iter(content)
+            .filter_map(|capture| {
+                capture
+                    .get(1)
+                    .or_else(|| capture.get(0))
+                    .map(|value| value.as_str().to_string())
+            })
+            .collect());
     }
-    if let Some(path) = trimmed.strip_prefix("@Json:").or_else(|| trimmed.strip_prefix("@json:"))
-        .or_else(|| trimmed.starts_with('$').then_some(trimmed)) {
+    if let Some(path) = trimmed
+        .strip_prefix("@Json:")
+        .or_else(|| trimmed.strip_prefix("@json:"))
+        .or_else(|| trimmed.starts_with('$').then_some(trimmed))
+    {
         let json: Value = serde_json::from_str(content).map_err(|e| e.to_string())?;
-        return jsonpath_lib::select(&json, path).map_err(|e| e.to_string()).map(|values| values.into_iter().map(|value| {
-            value.as_str().map(ToOwned::to_owned).unwrap_or_else(|| value.to_string())
-        }).collect());
+        return jsonpath_lib::select(&json, path)
+            .map_err(|e| e.to_string())
+            .map(|values| {
+                values
+                    .into_iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| value.to_string())
+                    })
+                    .collect()
+            });
     }
-    if trimmed.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("@xpath:"))
-        || trimmed.get(..6).is_some_and(|prefix| prefix.eq_ignore_ascii_case("xpath:"))
-        || trimmed.starts_with("//") || trimmed.starts_with(".//") || trimmed.starts_with("./") || trimmed.starts_with('/') {
+    if trimmed
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("@xpath:"))
+        || trimmed
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("xpath:"))
+        || trimmed.starts_with("//")
+        || trimmed.starts_with(".//")
+        || trimmed.starts_with("./")
+        || trimmed.starts_with('/')
+    {
         return portable_xpath_strings(trimmed, content);
     }
-    let raw = trimmed.strip_prefix("@CSS:").or_else(|| trimmed.strip_prefix("@css:")).unwrap_or(trimmed);
-    let mut pieces = raw.split('@').filter(|part| !part.trim().is_empty()).collect::<Vec<_>>();
+    let raw = trimmed
+        .strip_prefix("@CSS:")
+        .or_else(|| trimmed.strip_prefix("@css:"))
+        .unwrap_or(trimmed);
+    let mut pieces = raw
+        .split('@')
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>();
     let candidate_directive = pieces.last().copied().unwrap_or("text");
-    let known_directive = matches!(candidate_directive.to_ascii_lowercase().as_str(), "text" | "textnodes" | "owntext" | "html" | "all")
-        || (!candidate_directive.starts_with("class.") && !candidate_directive.starts_with("tag.") && !candidate_directive.starts_with("id.") && pieces.len() > 1);
-    if known_directive { pieces.pop(); }
-    let directive = if known_directive { candidate_directive } else { "text" };
-    let selector_text = pieces.into_iter().map(|piece| {
-        if let Some(value) = piece.strip_prefix("class.") { format!(".{value}") }
-        else if let Some(value) = piece.strip_prefix("tag.") { value.to_string() }
-        else if let Some(value) = piece.strip_prefix("id.") { format!("#{value}") }
-        else { piece.to_string() }
-    }).collect::<Vec<_>>().join(" ");
-    let selector = Selector::parse(if selector_text.is_empty() { "html" } else { &selector_text })
-        .map_err(|e| format!("invalid CSS selector: {e}"))?;
+    let known_directive = matches!(
+        candidate_directive.to_ascii_lowercase().as_str(),
+        "text" | "textnodes" | "owntext" | "html" | "all"
+    ) || (!candidate_directive.starts_with("class.")
+        && !candidate_directive.starts_with("tag.")
+        && !candidate_directive.starts_with("id.")
+        && pieces.len() > 1);
+    if known_directive {
+        pieces.pop();
+    }
+    let directive = if known_directive {
+        candidate_directive
+    } else {
+        "text"
+    };
+    let selector_text = pieces
+        .into_iter()
+        .map(|piece| {
+            if let Some(value) = piece.strip_prefix("class.") {
+                format!(".{value}")
+            } else if let Some(value) = piece.strip_prefix("tag.") {
+                value.to_string()
+            } else if let Some(value) = piece.strip_prefix("id.") {
+                format!("#{value}")
+            } else {
+                piece.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let selector = Selector::parse(if selector_text.is_empty() {
+        "html"
+    } else {
+        &selector_text
+    })
+    .map_err(|e| format!("invalid CSS selector: {e}"))?;
     let document = Html::parse_document(content);
     let mut values = Vec::new();
     for element in document.select(&selector) {
         let value = match directive.to_ascii_lowercase().as_str() {
             "html" | "all" => element.html(),
-            "textnodes" | "owntext" => element.children().filter_map(|node| node.value().as_text()).map(|text| text.trim()).filter(|text| !text.is_empty()).collect::<Vec<_>>().join(if directive.eq_ignore_ascii_case("textNodes") { "\n" } else { " " }),
-            "text" => element.text().collect::<Vec<_>>().join(" ").split_whitespace().collect::<Vec<_>>().join(" "),
-            attribute => element.value().attr(attribute).unwrap_or_default().to_string(),
+            "textnodes" | "owntext" => element
+                .children()
+                .filter_map(|node| node.value().as_text())
+                .map(|text| text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join(if directive.eq_ignore_ascii_case("textNodes") {
+                    "\n"
+                } else {
+                    " "
+                }),
+            "text" => element
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            attribute => element
+                .value()
+                .attr(attribute)
+                .unwrap_or_default()
+                .to_string(),
         };
-        if !value.is_empty() && !values.contains(&value) { values.push(value); }
+        if !value.is_empty() && !values.contains(&value) {
+            values.push(value);
+        }
     }
     Ok(values)
 }
 
-fn persist_explicit_cache(path: Option<&Path>, cache: &HashMap<String, String>) -> Result<(), String> {
-    let Some(path) = path else { return Ok(()); };
-    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+fn persist_explicit_cache(
+    path: Option<&Path>,
+    cache: &HashMap<String, String>,
+) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec(cache).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &temporary,
+        serde_json::to_vec(cache).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -452,12 +659,18 @@ fn execute_script(
     source_cache: Arc<Mutex<HashMap<String, String>>>,
     source_cache_path: Arc<Option<PathBuf>>,
 ) -> Result<SourceScriptResponse, SourceScriptError> {
-    if request.code.contains("Packages") || request.code.contains("java.io.")
-        || request.code.contains("java.nio.file") || request.code.contains("java.lang.")
-        || request.code.contains("java.util.") || request.code.contains("java.security.")
-        || request.code.contains("java.net.") || request.code.contains("context.")
-        || request.code.contains("activity.") || request.code.contains("startActivity")
-        || request.code.contains("java.getFile(") || request.code.contains("java.readFile(")
+    if request.code.contains("Packages")
+        || request.code.contains("java.io.")
+        || request.code.contains("java.nio.file")
+        || request.code.contains("java.lang.")
+        || request.code.contains("java.util.")
+        || request.code.contains("java.security.")
+        || request.code.contains("java.net.")
+        || request.code.contains("context.")
+        || request.code.contains("activity.")
+        || request.code.contains("startActivity")
+        || request.code.contains("java.getFile(")
+        || request.code.contains("java.readFile(")
         || request.code.contains("payAction")
     {
         return Err(script_error(
@@ -468,15 +681,28 @@ fn execute_script(
 
     let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(3_000).clamp(50, 30_000));
     let deadline = Instant::now() + timeout;
-    let runtime = Runtime::new().map_err(|error| script_error("JS_RUNTIME_INIT", error.to_string()))?;
-    runtime.set_memory_limit(request.memory_limit_bytes.unwrap_or(DEFAULT_MEMORY_LIMIT).clamp(1024 * 1024, 256 * 1024 * 1024));
-    runtime.set_max_stack_size(request.stack_limit_bytes.unwrap_or(DEFAULT_STACK_LIMIT).clamp(64 * 1024, 8 * 1024 * 1024));
+    let runtime =
+        Runtime::new().map_err(|error| script_error("JS_RUNTIME_INIT", error.to_string()))?;
+    runtime.set_memory_limit(
+        request
+            .memory_limit_bytes
+            .unwrap_or(DEFAULT_MEMORY_LIMIT)
+            .clamp(1024 * 1024, 256 * 1024 * 1024),
+    );
+    runtime.set_max_stack_size(
+        request
+            .stack_limit_bytes
+            .unwrap_or(DEFAULT_STACK_LIMIT)
+            .clamp(64 * 1024, 8 * 1024 * 1024),
+    );
     runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
-    let context = Context::full(&runtime).map_err(|error| script_error("JS_CONTEXT_INIT", error.to_string()))?;
+    let context = Context::full(&runtime)
+        .map_err(|error| script_error("JS_CONTEXT_INIT", error.to_string()))?;
     let logs = Arc::new(Mutex::new(Vec::<String>::new()));
     let client = Client::builder()
         .cookie_provider(cookie_jar.clone())
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .dns_resolver(Arc::new(PublicDnsResolver))
+        .redirect(redirect_policy(true))
         .build()
         .map_err(|error| script_error("JS_HTTP_INIT", error.to_string()))?;
 
@@ -537,7 +763,7 @@ fn execute_script(
         })?)?;
         globals.set("__hostHexDecodeToString", Function::new(ctx.clone(), |value: String| -> String {
             let clean: String = value.chars().filter(|c| !c.is_whitespace()).collect();
-            if clean.len() % 2 != 0 {
+            if !clean.len().is_multiple_of(2) {
                 return String::new();
             }
             let bytes: Vec<u8> = (0..clean.len())
@@ -548,7 +774,7 @@ fn execute_script(
         })?)?;
         globals.set("__hostHexDecode", Function::new(ctx.clone(), |value: String| -> Vec<u8> {
             let clean: String = value.chars().filter(|c| !c.is_whitespace()).collect();
-            if clean.len() % 2 != 0 {
+            if !clean.len().is_multiple_of(2) {
                 return Vec::new();
             }
             (0..clean.len())
@@ -740,8 +966,15 @@ fn execute_script(
 
     let payload: ScriptEvaluationPayload = serde_json::from_str(&json_result)
         .map_err(|error| script_error("JS_RESULT_SERIALIZATION", error.to_string()))?;
-    let logs = logs.lock().map(|entries| entries.clone()).unwrap_or_default();
-    Ok(SourceScriptResponse { result: payload.result, logs, variables: payload.variables })
+    let logs = logs
+        .lock()
+        .map(|entries| entries.clone())
+        .unwrap_or_default();
+    Ok(SourceScriptResponse {
+        result: payload.result,
+        logs,
+        variables: payload.variables,
+    })
 }
 
 #[tauri::command]
@@ -755,7 +988,8 @@ pub async fn execute_source_script(
     };
     let cache = state.source_cache.clone();
     let cache_path = state.source_cache_path.clone();
-    tokio::task::spawn_blocking(move || execute_script(request, jar, cache, cache_path)).await
+    tokio::task::spawn_blocking(move || execute_script(request, jar, cache, cache_path))
+        .await
         .map_err(|error| script_error("JS_TASK_FAILED", error.to_string()))?
 }
 
@@ -768,10 +1002,19 @@ mod tests {
         bindings: Value,
         timeout_ms: u64,
     ) -> Result<SourceScriptResponse, SourceScriptError> {
-        execute_script(SourceScriptRequest {
-            source_id: "test".to_string(), code: code.to_string(), bindings,
-            timeout_ms: Some(timeout_ms), memory_limit_bytes: None, stack_limit_bytes: None,
-        }, Arc::new(Jar::default()), Arc::new(Mutex::new(HashMap::new())), Arc::new(None))
+        execute_script(
+            SourceScriptRequest {
+                source_id: "test".to_string(),
+                code: code.to_string(),
+                bindings,
+                timeout_ms: Some(timeout_ms),
+                memory_limit_bytes: None,
+                stack_limit_bytes: None,
+            },
+            Arc::new(Jar::default()),
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(None),
+        )
     }
 
     fn run(code: &str, timeout_ms: u64) -> Result<SourceScriptResponse, SourceScriptError> {
@@ -780,7 +1023,11 @@ mod tests {
 
     #[test]
     fn executes_common_host_apis() {
-        let response = run("java.log(key); ({value: java.base64Decode(java.base64Encode(key))})", 1_000).unwrap();
+        let response = run(
+            "java.log(key); ({value: java.base64Decode(java.base64Encode(key))})",
+            1_000,
+        )
+        .unwrap();
         assert_eq!(response.result["value"], "abc");
         assert_eq!(response.logs, vec!["abc"]);
     }
@@ -793,9 +1040,16 @@ mod tests {
 
     #[test]
     fn mutates_and_returns_variables() {
-        let response = run("java.put('sessionKey', '123456'); java.get('sessionKey')", 1_000).unwrap();
+        let response = run(
+            "java.put('sessionKey', '123456'); java.get('sessionKey')",
+            1_000,
+        )
+        .unwrap();
         assert_eq!(response.result, "123456");
-        assert_eq!(response.variables.get("sessionKey").map(String::as_str), Some("123456"));
+        assert_eq!(
+            response.variables.get("sessionKey").map(String::as_str),
+            Some("123456")
+        );
     }
 
     #[test]
@@ -803,23 +1057,43 @@ mod tests {
         let response = run("java.toast('ok'); ({md5:java.md5Encode('abc'), url:java.urlEncode('中 文'), bytes:java.strToBytes('A中'), host:java.toURL('/book?id=1','https://example.com/root/').host})", 1_000).unwrap();
         assert_eq!(response.result["md5"], "900150983cd24fb0d6963f7d28e17f72");
         assert_eq!(response.result["url"], "%E4%B8%AD%20%E6%96%87");
-        assert_eq!(response.result["bytes"], serde_json::json!([65, 228, 184, 173]));
+        assert_eq!(
+            response.result["bytes"],
+            serde_json::json!([65, 228, 184, 173])
+        );
         assert_eq!(response.result["host"], "example.com");
         assert_eq!(response.logs, vec!["ok"]);
     }
 
     #[test]
     fn explicit_cache_survives_quickjs_sandbox_and_process_state_recreation() {
-        let path = std::env::temp_dir().join(format!("legado-source-cache-{}.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("legado-source-cache-{}.json", std::process::id()));
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let cache_path = Arc::new(Some(path.clone()));
         let request = |code: &str| SourceScriptRequest {
-            source_id: "cache-source".to_string(), code: code.to_string(), bindings: serde_json::json!({}),
-            timeout_ms: Some(1_000), memory_limit_bytes: None, stack_limit_bytes: None,
+            source_id: "cache-source".to_string(),
+            code: code.to_string(),
+            bindings: serde_json::json!({}),
+            timeout_ms: Some(1_000),
+            memory_limit_bytes: None,
+            stack_limit_bytes: None,
         };
-        execute_script(request("cache.put('token', 'value')"), Arc::new(Jar::default()), cache, cache_path.clone()).unwrap();
+        execute_script(
+            request("cache.put('token', 'value')"),
+            Arc::new(Jar::default()),
+            cache,
+            cache_path.clone(),
+        )
+        .unwrap();
         let restored = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let response = execute_script(request("cache.get('token')"), Arc::new(Jar::default()), Arc::new(Mutex::new(restored)), cache_path).unwrap();
+        let response = execute_script(
+            request("cache.get('token')"),
+            Arc::new(Jar::default()),
+            Arc::new(Mutex::new(restored)),
+            cache_path,
+        )
+        .unwrap();
         assert_eq!(response.result, "value");
         let _ = std::fs::remove_file(path);
     }
@@ -835,7 +1109,10 @@ mod tests {
     fn bridges_portable_css_and_regex_rules() {
         let code = "const html='<div class=\"book\"><span class=\"name\">测试书</span></div>'; [java.getString('class.book@class.name@text', html), java.getString('.book .name', html), java.getString('@Regex:id=(\\\\d+)', 'id=42'), java.getString('@Json:$.book.name', '{\"book\":{\"name\":\"JSON书\"}}'), java.getString('$.book.name', '{\"book\":{\"name\":\"自动JSON书\"}}')]";
         let response = run(code, 1_000).unwrap();
-        assert_eq!(response.result, serde_json::json!(["测试书", "测试书", "42", "JSON书", "自动JSON书"]));
+        assert_eq!(
+            response.result,
+            serde_json::json!(["测试书", "测试书", "42", "JSON书", "自动JSON书"])
+        );
     }
 
     #[test]
@@ -871,7 +1148,11 @@ mod tests {
 
     #[test]
     fn executes_main_js_pattern() {
-        let response = run("function search(key) { return [{ name: key + '书名' }]; }; search(key)", 1_000).unwrap();
+        let response = run(
+            "function search(key) { return [{ name: key + '书名' }]; }; search(key)",
+            1_000,
+        )
+        .unwrap();
         assert_eq!(response.result[0]["name"], "abc书名");
     }
 

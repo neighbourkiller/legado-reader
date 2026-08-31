@@ -1,10 +1,10 @@
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
-use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::Value;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::State;
 
@@ -38,6 +38,15 @@ impl BackupSessionManager {
     }
 }
 
+fn lock_session<'a, T>(
+    mutex: &'a Mutex<T>,
+    stage: &'static str,
+) -> Result<MutexGuard<'a, T>, StorageErrorPayload> {
+    mutex.lock().map_err(|_| {
+        StorageErrorPayload::new("TRANSACTION", stage, "备份会话锁已损坏，请重新开始操作")
+    })
+}
+
 const PRIMARY_KEY_CHECKS: &[(&str, &str)] = &[
     ("books", "id"),
     ("settings", "key"),
@@ -55,9 +64,8 @@ fn validate_primary_key_uniqueness(
     database: &str,
 ) -> Result<(), StorageErrorPayload> {
     for &(table, key_expression) in PRIMARY_KEY_CHECKS {
-        let sql = format!(
-            "SELECT COUNT(*), COUNT(DISTINCT {key_expression}) FROM {database}.{table};"
-        );
+        let sql =
+            format!("SELECT COUNT(*), COUNT(DISTINCT {key_expression}) FROM {database}.{table};");
         let (total, distinct): (i64, i64) = conn
             .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
             .map_err(|e| StorageErrorPayload::new("IO", "staging_pk_check", e.to_string()))?;
@@ -123,11 +131,7 @@ pub async fn storage_backup_export_begin(
         created_at: Instant::now(),
     });
 
-    sessions
-        .export_sessions
-        .lock()
-        .unwrap()
-        .insert(token.clone(), session);
+    lock_session(&sessions.export_sessions, "export_begin")?.insert(token.clone(), session);
 
     Ok(token_clone)
 }
@@ -141,14 +145,14 @@ pub async fn storage_backup_export_read_store(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<Vec<Value>, StorageErrorPayload> {
     let session = {
-        let map = sessions.export_sessions.lock().unwrap();
+        let map = lock_session(&sessions.export_sessions, "export_read_store")?;
         map.get(&token).cloned().ok_or_else(|| {
             StorageErrorPayload::new("NOT_FOUND", "export_read_store", "会话不存在或已过期")
         })?
     };
 
     tokio::task::spawn_blocking(move || {
-        let guard = session.conn.lock().unwrap();
+        let guard = lock_session(&session.conn, "export_read_store")?;
         let conn = guard.as_ref().ok_or_else(|| {
             StorageErrorPayload::new("INVALID_DATA", "export_read_store", "会话数据库已关闭")
         })?;
@@ -392,14 +396,14 @@ pub async fn storage_backup_export_read_book_file(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<Response, StorageErrorPayload> {
     let session = {
-        let map = sessions.export_sessions.lock().unwrap();
+        let map = lock_session(&sessions.export_sessions, "export_read_book_file")?;
         map.get(&token).cloned().ok_or_else(|| {
             StorageErrorPayload::new("NOT_FOUND", "export_read_book_file", "会话不存在或已过期")
         })?
     };
 
     let bytes_opt = tokio::task::spawn_blocking(move || {
-        let guard = session.conn.lock().unwrap();
+        let guard = lock_session(&session.conn, "export_read_book_file")?;
         let conn = guard.as_ref().ok_or_else(|| {
             StorageErrorPayload::new("INVALID_DATA", "export_read_book_file", "会话数据库已关闭")
         })?;
@@ -433,14 +437,14 @@ pub async fn storage_backup_export_read_app_preferences(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<HashMap<String, String>, StorageErrorPayload> {
     let session = {
-        let map = sessions.export_sessions.lock().unwrap();
+        let map = lock_session(&sessions.export_sessions, "export_read_prefs")?;
         map.get(&token).cloned().ok_or_else(|| {
             StorageErrorPayload::new("NOT_FOUND", "export_read_prefs", "会话不存在或已过期")
         })?
     };
 
     tokio::task::spawn_blocking(move || {
-        let guard = session.conn.lock().unwrap();
+        let guard = lock_session(&session.conn, "export_read_prefs")?;
         let conn = guard.as_ref().ok_or_else(|| {
             StorageErrorPayload::new("INVALID_DATA", "export_read_prefs", "会话数据库已关闭")
         })?;
@@ -473,12 +477,12 @@ pub async fn storage_backup_export_end(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<(), StorageErrorPayload> {
     let session_opt = {
-        let mut map = sessions.export_sessions.lock().unwrap();
+        let mut map = lock_session(&sessions.export_sessions, "export_end")?;
         map.remove(&token)
     };
 
     if let Some(session) = session_opt {
-        session.conn.lock().unwrap().take();
+        lock_session(&session.conn, "export_end")?.take();
         let _ = fs::remove_file(&session.temp_path);
     }
     Ok(())
@@ -513,11 +517,7 @@ pub async fn storage_staging_create(
         created_at: Instant::now(),
     });
 
-    sessions
-        .staging_sessions
-        .lock()
-        .unwrap()
-        .insert(token.clone(), session);
+    lock_session(&sessions.staging_sessions, "staging_create")?.insert(token.clone(), session);
 
     Ok(token)
 }
@@ -530,14 +530,14 @@ pub async fn storage_staging_write_store(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<(), StorageErrorPayload> {
     let session = {
-        let map = sessions.staging_sessions.lock().unwrap();
+        let map = lock_session(&sessions.staging_sessions, "staging_write_store")?;
         map.get(&token).cloned().ok_or_else(|| {
             StorageErrorPayload::new("NOT_FOUND", "staging_write_store", "暂存会话不存在")
         })?
     };
 
     tokio::task::spawn_blocking(move || {
-        let mut guard = session.conn.lock().unwrap();
+        let mut guard = lock_session(&session.conn, "staging_write_store")?;
         let conn = guard.as_mut().ok_or_else(|| {
             StorageErrorPayload::new("INVALID_DATA", "staging_write_store", "暂存会话已关闭")
         })?;
@@ -851,39 +851,65 @@ pub async fn storage_staging_write_book_file(
 ) -> Result<(), StorageErrorPayload> {
     let body = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
-        _ => return Err(StorageErrorPayload::new("INVALID_DATA", "staging_write_file", "请求体必须为二进制")),
+        _ => {
+            return Err(StorageErrorPayload::new(
+                "INVALID_DATA",
+                "staging_write_file",
+                "请求体必须为二进制",
+            ))
+        }
     };
 
     if body.len() < 8 {
-        return Err(StorageErrorPayload::new("INVALID_DATA", "staging_write_file", "协议头过短"));
+        return Err(StorageErrorPayload::new(
+            "INVALID_DATA",
+            "staging_write_file",
+            "协议头过短",
+        ));
     }
 
     let token_len = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
     if body.len() < 4 + token_len + 4 {
-        return Err(StorageErrorPayload::new("INVALID_DATA", "staging_write_file", "token 数据截断"));
+        return Err(StorageErrorPayload::new(
+            "INVALID_DATA",
+            "staging_write_file",
+            "token 数据截断",
+        ));
     }
-    let token = String::from_utf8(body[4..4 + token_len].to_vec())
-        .map_err(|e| StorageErrorPayload::new("INVALID_DATA", "staging_write_file", e.to_string()))?;
+    let token = String::from_utf8(body[4..4 + token_len].to_vec()).map_err(|e| {
+        StorageErrorPayload::new("INVALID_DATA", "staging_write_file", e.to_string())
+    })?;
 
     let offset = 4 + token_len;
-    let id_len = u32::from_le_bytes([body[offset], body[offset + 1], body[offset + 2], body[offset + 3]]) as usize;
+    let id_len = u32::from_le_bytes([
+        body[offset],
+        body[offset + 1],
+        body[offset + 2],
+        body[offset + 3],
+    ]) as usize;
     if body.len() < offset + 4 + id_len {
-        return Err(StorageErrorPayload::new("INVALID_DATA", "staging_write_file", "book_id 数据截断"));
+        return Err(StorageErrorPayload::new(
+            "INVALID_DATA",
+            "staging_write_file",
+            "book_id 数据截断",
+        ));
     }
-    let book_id = String::from_utf8(body[offset + 4..offset + 4 + id_len].to_vec())
-        .map_err(|e| StorageErrorPayload::new("INVALID_DATA", "staging_write_file", e.to_string()))?;
+    let book_id =
+        String::from_utf8(body[offset + 4..offset + 4 + id_len].to_vec()).map_err(|e| {
+            StorageErrorPayload::new("INVALID_DATA", "staging_write_file", e.to_string())
+        })?;
 
     let file_bytes = body[offset + 4 + id_len..].to_vec();
 
     let session = {
-        let map = sessions.staging_sessions.lock().unwrap();
+        let map = lock_session(&sessions.staging_sessions, "staging_write_file")?;
         map.get(&token).cloned().ok_or_else(|| {
             StorageErrorPayload::new("NOT_FOUND", "staging_write_file", "暂存会话不存在")
         })?
     };
 
     tokio::task::spawn_blocking(move || {
-        let mut guard = session.conn.lock().unwrap();
+        let mut guard = lock_session(&session.conn, "staging_write_file")?;
         let conn = guard.as_mut().ok_or_else(|| {
             StorageErrorPayload::new("INVALID_DATA", "staging_write_file", "暂存会话已关闭")
         })?;
@@ -910,7 +936,7 @@ pub async fn storage_staging_commit(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<(), StorageErrorPayload> {
     let session = {
-        let mut map = sessions.staging_sessions.lock().unwrap();
+        let mut map = lock_session(&sessions.staging_sessions, "staging_commit")?;
         map.remove(&token).ok_or_else(|| {
             StorageErrorPayload::new("NOT_FOUND", "staging_commit", "暂存会话不存在")
         })?
@@ -921,7 +947,7 @@ pub async fn storage_staging_commit(
 
     tokio::task::spawn_blocking(move || {
         // 关闭 staging 连接以释放句柄
-        session.conn.lock().unwrap().take();
+        lock_session(&session.conn, "staging_commit")?.take();
 
         let mut live_conn = live_db.lock()?;
         let temp_path_str = temp_path.to_string_lossy();
@@ -937,7 +963,7 @@ pub async fn storage_staging_commit(
             let check: String = live_conn
                 .query_row("PRAGMA staging.quick_check;", [], |r| r.get(0))
                 .map_err(|e| StorageErrorPayload::new("INVALID_DATA", "staging_quick_check", e.to_string()))?;
-            if check.to_ascii_lowercase() != "ok" {
+            if !check.eq_ignore_ascii_case("ok") {
                 return Err(StorageErrorPayload::new(
                     "INVALID_DATA",
                     "staging_quick_check",
@@ -1142,9 +1168,7 @@ pub async fn storage_staging_commit(
         let detach_res = live_conn.execute("DETACH DATABASE staging;", []);
         let _ = fs::remove_file(&temp_path);
 
-        if let Err(e) = tx_result {
-            return Err(e);
-        }
+        tx_result?;
         detach_res.map_err(|e| StorageErrorPayload::new("IO", "detach_staging", e.to_string()))?;
 
         Ok(())
@@ -1159,12 +1183,12 @@ pub async fn storage_staging_abort(
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<(), StorageErrorPayload> {
     let session_opt = {
-        let mut map = sessions.staging_sessions.lock().unwrap();
+        let mut map = lock_session(&sessions.staging_sessions, "staging_abort")?;
         map.remove(&token)
     };
 
     if let Some(session) = session_opt {
-        session.conn.lock().unwrap().take();
+        lock_session(&session.conn, "staging_abort")?.take();
         let _ = fs::remove_file(&session.temp_path);
     }
     Ok(())
@@ -1181,6 +1205,21 @@ fn fastrand_suffix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poisoned_backup_lock_returns_a_structured_error() {
+        let mutex = Arc::new(Mutex::new(()));
+        let poisoned = mutex.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock().expect("测试线程应先获得锁");
+            panic!("poison test lock");
+        })
+        .join();
+
+        let error = lock_session(&mutex, "poison_test").expect_err("损坏的锁应返回错误");
+        assert_eq!(error.code, "TRANSACTION");
+        assert_eq!(error.operation, "poison_test");
+    }
 
     #[test]
     fn primary_key_checks_match_current_storage_schema() {

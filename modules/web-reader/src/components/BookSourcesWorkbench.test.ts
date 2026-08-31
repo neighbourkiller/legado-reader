@@ -7,6 +7,7 @@ const source = (path: string) => readFileSync(resolve(__dirname, path), 'utf8')
 describe('书源管理工作台布局', () => {
   const manager = source('../views/BookSourcesView.vue')
   const sidebar = source('./BookSourceSidebar.vue')
+  const typography = source('../assets/styles/typography.css')
 
   it('页面操作、侧栏操作与编辑操作分层', () => {
     expect(manager).toContain('command="bookshelf"')
@@ -49,7 +50,9 @@ describe('书源管理工作台布局', () => {
   it('统计数字稳定对齐，并弱化列表 URL 的代码排版', () => {
     expect(manager).toContain('font-variant-numeric: tabular-nums')
     expect(sidebar).toContain('font-variant-numeric: tabular-nums')
-    expect(sidebar).toContain('var(--el-text-color-placeholder)')
+    expect(sidebar).toContain('var(--legado-text-muted, var(--el-text-color-secondary))')
+    expect(typography).toContain('--legado-text-muted: #686d75')
+    expect(typography).toMatch(/html\.dark\s*\{[^}]*--legado-text-muted: var\(--el-text-color-secondary\)/s)
     expect(sidebar).toContain("font-feature-settings: 'calt' 0, 'liga' 0")
     expect(sidebar).toContain('font-variant-ligatures: none')
     expect(sidebar).toContain("'is-placeholder': !draftSource?.bookSourceUrl")

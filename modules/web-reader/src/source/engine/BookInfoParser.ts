@@ -28,15 +28,8 @@ export async function parseBookInfo(
 
   // 1. 目录链接
   const field = (name: string) => ({ ...options, stage: 'bookInfo' as const, baseUrl, field: `ruleBookInfo.${name}` })
-  let rawTocUrl = await parseStringAsync(context, rule.tocUrl || '', field('tocUrl'))
-  if (!rawTocUrl && !isJson && context instanceof Document) {
-    rawTocUrl = await parseStringAsync(
-      context,
-      'a[href*="chapter"]@href || a[href*="mulu"]@href || a:contains("目录")@href || a:contains("章节")@href',
-      field('tocUrl.fallback'),
-    )
-  }
-  const finalTocUrl = resolveAbsoluteUrl(rawTocUrl, baseUrl)
+  const rawTocUrl = await parseStringAsync(context, rule.tocUrl || '', field('tocUrl'))
+  const finalTocUrl = resolveAbsoluteUrl(rawTocUrl, baseUrl) || baseUrl
 
   // 2. 封面图片 (支持多重常见 meta/DOM 标签兜底)
   let rawCoverUrl = await parseStringAsync(context, rule.coverUrl || '', field('coverUrl'))

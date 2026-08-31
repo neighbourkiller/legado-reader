@@ -1,12 +1,10 @@
-import { invoke } from '@tauri-apps/api/core'
+import { sourceAuditCliBridge } from '@/platform/sourceAuditCli'
 import { clearDevModuleRecovery, recoverTransientDevModuleFailure } from '@/utils/devModuleRecovery'
-import type { SourceAuditCliOptions } from './SourceAuditCli'
-
-type AuditInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
+import type { SourceAuditCliBridge, SourceAuditCliOptions } from './SourceAuditCliTypes'
 
 interface SourceAuditBootstrapDependencies {
   desktop?: boolean
-  invoke?: AuditInvoke
+  bridge?: Pick<SourceAuditCliBridge, 'getOptions' | 'markStarted' | 'fail' | 'exit'>
   loadCli?: () => Promise<{
     runSourceAuditCli: (options: SourceAuditCliOptions) => Promise<void>
   }>
@@ -18,13 +16,16 @@ function safeErrorMessage(error: unknown): string {
   return message.slice(0, 2_000)
 }
 
-async function reportAuditBootstrapFailure(call: AuditInvoke, error: unknown) {
+async function reportAuditBootstrapFailure(
+  bridge: Pick<SourceAuditCliBridge, 'fail' | 'exit'>,
+  error: unknown,
+) {
   const message = `书源审计前端启动失败: ${safeErrorMessage(error)}`
   try {
-    await call('fail_source_audit_cli', { message })
+    await bridge.fail(message)
   } catch {
     try {
-      await call('exit_source_audit_cli', { code: 2 })
+      await bridge.exit(2)
     } catch {
       // Rust 启动看门狗仍会终止未成功接管的审计进程。
     }
@@ -40,19 +41,19 @@ export async function runSourceAuditCliIfRequested(
 ): Promise<boolean> {
   const desktop = dependencies.desktop ?? import.meta.env.VITE_APP_TARGET === 'desktop'
   if (!desktop) return false
-  const call: AuditInvoke = dependencies.invoke || invoke
-  const options = await call('get_source_audit_cli_options') as SourceAuditCliOptions | null
+  const bridge = dependencies.bridge ?? sourceAuditCliBridge
+  const options = await bridge.getOptions()
   if (!options) return false
 
   try {
-    await call('mark_source_audit_cli_started')
+    await bridge.markStarted()
     const cli = await (dependencies.loadCli || (() => import('./SourceAuditCli')))()
     clearDevModuleRecovery()
     await cli.runSourceAuditCli(options)
   } catch (error) {
     const recover = dependencies.recoverModuleFailure ?? recoverTransientDevModuleFailure
     if (recover(error)) return true
-    await reportAuditBootstrapFailure(call, error)
+    await reportAuditBootstrapFailure(bridge, error)
   }
   return true
 }

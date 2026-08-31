@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { exitAppFullscreen, toggleAppFullscreen } from '@/platform/fullscreen'
 
 const isFullscreen = ref(false)
 let toggleOperation: Promise<boolean> | null = null
@@ -24,51 +25,14 @@ export function useFullscreen() {
   }
 
   const performToggle = async (): Promise<boolean> => {
-    // 1. 优先尝试调用 Tauri 原生窗口全屏
-    try {
-      if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-        const { invoke } = await import('@tauri-apps/api/core')
-        const result = await invoke<boolean>('toggle_fullscreen')
-        isFullscreen.value = result
-        return result
-      }
-    } catch (e) {
-      console.warn('Tauri toggle_fullscreen 调用失败，回退到 HTML5 Fullscreen API:', e)
-    }
-
-    // 2. Web 浏览器环境回退：HTML5 Fullscreen API
-    if (!document.fullscreenElement) {
-      if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen()
-        isFullscreen.value = true
-        return true
-      }
-    } else {
-      if (document.exitFullscreen) {
-        await document.exitFullscreen()
-        isFullscreen.value = false
-        return false
-      }
-    }
-    return false
+    const result = await toggleAppFullscreen()
+    isFullscreen.value = result
+    return result
   }
 
   const exitFullscreen = async (): Promise<void> => {
-    try {
-      if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-        const { invoke } = await import('@tauri-apps/api/core')
-        await invoke('exit_fullscreen')
-        isFullscreen.value = false
-        return
-      }
-    } catch (e) {
-      console.warn('Tauri exit_fullscreen 调用失败，回退到 HTML5 Fullscreen API:', e)
-    }
-
-    if (document.fullscreenElement && document.exitFullscreen) {
-      await document.exitFullscreen()
-      isFullscreen.value = false
-    }
+    await exitAppFullscreen()
+    isFullscreen.value = false
   }
 
   return {

@@ -1,7 +1,7 @@
+use serde_json::Value;
 use std::sync::Arc;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::State;
-use serde_json::Value;
 
 use crate::storage::db::StorageDb;
 use crate::storage::models::*;
@@ -19,7 +19,9 @@ pub async fn storage_init_check(
             let conn = db.lock()?;
             let version: i32 = conn
                 .query_row("PRAGMA user_version;", [], |row| row.get(0))
-                .map_err(|e| StorageErrorPayload::new("INIT_FAILED", "check_version", e.to_string()))?;
+                .map_err(|e| {
+                    StorageErrorPayload::new("INIT_FAILED", "check_version", e.to_string())
+                })?;
             if version == CURRENT_DB_VERSION {
                 Ok(true)
             } else {
@@ -76,14 +78,25 @@ pub async fn storage_save_book(
     let json_bytes = &body[4..4 + json_len];
     let file_blob = body[4 + json_len..].to_vec();
 
-    let payload: Value = serde_json::from_slice(json_bytes)
-        .map_err(|e| StorageErrorPayload::new("INVALID_DATA", "storage_save_book", format!("JSON解析失败: {e}")))?;
+    let payload: Value = serde_json::from_slice(json_bytes).map_err(|e| {
+        StorageErrorPayload::new(
+            "INVALID_DATA",
+            "storage_save_book",
+            format!("JSON解析失败: {e}"),
+        )
+    })?;
 
     let meta = payload.get("meta").cloned().ok_or_else(|| {
         StorageErrorPayload::new("INVALID_DATA", "storage_save_book", "缺少 meta 字段")
     })?;
-    let chapters = payload.get("chapters").cloned().unwrap_or(Value::Array(Vec::new()));
-    let has_file_data = payload.get("hasFileData").and_then(|v| v.as_bool()).unwrap_or(false);
+    let chapters = payload
+        .get("chapters")
+        .cloned()
+        .unwrap_or(Value::Array(Vec::new()));
+    let has_file_data = payload
+        .get("hasFileData")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let db = state.inner().clone();
     tokio::task::spawn_blocking(move || {
@@ -195,9 +208,11 @@ pub async fn storage_get_bookmark_at(
     state: State<'_, StorageState>,
 ) -> Result<Option<BookmarkRecord>, StorageErrorPayload> {
     let db = state.inner().clone();
-    tokio::task::spawn_blocking(move || db.get_bookmark_at(&book_id, chapter_index, chapter_pos, start_offset))
-        .await
-        .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))?
+    tokio::task::spawn_blocking(move || {
+        db.get_bookmark_at(&book_id, chapter_index, chapter_pos, start_offset)
+    })
+    .await
+    .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))?
 }
 
 #[tauri::command]
@@ -512,8 +527,9 @@ pub async fn storage_load_settings(
         .map_err(|e| StorageErrorPayload::new("TRANSACTION", "spawn_blocking", e.to_string()))??;
 
     if let Some(s) = s_opt {
-        let val: Value = serde_json::from_str(&s)
-            .map_err(|e| StorageErrorPayload::new("INVALID_DATA", "load_settings", e.to_string()))?;
+        let val: Value = serde_json::from_str(&s).map_err(|e| {
+            StorageErrorPayload::new("INVALID_DATA", "load_settings", e.to_string())
+        })?;
         Ok(Some(val))
     } else {
         Ok(None)

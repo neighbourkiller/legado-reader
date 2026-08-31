@@ -3,10 +3,12 @@ import { SourceTransportError, type SourceRequest, type SourceResponse, type Sou
 function transportError(cause: unknown): SourceTransportError {
   const message = String(cause)
   const kind = message.match(/kind=([a-z_]+)/i)?.[1]?.toUpperCase()
-  const code = /timeout|timed out|abort/i.test(message) || kind === 'TIMEOUT' ? 'REQUEST_TIMEOUT'
-    : kind === 'DNS' || /dns|lookup|name resolution/i.test(message) ? 'DNS_RESOLUTION_FAILED'
+  const code = kind === 'TIMEOUT' ? 'REQUEST_TIMEOUT'
+    : kind === 'DNS' ? 'DNS_RESOLUTION_FAILED'
       : kind === 'TLS' ? 'TLS_FAILED'
-        : kind === 'CONNECT' ? 'CONNECTION_FAILED' : 'REQUEST_FAILED'
+        : kind === 'CONNECT' ? 'CONNECTION_FAILED'
+          : /\btimed out\b|\btimeout\b(?!\s*=\s*false\b)|\babort(?:ed)?\b/i.test(message) ? 'REQUEST_TIMEOUT'
+            : /dns|lookup|name resolution/i.test(message) ? 'DNS_RESOLUTION_FAILED' : 'REQUEST_FAILED'
   return new SourceTransportError(code, message)
 }
 
@@ -46,16 +48,18 @@ export class TauriTransport implements SourceTransport {
         body: number[]
         charset?: string
       }>('webview_fetch', {
-        sourceId: req.sourceId,
-        url: req.url,
-        method: req.method,
-        headers: req.headers,
-        body: req.body,
-        timeoutMs: req.timeout,
-        delayMs: req.webViewDelayTime,
-        followRedirects: req.followRedirects,
-        useCookieJar: req.useCookieJar,
-        responseType: req.responseType,
+        request: {
+          sourceId: req.sourceId,
+          url: req.url,
+          method: req.method,
+          headers: req.headers,
+          body: req.body,
+          timeoutMs: req.timeout,
+          delayMs: req.webViewDelayTime,
+          followRedirects: req.followRedirects,
+          useCookieJar: req.useCookieJar,
+          responseType: req.responseType,
+        },
       })
     } catch (cause) {
       throw transportError(cause)

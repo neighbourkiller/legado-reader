@@ -67,6 +67,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
 
       # ------------------------------------------------------------
       # Rust cache
@@ -100,6 +101,18 @@ jobs:
       - name: Install frontend dependencies
         working-directory: modules/web-reader
         run: pnpm install --frozen-lockfile
+
+      - name: Check Rust formatting
+        working-directory: modules/web-reader
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Run Rust Clippy
+        working-directory: modules/web-reader
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target ${{ matrix.target }} -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: modules/web-reader
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
 
       # ------------------------------------------------------------
       # Build Tauri + Publish GitHub Release

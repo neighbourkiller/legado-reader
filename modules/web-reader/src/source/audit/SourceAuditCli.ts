@@ -1,20 +1,13 @@
+import { sourceAuditCliBridge } from '@/platform/sourceAuditCli'
 import { getAllBookSources } from '@/storage/db'
 import { initializeStorage } from '@/storage/init'
 import type { BookSource } from '@/source/types/BookSource'
 import { SourceAuditRunner, summarizeSourceAuditRun } from './SourceAuditRunner'
-import type { SourceAuditMode } from './SourceAuditTypes'
 import type { SourceAuditDiagnosticBundle } from './SourceAuditDiagnostics'
 import { replaySourceAuditBundle } from './SourceAuditReplay'
+import type { SourceAuditCliBridge, SourceAuditCliOptions } from './SourceAuditCliTypes'
 
-export interface SourceAuditCliOptions {
-  outputPath: string
-  dbPath?: string
-  diagnosticsDir?: string
-  replayPath?: string
-  mode: SourceAuditMode
-  concurrency: number
-  scope: 'all' | 'enabled' | 'text' | 'image'
-}
+export type { SourceAuditCliOptions } from './SourceAuditCliTypes'
 
 function matchesScope(source: BookSource, scope: SourceAuditCliOptions['scope']) {
   if (scope === 'enabled') return source.enabled
@@ -34,20 +27,21 @@ function renderStatus(message: string) {
  * 在真实 Tauri WebView 中运行自动批测。
  * 输出路径只能来自 Rust 启动参数状态，前端不能任意指定文件系统位置。
  */
-export async function runSourceAuditCli(options: SourceAuditCliOptions): Promise<void> {
-  const { invoke } = await import('@tauri-apps/api/core')
-
+export async function runSourceAuditCli(
+  options: SourceAuditCliOptions,
+  bridge: SourceAuditCliBridge = sourceAuditCliBridge,
+): Promise<void> {
   renderStatus('正在准备 Tauri 书源批测……')
   if (options.replayPath) {
     renderStatus('正在离线重放书源失败响应……')
-    const bundle = await invoke<SourceAuditDiagnosticBundle>('load_source_audit_replay_bundle')
+    const bundle = await bridge.loadReplayBundle()
     const result = await replaySourceAuditBundle(bundle)
-    await invoke('complete_source_audit_replay', { result })
+    await bridge.completeReplay(result)
     return
   }
   if (!options.dbPath) await initializeStorage()
   const rawSources = options.dbPath
-    ? await invoke<Record<string, unknown>[]>('load_source_audit_cli_sources')
+    ? await bridge.loadSources()
     : await getAllBookSources()
   const sources = (rawSources as unknown as BookSource[]).filter(source => matchesScope(source, options.scope))
   if (sources.length === 0) throw new Error('指定范围内没有可测试书源')
@@ -67,5 +61,5 @@ export async function runSourceAuditCli(options: SourceAuditCliOptions): Promise
   const diagnostics: SourceAuditDiagnosticBundle | undefined = options.diagnosticsDir
     ? runner.createDiagnosticBundle(run, sources) : undefined
   renderStatus('批测完成，正在写入报告……')
-  await invoke('complete_source_audit_cli', { run, diagnostics })
+  await bridge.complete(run, diagnostics)
 }

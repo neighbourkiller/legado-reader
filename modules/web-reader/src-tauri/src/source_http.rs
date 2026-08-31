@@ -1,13 +1,14 @@
 use crate::cookie_store::CookieManager;
-use crate::source_policy::validate_url;
+use crate::source_policy::{redirect_policy, validate_ip, validate_url, PublicDnsResolver};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::error::Error;
-use std::str::FromStr;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -29,6 +30,21 @@ pub struct SourceRequest {
     pub dns_ip: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewFetchRequest {
+    pub source_id: String,
+    pub url: String,
+    pub method: String,
+    pub headers: Option<HashMap<String, String>>,
+    pub body: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub delay_ms: Option<u64>,
+    pub follow_redirects: Option<bool>,
+    pub use_cookie_jar: Option<bool>,
+    pub response_type: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceResponse {
@@ -47,13 +63,17 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(source_cache_path: Option<PathBuf>) -> Self {
-        let source_cache = source_cache_path.as_ref()
+        let source_cache = source_cache_path
+            .as_ref()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|json| serde_json::from_str::<HashMap<String, String>>(&json).ok())
             .unwrap_or_default();
         Self {
             cookie_manager: Arc::new(Mutex::new(CookieManager::new(
-                source_cache_path.as_ref().and_then(|path| path.parent()).map(|directory| directory.join("source_cookies.json")),
+                source_cache_path
+                    .as_ref()
+                    .and_then(|path| path.parent())
+                    .map(|directory| directory.join("source_cookies.json")),
             ))),
             source_cache: Arc::new(StdMutex::new(source_cache)),
             source_cache_path: Arc::new(source_cache_path),
@@ -62,6 +82,7 @@ impl AppState {
 }
 
 const MAX_ERROR_CHAIN_DEPTH: usize = 8;
+const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 fn format_error_chain(error: &(dyn Error + 'static)) -> String {
     let mut messages = Vec::new();
@@ -138,6 +159,37 @@ fn format_request_error(stage: &str, error: reqwest::Error) -> String {
     )
 }
 
+fn exceeds_response_body_limit(current_length: usize, next_chunk_length: usize) -> bool {
+    current_length.saturating_add(next_chunk_length) > MAX_RESPONSE_BODY_BYTES
+}
+
+async fn read_limited_response_body(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BODY_BYTES as u64)
+    {
+        return Err("Response body too large (max 10MB)".to_string());
+    }
+
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(MAX_RESPONSE_BODY_BYTES as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format_request_error("read_body", error))?
+    {
+        if exceeds_response_body_limit(body.len(), chunk.len()) {
+            return Err("Response body too large (max 10MB)".to_string());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[tauri::command]
 pub async fn source_request(
     request: SourceRequest,
@@ -152,27 +204,41 @@ pub async fn source_request(
         manager.get_or_create_jar(&request.source_id)
     };
     let mut client_builder = reqwest::Client::builder()
-        .gzip(true).brotli(true).deflate(true)
-        .redirect(if request.follow_redirects == Some(false) {
-            reqwest::redirect::Policy::none()
-        } else {
-            reqwest::redirect::Policy::limited(10)
-        });
+        .gzip(true)
+        .brotli(true)
+        .deflate(true)
+        .dns_resolver(Arc::new(PublicDnsResolver))
+        .redirect(redirect_policy(request.follow_redirects != Some(false)));
     if request.use_cookie_jar != Some(false) {
         client_builder = client_builder.cookie_provider(cookie_jar);
     }
     if let Some(dns_ip) = request.dns_ip.as_deref() {
         let parsed_url = url::Url::parse(&request.url).map_err(|e| format!("Invalid URL: {e}"))?;
-        let host = parsed_url.host_str().ok_or_else(|| "URL has no host".to_string())?;
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| "URL has no host".to_string())?;
         let port = parsed_url.port_or_known_default().unwrap_or(80);
-        let addresses = dns_ip.split(',').map(str::trim).filter(|value| !value.is_empty())
-            .map(|value| value.trim_matches(|character| character == '[' || character == ']')
-                .parse::<IpAddr>().map(|ip| SocketAddr::new(ip, port)).map_err(|e| format!("Invalid dnsIp: {e}")))
+        let addresses = dns_ip
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                let ip = value
+                    .trim_matches(|character| character == '[' || character == ']')
+                    .parse::<IpAddr>()
+                    .map_err(|e| format!("Invalid dnsIp: {e}"))?;
+                validate_ip(ip)?;
+                Ok::<SocketAddr, String>(SocketAddr::new(ip, port))
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if addresses.is_empty() { return Err("dnsIp requires at least one IP address".to_string()); }
+        if addresses.is_empty() {
+            return Err("dnsIp requires at least one IP address".to_string());
+        }
         client_builder = client_builder.resolve_to_addrs(host, &addresses);
     }
-    let client = client_builder.build().map_err(|e| format!("Failed to build client: {e}"))?;
+    let client = client_builder
+        .build()
+        .map_err(|e| format!("Failed to build client: {e}"))?;
 
     // 3. Build reqwest Request
     let method = match request.method.to_uppercase().as_str() {
@@ -235,21 +301,14 @@ pub async fn source_request(
         }
     }
 
-    // 8. Limit response body size (Max 10MB) & Return raw bytes
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format_request_error("read_body", error))?;
-
-    if bytes.len() > 10 * 1024 * 1024 {
-        return Err("Response body too large (max 10MB)".to_string());
-    }
+    // 8. Stream response bytes and stop before an oversized body is buffered in memory.
+    let bytes = read_limited_response_body(response).await?;
 
     Ok(SourceResponse {
         status,
         final_url,
         headers: resp_headers,
-        body: bytes.to_vec(),
+        body: bytes,
         charset,
     })
 }
@@ -269,13 +328,24 @@ pub async fn set_source_cookies(
     }
     if !cookie_str.trim().is_empty() {
         let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
-        let host = parsed_url.host_str().ok_or_else(|| "URL has no host".to_string())?.to_string();
-        let webview = ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| "URL has no host".to_string())?
+            .to_string();
+        let webview =
+            ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
         for item in cookie_str.split(';') {
             if let Some((name, value)) = item.trim().split_once('=') {
-                let cookie = tauri::webview::Cookie::build((name.trim().to_string(), value.trim().to_string()))
-                    .domain(host.clone()).path("/").build();
-                webview.set_cookie(cookie).map_err(|e| format!("Failed to set WebView cookie: {e}"))?;
+                let cookie = tauri::webview::Cookie::build((
+                    name.trim().to_string(),
+                    value.trim().to_string(),
+                ))
+                .domain(host.clone())
+                .path("/")
+                .build();
+                webview
+                    .set_cookie(cookie)
+                    .map_err(|e| format!("Failed to set WebView cookie: {e}"))?;
             }
         }
     }
@@ -295,11 +365,8 @@ pub async fn get_source_cookies(
 }
 
 fn make_window_label(source_id: &str) -> String {
-    let safe_id: String = source_id
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    format!("auth_{}", safe_id)
+    let digest = Sha256::digest(source_id.as_bytes());
+    format!("auth_{digest:x}")
 }
 
 fn preserve_auth_webview_on_close(window: &tauri::WebviewWindow) {
@@ -409,14 +476,21 @@ pub async fn execute_webview_script(
     validate_url(&url)?;
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
     let timeout = timeout_ms.unwrap_or(10_000).clamp(100, 30_000);
-    let webview = ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
-    let request_id = format!("script-{}-{}", std::process::id(), WEBVIEW_FETCH_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+    let webview =
+        ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(15)).await?;
+    let request_id = format!(
+        "script-{}-{}",
+        std::process::id(),
+        WEBVIEW_FETCH_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
     let request_id_json = serde_json::to_string(&request_id).map_err(|e| e.to_string())?;
     let code_json = serde_json::to_string(&code).map_err(|e| e.to_string())?;
     let bindings_json = serde_json::to_string(&bindings).map_err(|e| e.to_string())?;
-    let store_json = serde_json::to_string(WEBVIEW_FETCH_RESULT_STORE).map_err(|e| e.to_string())?;
+    let store_json =
+        serde_json::to_string(WEBVIEW_FETCH_RESULT_STORE).map_err(|e| e.to_string())?;
     let pending_json = serde_json::to_string(WEBVIEW_FETCH_PENDING).map_err(|e| e.to_string())?;
-    let start_js = format!(r#"(() => {{
+    let start_js = format!(
+        r#"(() => {{
       const store = window[{store_json}] ?? (window[{store_json}] = Object.create(null));
       store[{request_id_json}] = {pending_json};
       void (async () => {{
@@ -434,25 +508,38 @@ pub async fn execute_webview_script(
           }}
         }}
       }})();
-    }})()"#);
-    webview.eval(&start_js).map_err(|e| format!("Failed to start WebView script: {e}"))?;
-    let poll_js = format!(r#"(() => {{
+    }})()"#
+    );
+    webview
+        .eval(&start_js)
+        .map_err(|e| format!("Failed to start WebView script: {e}"))?;
+    let poll_js = format!(
+        r#"(() => {{
       const value = window[{store_json}]?.[{request_id_json}];
       if (value === undefined || value === {pending_json}) return {pending_json};
       delete window[{store_json}][{request_id_json}];
       return value;
-    }})()"#);
+    }})()"#
+    );
     let deadline = Instant::now() + Duration::from_millis(timeout);
     let raw_result = loop {
-        if Instant::now() >= deadline { return Err("WEBJS_TIMEOUT: 页面脚本执行超时".to_string()); }
+        if Instant::now() >= deadline {
+            return Err("WEBJS_TIMEOUT: 页面脚本执行超时".to_string());
+        }
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
-        webview.eval_with_callback(&poll_js, move |result| {
-            if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) { let _ = tx.send(result); }
-        }).map_err(|e| format!("Failed to poll WebView script: {e}"))?;
+        webview
+            .eval_with_callback(&poll_js, move |result| {
+                if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
+                    let _ = tx.send(result);
+                }
+            })
+            .map_err(|e| format!("Failed to poll WebView script: {e}"))?;
         if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_secs(2), rx).await {
             if let Some(value) = decode_webview_callback_value(raw) {
-                if value != WEBVIEW_FETCH_PENDING { break value; }
+                if value != WEBVIEW_FETCH_PENDING {
+                    break value;
+                }
             }
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -460,9 +547,20 @@ pub async fn execute_webview_script(
     let envelope: serde_json::Value = serde_json::from_str(&raw_result)
         .map_err(|e| format!("Failed to parse WebView script result: {e}"))?;
     if envelope.get("ok").and_then(|value| value.as_bool()) != Some(true) {
-        return Err(format!("WEBJS_EXECUTION_FAILED: {}", envelope.get("error").and_then(|value| value.as_str()).unwrap_or("未知错误")));
+        return Err(format!(
+            "WEBJS_EXECUTION_FAILED: {}",
+            envelope
+                .get("error")
+                .and_then(|value| value.as_str())
+                .unwrap_or("未知错误")
+        ));
     }
-    Ok(WebviewScriptResponse { result: envelope.get("result").cloned().unwrap_or(serde_json::Value::Null) })
+    Ok(WebviewScriptResponse {
+        result: envelope
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    })
 }
 
 fn is_browser_managed_header(name: &str) -> bool {
@@ -628,17 +726,20 @@ pub async fn check_cf_clearance(
 pub async fn webview_fetch(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    source_id: String,
-    url: String,
-    method: String,
-    headers: Option<HashMap<String, String>>,
-    body: Option<String>,
-    timeout_ms: Option<u64>,
-    delay_ms: Option<u64>,
-    follow_redirects: Option<bool>,
-    use_cookie_jar: Option<bool>,
-    response_type: Option<String>,
+    request: WebviewFetchRequest,
 ) -> Result<SourceResponse, String> {
+    let WebviewFetchRequest {
+        source_id,
+        url,
+        method,
+        headers,
+        body,
+        timeout_ms,
+        delay_ms,
+        follow_redirects,
+        use_cookie_jar,
+        response_type,
+    } = request;
     validate_url(&url)?;
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
     let timeout = timeout_ms.unwrap_or(30000);
@@ -689,8 +790,16 @@ pub async fn webview_fetch(
         .map_err(|e| format!("Failed to serialize WebView request headers: {e}"))?;
     let body_json = serde_json::to_string(&body)
         .map_err(|e| format!("Failed to serialize WebView request body: {e}"))?;
-    let redirect_mode = if follow_redirects == Some(false) { "manual" } else { "follow" };
-    let credentials_mode = if use_cookie_jar == Some(false) { "omit" } else { "include" };
+    let redirect_mode = if follow_redirects == Some(false) {
+        "manual"
+    } else {
+        "follow"
+    };
+    let credentials_mode = if use_cookie_jar == Some(false) {
+        "omit"
+    } else {
+        "include"
+    };
     let binary_response = matches!(response_type.as_deref(), Some("binary" | "hex"));
 
     let js_code = format!(
@@ -714,17 +823,41 @@ pub async fn webview_fetch(
         redirect: '{redirect}',
         signal: controller.signal
       }});
+      const declaredLength = Number(resp.headers.get('content-length'));
+      if (Number.isFinite(declaredLength) && declaredLength > {max_body_bytes}) {{
+        throw new Error('Response body too large (max 10MB)');
+      }}
+      const chunks = [];
+      let totalLength = 0;
+      if (resp.body) {{
+        const reader = resp.body.getReader();
+        while (true) {{
+          const {{ done, value }} = await reader.read();
+          if (done) break;
+          if (totalLength + value.byteLength > {max_body_bytes}) {{
+            await reader.cancel();
+            throw new Error('Response body too large (max 10MB)');
+          }}
+          chunks.push(value);
+          totalLength += value.byteLength;
+        }}
+      }}
+      const bytes = new Uint8Array(totalLength);
+      let writeOffset = 0;
+      for (const chunk of chunks) {{
+        bytes.set(chunk, writeOffset);
+        writeOffset += chunk.byteLength;
+      }}
       let text = null;
       let bodyBase64 = null;
       if ({binary}) {{
-        const bytes = new Uint8Array(await resp.arrayBuffer());
         let binaryText = '';
         for (let offset = 0; offset < bytes.length; offset += 32768) {{
           binaryText += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
         }}
         bodyBase64 = btoa(binaryText);
       }} else {{
-        text = await resp.text();
+        text = new TextDecoder().decode(bytes);
       }}
       const hdrs = {{}};
       resp.headers.forEach((value, name) => {{ hdrs[name] = value; }});
@@ -757,6 +890,7 @@ pub async fn webview_fetch(
         credentials = credentials_mode,
         redirect = redirect_mode,
         binary = binary_response,
+        max_body_bytes = MAX_RESPONSE_BODY_BYTES,
     );
 
     webview
@@ -818,23 +952,31 @@ pub async fn webview_fetch(
             .unwrap_or_else(|| "Unknown fetch error".to_string()));
     }
 
+    if let Some(final_url) = fetch_result.final_url.as_deref() {
+        validate_url(final_url)?;
+    }
+
     let response_body = if let Some(encoded) = fetch_result.body_base64 {
         use base64::Engine;
-        base64::engine::general_purpose::STANDARD.decode(encoded)
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
             .map_err(|e| format!("Failed to decode WebView binary response: {e}"))?
     } else {
         fetch_result.body.unwrap_or_default().into_bytes()
     };
-    if response_body.len() > 10 * 1024 * 1024 {
+    if response_body.len() > MAX_RESPONSE_BODY_BYTES {
         return Err("Response body too large (max 10MB)".to_string());
     }
 
-    let updated_cookies = webview.cookies_for_url(parsed_url)
+    let updated_cookies = webview
+        .cookies_for_url(parsed_url)
         .map_err(|e| format!("Failed to read WebView response cookies: {e}"))?;
     if !updated_cookies.is_empty() {
-        let cookie_header = updated_cookies.iter()
+        let cookie_header = updated_cookies
+            .iter()
             .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
-            .collect::<Vec<_>>().join("; ");
+            .collect::<Vec<_>>()
+            .join("; ");
         let mut manager = state.cookie_manager.lock().await;
         manager.set_cookies(&source_id, &url, &cookie_header)?;
     }
@@ -869,7 +1011,8 @@ pub async fn solve_webview_challenge(
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(5000).clamp(1000, 15000));
 
-    let webview = ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(10)).await?;
+    let webview =
+        ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(10)).await?;
 
     // 让后台隐藏 WebView 导航到具体的章节/目标页面 URL
     let target_url_json = serde_json::to_string(&url).map_err(|e| e.to_string())?;
@@ -931,11 +1074,14 @@ pub async fn solve_webview_challenge(
     while Instant::now() < deadline {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
-        if webview.eval_with_callback(&check_js, move |result| {
-            if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
-                let _ = tx.send(result);
-            }
-        }).is_ok() {
+        if webview
+            .eval_with_callback(&check_js, move |result| {
+                if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
+                    let _ = tx.send(result);
+                }
+            })
+            .is_ok()
+        {
             if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), rx).await {
                 if let Some(val_str) = decode_webview_callback_value(raw) {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&val_str) {
@@ -955,17 +1101,20 @@ pub async fn solve_webview_challenge(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    let updated_cookies = webview.cookies_for_url(parsed_url)
+    let updated_cookies = webview
+        .cookies_for_url(parsed_url)
         .map_err(|e| format!("Failed to read WebView response cookies: {e}"))?;
     let mut cookie_list = Vec::new();
     if !updated_cookies.is_empty() {
-        let cookie_header = updated_cookies.iter()
+        let cookie_header = updated_cookies
+            .iter()
             .map(|cookie| {
                 let item = format!("{}={}", cookie.name(), cookie.value());
                 cookie_list.push(item.clone());
                 item
             })
-            .collect::<Vec<_>>().join("; ");
+            .collect::<Vec<_>>()
+            .join("; ");
         let mut manager = state.cookie_manager.lock().await;
         manager.set_cookies(&source_id, &url, &cookie_header)?;
     }
@@ -1007,7 +1156,30 @@ pub async fn exit_fullscreen(window: tauri::WebviewWindow) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_webview_callback_value, is_browser_managed_header};
+    use super::{
+        decode_webview_callback_value, exceeds_response_body_limit, is_browser_managed_header,
+        make_window_label, WebviewFetchRequest, MAX_RESPONSE_BODY_BYTES,
+    };
+
+    #[test]
+    fn creates_stable_non_colliding_auth_window_labels() {
+        let first = make_window_label("https://a-b.example");
+        let second = make_window_label("https://a.b.example");
+
+        assert_eq!(first, make_window_label("https://a-b.example"));
+        assert_ne!(first, second);
+        assert!(first.starts_with("auth_"));
+        assert!(first[5..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn rejects_a_chunk_before_it_pushes_a_response_over_the_limit() {
+        assert!(!exceeds_response_body_limit(MAX_RESPONSE_BODY_BYTES - 1, 1));
+        assert!(exceeds_response_body_limit(MAX_RESPONSE_BODY_BYTES, 1));
+        assert!(exceeds_response_body_limit(usize::MAX, 1));
+    }
 
     #[test]
     fn filters_headers_owned_by_the_browser() {
@@ -1041,5 +1213,29 @@ mod tests {
         );
         assert_eq!(decode_webview_callback_value(String::new()), None);
         assert_eq!(decode_webview_callback_value("null".to_string()), None);
+    }
+
+    #[test]
+    fn deserializes_webview_fetch_request_from_camel_case_ipc_payload() {
+        let request: WebviewFetchRequest = serde_json::from_value(serde_json::json!({
+            "sourceId": "source-1",
+            "url": "https://example.com/start",
+            "method": "POST",
+            "headers": { "accept": "text/plain" },
+            "body": "payload",
+            "timeoutMs": 12000,
+            "delayMs": 300,
+            "followRedirects": false,
+            "useCookieJar": false,
+            "responseType": "binary"
+        }))
+        .unwrap();
+
+        assert_eq!(request.source_id, "source-1");
+        assert_eq!(request.timeout_ms, Some(12_000));
+        assert_eq!(request.delay_ms, Some(300));
+        assert_eq!(request.follow_redirects, Some(false));
+        assert_eq!(request.use_cookie_jar, Some(false));
+        assert_eq!(request.response_type.as_deref(), Some("binary"));
     }
 }

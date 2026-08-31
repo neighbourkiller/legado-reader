@@ -1,5 +1,8 @@
 import JSZip from 'jszip'
+import DOMPurify from 'dompurify'
 import type { BookChapter, BookMeta, ChapterContentResult, ParsedBook } from './types'
+
+const EPUB_ALLOWED_URI = /^(?:(?:https?|mailto|tel|blob):|data:image\/(?:png|gif|jpe?g|webp);base64,|#|\/|(?:\.\.?\/)*[^:/?#]+(?:[?#].*)?$)/i
 
 interface EpubSpineItem {
   idref: string
@@ -330,17 +333,20 @@ async function extractBodyContent(
     }
   }
 
-  // Extract inline styles from <head> if any
-  let styleContent = ''
-  const headDoc = parser.parseFromString(html, 'application/xhtml+xml')
-  const styles = headDoc.querySelectorAll('head style')
-  styles.forEach(style => {
-    styleContent += style.textContent ?? ''
-  })
+  return { html: sanitizeEpubHtml(body.innerHTML), blobUrls }
+}
 
-  const bodyHtml = body.innerHTML
-  const finalHtml = styleContent ? `<style>${styleContent}</style>${bodyHtml}` : bodyHtml
-  return { html: finalHtml, blobUrls }
+/**
+ * EPUB chapters are untrusted documents. Keep reader-safe structural HTML while
+ * removing executable markup, inline CSS and unsafe resource protocols before v-html.
+ */
+export function sanitizeEpubHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['base', 'button', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'option', 'select', 'style', 'textarea'],
+    FORBID_ATTR: ['formaction', 'srcset', 'style'],
+    ALLOWED_URI_REGEXP: EPUB_ALLOWED_URI,
+  })
 }
 
 function resolveHref(base: string, href: string): string {
@@ -363,4 +369,3 @@ function resolveHref(base: string, href: string): string {
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
-

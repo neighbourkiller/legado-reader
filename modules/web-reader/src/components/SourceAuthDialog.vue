@@ -125,6 +125,7 @@ import { useBookSourceStore } from '@/stores/bookSource'
 import { getTransport } from '@/source/transport'
 import { TauriTransport } from '@/source/transport/TauriTransport'
 import { SourceEngine, getDefaultUserAgent } from '@/source/engine/SourceEngine'
+import { createSourceAuthDraft } from './sourceAuthDraft'
 
 const props = defineProps<{
   modelValue: boolean
@@ -156,27 +157,12 @@ const testResult = ref<{ success: boolean; message: string } | null>(null)
 watch(
   () => props.source,
   (newSource) => {
-    if (newSource) {
-      testResult.value = null
-      extractResult.value = null
-      uaInput.value = getDefaultUserAgent()
-      useWebViewChannel.value = newSource.useWebView ?? false
-      // 从现有 header 中提取已有的 Cookie 与 UA
-      if (newSource.header) {
-        try {
-          const headerObj =
-            typeof newSource.header === 'string' ? JSON.parse(newSource.header) : newSource.header
-          if (headerObj.Cookie || headerObj.cookie) {
-            cookieInput.value = headerObj.Cookie || headerObj.cookie
-          }
-          if (headerObj['User-Agent'] || headerObj['user-agent']) {
-            uaInput.value = headerObj['User-Agent'] || headerObj['user-agent']
-          }
-        } catch {
-          // Ignore
-        }
-      }
-    }
+    testResult.value = null
+    extractResult.value = null
+    const draft = createSourceAuthDraft(newSource, getDefaultUserAgent())
+    cookieInput.value = draft.cookie
+    uaInput.value = draft.userAgent
+    useWebViewChannel.value = draft.useWebView
   },
   { immediate: true }
 )

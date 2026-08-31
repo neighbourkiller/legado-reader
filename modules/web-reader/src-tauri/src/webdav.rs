@@ -372,8 +372,7 @@ fn local_name_from_href(href: &str) -> String {
         .ok()
         .and_then(|url| {
             url.path_segments()?
-                .filter(|segment| !segment.is_empty())
-                .next_back()
+                .rfind(|segment| !segment.is_empty())
                 .map(str::to_string)
         })
         .or_else(|| {
@@ -535,10 +534,7 @@ pub async fn list_webdav_backups(app: AppHandle) -> Result<Vec<WebDavBackupFile>
 }
 
 #[tauri::command]
-pub async fn upload_webdav_backup(
-    app: AppHandle,
-    request: Request<'_>,
-) -> Result<(), String> {
+pub async fn upload_webdav_backup(app: AppHandle, request: Request<'_>) -> Result<(), String> {
     let body = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
         _ => return Err("请求体必须为原始二进制".to_string()),
@@ -769,9 +765,13 @@ mod tests {
         .await
         .unwrap();
         put_handle.join().unwrap();
-        let put_requests = put_requests.lock().unwrap();
-        assert!(put_requests[1].starts_with("PUT /dav/legado/backup2026-08-24-test.zip HTTP/1.1"));
-        assert!(put_requests[1].contains("Basic dXNlcjpwYXNz"));
+        {
+            let put_requests = put_requests.lock().unwrap();
+            assert!(
+                put_requests[1].starts_with("PUT /dav/legado/backup2026-08-24-test.zip HTTP/1.1")
+            );
+            assert!(put_requests[1].contains("Basic dXNlcjpwYXNz"));
+        }
 
         let (get_server, get_requests, get_handle) = spawn_http_server(vec![(200, "zip")]);
         let get_config = test_config(get_server);

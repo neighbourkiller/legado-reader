@@ -51,6 +51,10 @@ jobs:
         working-directory: modules/web-reader
         run: pnpm install --frozen-lockfile
 
+      - name: Test
+        working-directory: modules/web-reader
+        run: pnpm test
+
       - name: Type check
         working-directory: modules/web-reader
         run: pnpm exec vue-tsc --build --force
@@ -58,6 +62,10 @@ jobs:
       - name: Build
         working-directory: modules/web-reader
         run: pnpm exec vite build --mode web --base="${{ steps.pages.outputs.base_path }}/"
+
+      - name: Verify Web entry boundary
+        working-directory: modules/web-reader
+        run: pnpm check:web-entry
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4

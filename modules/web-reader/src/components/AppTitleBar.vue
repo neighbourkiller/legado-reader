@@ -39,40 +39,33 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTheme } from '@/composables/useTheme'
+import { desktopWindowControls } from '@/platform/windowControls'
 
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-const appWindow = isTauri ? getCurrentWindow() : undefined
 const { isDark } = useTheme()
 const isMaximized = ref(false)
 let unlistenResize: (() => void) | undefined
 
 const refreshMaximized = async () => {
-  if (!isTauri) return
-  isMaximized.value = await appWindow!.isMaximized()
+  isMaximized.value = await desktopWindowControls.isMaximized()
 }
 
 const minimize = async () => {
-  if (!isTauri) return
-  await appWindow!.minimize()
+  await desktopWindowControls.minimize()
 }
 
 const toggleMaximize = async () => {
-  if (!isTauri) return
-  await appWindow!.toggleMaximize()
+  await desktopWindowControls.toggleMaximize()
   await refreshMaximized()
 }
 
 const closeWindow = async () => {
-  if (!isTauri) return
-  await appWindow!.close()
+  await desktopWindowControls.close()
 }
 
 onMounted(async () => {
-  if (!isTauri) return
   await refreshMaximized()
-  unlistenResize = await appWindow!.onResized(refreshMaximized)
+  unlistenResize = await desktopWindowControls.onResized(refreshMaximized)
 })
 
 onUnmounted(() => unlistenResize?.())

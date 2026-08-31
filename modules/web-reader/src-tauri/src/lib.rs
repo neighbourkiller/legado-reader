@@ -16,10 +16,9 @@ use source_audit::{
     start_source_audit_cli_watchdog,
 };
 use source_http::{
-    check_cf_clearance, close_source_auth_window, exit_fullscreen, get_source_cookies,
-    open_source_auth_window, set_source_cookies, source_request, sync_webview_cookies,
-    execute_webview_script, solve_webview_challenge,
-    toggle_fullscreen, webview_fetch, AppState,
+    check_cf_clearance, close_source_auth_window, execute_webview_script, exit_fullscreen,
+    get_source_cookies, open_source_auth_window, set_source_cookies, solve_webview_challenge,
+    source_request, sync_webview_cookies, toggle_fullscreen, webview_fetch, AppState,
 };
 use source_script::execute_source_script;
 use storage::backup_session::*;
@@ -52,7 +51,7 @@ pub fn run() {
             app.manage(AppState::new(source_cache_path));
 
             if audit_cli_state.requires_internal_storage() {
-                let storage_result: Result<std::sync::Arc<storage::StorageDb>, String> = (|| {
+                let storage_result = (|| -> Result<std::sync::Arc<storage::StorageDb>, String> {
                     let app_data_dir = app
                         .path()
                         .app_data_dir()
@@ -80,7 +79,9 @@ pub fn run() {
                     app.manage(db);
                 }
             }
-            app.manage(std::sync::Arc::new(storage::backup_session::BackupSessionManager::new()));
+            app.manage(std::sync::Arc::new(
+                storage::backup_session::BackupSessionManager::new(),
+            ));
 
             // 认证 WebView 被隐藏后仍然是一个存活窗口。关闭主窗口时显式退出应用，
             // 避免进程因隐藏的认证窗口继续驻留后台。

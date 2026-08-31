@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use crate::storage::models::StorageErrorPayload;
+use rusqlite::Connection;
 
 pub const CURRENT_DB_VERSION: i32 = 2;
 
@@ -9,7 +9,7 @@ pub fn initialize_schema(conn: &mut Connection) -> std::result::Result<(), Stora
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
          PRAGMA foreign_keys = ON;
-         PRAGMA busy_timeout = 5000;"
+         PRAGMA busy_timeout = 5000;",
     )
     .map_err(|e| StorageErrorPayload::new("INIT_FAILED", "set_pragma", e.to_string()))?;
 
@@ -22,16 +22,14 @@ pub fn initialize_schema(conn: &mut Connection) -> std::result::Result<(), Stora
         return Err(StorageErrorPayload::new(
             "INIT_FAILED",
             "schema_migration",
-            format!(
-                "数据库版本 ({existing_version}) 高于程序支持版本 ({CURRENT_DB_VERSION})"
-            ),
+            format!("数据库版本 ({existing_version}) 高于程序支持版本 ({CURRENT_DB_VERSION})"),
         ));
     }
 
     if existing_version < 1 {
-        let tx = conn
-            .transaction()
-            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "begin_migration_v1", e.to_string()))?;
+        let tx = conn.transaction().map_err(|e| {
+            StorageErrorPayload::new("TRANSACTION", "begin_migration_v1", e.to_string())
+        })?;
 
         tx.execute_batch(
             "
@@ -168,8 +166,9 @@ pub fn initialize_schema(conn: &mut Connection) -> std::result::Result<(), Stora
     }
 
     if existing_version < 2 {
-        let tx = conn.transaction()
-            .map_err(|e| StorageErrorPayload::new("TRANSACTION", "begin_migration_v2", e.to_string()))?;
+        let tx = conn.transaction().map_err(|e| {
+            StorageErrorPayload::new("TRANSACTION", "begin_migration_v2", e.to_string())
+        })?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS chapter_image_cache (
                 book_id TEXT NOT NULL,
@@ -184,8 +183,9 @@ pub fn initialize_schema(conn: &mut Connection) -> std::result::Result<(), Stora
             );
             CREATE INDEX IF NOT EXISTS idx_chapter_image_cache_book
                 ON chapter_image_cache(book_id, chapter_index, image_index);
-            PRAGMA user_version = 2;"
-        ).map_err(|e| StorageErrorPayload::new("INIT_FAILED", "apply_ddl_v2", e.to_string()))?;
+            PRAGMA user_version = 2;",
+        )
+        .map_err(|e| StorageErrorPayload::new("INIT_FAILED", "apply_ddl_v2", e.to_string()))?;
         tx.commit()
             .map_err(|e| StorageErrorPayload::new("TRANSACTION", "commit_v2", e.to_string()))?;
     }

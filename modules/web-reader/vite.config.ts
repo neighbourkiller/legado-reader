@@ -26,6 +26,10 @@ export default defineConfig(({ mode }) => {
       },
       extensions: ['.ts', '.tsx', '.mjs', '.js', '.mts', '.jsx', '.json'],
     },
+    build: {
+      // Web 产物需要 manifest 来核验首屏静态依赖中没有混入 Tauri IPC。
+      manifest: !isDesktop,
+    },
     // Tauri 开发模式需要固定端口和关闭清屏
     ...(isDesktop
       ? {
