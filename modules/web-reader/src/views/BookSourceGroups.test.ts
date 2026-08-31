@@ -27,6 +27,8 @@ describe('书源分组交互', () => {
     expect(sidebar).not.toContain('handleGroupCommand')
     expect(view).toContain('const selectedSourceGroup = ref<string | null>(null)')
     expect(view).toContain('selectedSourceGroup.value === null')
+    expect(view).toContain('flatMap(source => splitBookSourceGroups(source.bookSourceGroup))')
+    expect(view).toContain('splitBookSourceGroups(source.bookSourceGroup).includes(selectedSourceGroup.value!)')
     expect(view).toContain("'group-filter': handleSourceGroupFilter")
   })
 })

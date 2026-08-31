@@ -250,6 +250,65 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     }
   }
 
+  async function setSourcesExploreEnabled(bookSourceUrls: string[], enabled: boolean) {
+    const targets = new Set(bookSourceUrls)
+    for (const source of sources.value) {
+      if (!targets.has(source.bookSourceUrl)) continue
+      source.enabledExplore = enabled
+      await saveBookSource(source as unknown as Record<string, unknown>)
+    }
+  }
+
+  function splitSourceGroups(groups?: string): string[] {
+    return groups?.split(/[,;，；]/).map(group => group.trim()).filter(Boolean) ?? []
+  }
+
+  async function updateSourcesGroup(bookSourceUrls: string[], groups: string, mode: 'add' | 'remove') {
+    const targets = new Set(bookSourceUrls)
+    const changedGroups = splitSourceGroups(groups)
+    if (changedGroups.length === 0) return
+
+    for (const source of sources.value) {
+      if (!targets.has(source.bookSourceUrl)) continue
+      const currentGroups = new Set(splitSourceGroups(source.bookSourceGroup))
+      if (mode === 'add') {
+        changedGroups.forEach(group => currentGroups.add(group))
+      } else {
+        changedGroups.forEach(group => currentGroups.delete(group))
+      }
+      const nextGroups = [...currentGroups].join(',')
+      if (nextGroups) source.bookSourceGroup = nextGroups
+      else delete source.bookSourceGroup
+      await saveBookSource(source as unknown as Record<string, unknown>)
+    }
+  }
+
+  async function moveSources(bookSourceUrls: string[], position: 'top' | 'bottom') {
+    const targets = new Set(bookSourceUrls)
+    const selected = sources.value.filter(source => targets.has(source.bookSourceUrl))
+    if (selected.length === 0) return
+
+    const orders = sources.value.map(source => source.customOrder ?? 0)
+    if (position === 'top') {
+      const maxOrder = Math.max(0, ...orders)
+      selected.forEach((source, index) => {
+        source.isTop = true
+        source.customOrder = maxOrder + selected.length - index
+      })
+    } else {
+      const minOrder = Math.min(0, ...orders)
+      selected.forEach((source, index) => {
+        source.isTop = false
+        source.customOrder = minOrder - index - 1
+      })
+    }
+
+    for (const source of selected) {
+      await saveBookSource(source as unknown as Record<string, unknown>)
+    }
+    sources.value = sortSources([...sources.value])
+  }
+
   async function deleteSources(bookSourceUrls: string[]) {
     const targets = new Set(bookSourceUrls)
     for (const bookSourceUrl of targets) {
@@ -304,6 +363,9 @@ export const useBookSourceStore = defineStore('bookSource', () => {
     toggleSource,
     setAllSourcesEnabled,
     setSourcesEnabled,
+    setSourcesExploreEnabled,
+    updateSourcesGroup,
+    moveSources,
     deleteSources,
     getEnabledSources,
   }

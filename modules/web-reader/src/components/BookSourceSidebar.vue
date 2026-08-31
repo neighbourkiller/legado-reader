@@ -44,10 +44,6 @@
           </template>
         </el-dropdown>
         <div class="sidebar-tool-actions">
-          <el-button v-if="showAuditEntry" text @click="emit('audit')">
-            <el-icon><DataAnalysis /></el-icon>
-            批量测试
-          </el-button>
           <el-button text @click="emit('toggle-selection-mode')">
             <el-icon><Select /></el-icon>
             选择
@@ -56,24 +52,33 @@
       </div>
 
       <div v-else class="selection-toolbar">
-        <div class="selection-summary">
-          <strong>已选 {{ selectedUrls.length }} 项</strong>
-          <el-button text size="small" @click="emit('select-all')">全选当前结果</el-button>
-          <el-button text size="small" :disabled="selectedUrls.length === 0" @click="emit('clear-selection')">
-            清除
-          </el-button>
-        </div>
+        <strong>已选 {{ selectedUrls.length }} 项</strong>
         <div class="selection-actions">
-          <el-button size="small" :disabled="selectedUrls.length === 0" @click="emit('enable-selected')">
-            启用
-          </el-button>
-          <el-button size="small" :disabled="selectedUrls.length === 0" @click="emit('disable-selected')">
-            禁用
-          </el-button>
-          <el-button size="small" type="danger" plain :disabled="selectedUrls.length === 0" @click="emit('delete-selected')">
-            删除
-          </el-button>
-          <el-button size="small" text @click="emit('toggle-selection-mode')">完成</el-button>
+          <el-button text size="small" @click="emit('select-all')">全选</el-button>
+          <el-button text size="small" @click="emit('invert-selection')">反选</el-button>
+          <el-button text size="small" @click="emit('toggle-selection-mode')">完成</el-button>
+          <el-dropdown trigger="click" placement="bottom-end" @command="handleSelectionCommand">
+            <button type="button" class="selection-more-button" aria-label="所选书源的更多操作" title="更多操作">
+              <span aria-hidden="true">⋮</span>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu class="selection-action-menu">
+                <el-dropdown-item command="enable" :disabled="selectedUrls.length === 0">启用所选</el-dropdown-item>
+                <el-dropdown-item command="disable" :disabled="selectedUrls.length === 0">禁用所选</el-dropdown-item>
+                <el-dropdown-item command="addGroup" :disabled="selectedUrls.length === 0" divided>添加分组</el-dropdown-item>
+                <el-dropdown-item command="removeGroup" :disabled="selectedUrls.length === 0">移除分组</el-dropdown-item>
+                <el-dropdown-item command="enableExplore" :disabled="selectedUrls.length === 0" divided>启用发现</el-dropdown-item>
+                <el-dropdown-item command="disableExplore" :disabled="selectedUrls.length === 0">禁用发现</el-dropdown-item>
+                <el-dropdown-item command="moveTop" :disabled="selectedUrls.length === 0" divided>置顶所选</el-dropdown-item>
+                <el-dropdown-item command="moveBottom" :disabled="selectedUrls.length === 0">置底所选</el-dropdown-item>
+                <el-dropdown-item command="export" :disabled="selectedUrls.length === 0" divided>导出所选</el-dropdown-item>
+                <el-dropdown-item command="share" :disabled="selectedUrls.length === 0">分享选中源</el-dropdown-item>
+                <el-dropdown-item v-if="showAuditEntry" command="audit" :disabled="selectedUrls.length === 0">校验所选</el-dropdown-item>
+                <el-dropdown-item command="selectInterval" :disabled="selectedUrls.length < 2">选中所选区间</el-dropdown-item>
+                <el-dropdown-item command="delete" :disabled="selectedUrls.length === 0" divided class="delete-action-item">删除所选</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
     </div>
@@ -193,7 +198,6 @@ import { computed, ref } from 'vue'
 import {
   ArrowDown,
   CopyDocument,
-  DataAnalysis,
   Delete,
   Download,
   Edit,
@@ -234,11 +238,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:searchKeyword', value: string): void
-  (event: 'create' | 'cancel-draft' | 'select-draft' | 'audit' | 'toggle-selection-mode' | 'select-all' | 'clear-selection' | 'enable-selected' | 'disable-selected' | 'delete-selected'): void
+  (event: 'create' | 'cancel-draft' | 'select-draft' | 'toggle-selection-mode' | 'select-all' | 'invert-selection'): void
   (event: 'sort', command: string): void
   (event: 'group-filter', group: string | null): void
   (event: 'select' | 'toggle-selected' | 'toggle-source', value: string): void
   (event: 'command', command: string, source: BookSource): void
+  (event: 'selection-command', command: string): void
 }>()
 
 const dropdownRefs = new Map<string, { handleOpen?: () => void }>()
@@ -297,6 +302,10 @@ function handleSourceCommand(command: string | number | object, source: BookSour
   emit('command', String(command), source)
 }
 
+function handleSelectionCommand(command: string | number | object) {
+  emit('selection-command', String(command))
+}
+
 function handleContextMenu(url: string) {
   if (props.selectionMode) return
   dropdownRefs.get(url)?.handleOpen?.()
@@ -340,7 +349,6 @@ function ruleStatus(source: BookSource) {
 
 .sidebar-search-row,
 .sidebar-tools-row,
-.selection-summary,
 .selection-actions,
 .source-name-row,
 .source-meta-row,
@@ -358,11 +366,12 @@ function ruleStatus(source: BookSource) {
 .sidebar-tool-actions { display: flex; align-items: center; }
 .sidebar-tools-row :deep(.el-button), .sidebar-tool-actions :deep(.el-button) { margin-left: 0; padding-inline: 6px; }
 
-.selection-toolbar { display: flex; flex-direction: column; gap: 8px; }
-.selection-summary { min-height: 28px; gap: 4px; }
-.selection-summary strong { margin-right: auto; font-size: 13px; }
-.selection-actions { gap: 6px; }
-.selection-actions :deep(.el-button) { flex: 1; margin-left: 0; }
+.selection-toolbar { min-height: 32px; display: flex; align-items: center; gap: 8px; }
+.selection-toolbar strong { margin-right: auto; font-size: 13px; white-space: nowrap; }
+.selection-actions { flex-shrink: 0; gap: 2px; }
+.selection-actions :deep(.el-button) { margin-left: 0; padding-inline: 6px; }
+.selection-more-button { width: 28px; height: 28px; padding: 0; border: 0; color: var(--el-text-color-primary); background: transparent; font-size: 22px; line-height: 24px; cursor: pointer; }
+.selection-more-button:hover, .selection-more-button:focus-visible { color: var(--el-color-primary); background: var(--el-fill-color); outline: 2px solid var(--el-color-primary-light-5); outline-offset: 1px; }
 
 .sidebar-list-container { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; }
 .source-items-column { display: flex; flex-direction: column; gap: 7px; }
@@ -413,4 +422,6 @@ function ruleStatus(source: BookSource) {
 <style>
 .source-action-menu .delete-action-item { color: var(--el-color-danger) !important; }
 .source-action-menu .delete-action-item:hover { color: var(--el-color-danger) !important; background: var(--el-color-danger-light-9) !important; }
+.selection-action-menu .delete-action-item { color: var(--el-color-danger) !important; }
+.selection-action-menu .delete-action-item:hover { color: var(--el-color-danger) !important; background: var(--el-color-danger-light-9) !important; }
 </style>

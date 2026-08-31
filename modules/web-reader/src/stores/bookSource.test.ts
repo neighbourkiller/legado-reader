@@ -122,4 +122,72 @@ describe('bookSource store - updateSource 主键重命名原子操作', () => {
     expect(store.sources.map(item => item.bookSourceUrl)).toEqual(['https://keep.example.com'])
     expect(db.deleteBookSource).not.toHaveBeenCalledWith('https://keep.example.com')
   })
+
+  it('批量更新发现开关和多分组时只修改所选书源', async () => {
+    mockSources.push(
+      {
+        bookSourceName: '第二书源',
+        bookSourceUrl: 'https://second.example.com',
+        bookSourceType: 0,
+        enabled: true,
+        enabledExplore: false,
+        bookSourceGroup: '原分组,保留分组',
+      },
+      {
+        bookSourceName: '保留书源',
+        bookSourceUrl: 'https://keep.example.com',
+        bookSourceType: 0,
+        enabled: true,
+        enabledExplore: false,
+        bookSourceGroup: '原分组',
+      },
+    )
+    const store = useBookSourceStore()
+    await store.loadSources()
+
+    await store.setSourcesExploreEnabled(['https://second.example.com'], true)
+    await store.updateSourcesGroup(['https://second.example.com'], '新增分组；保留分组', 'add')
+    await store.updateSourcesGroup(['https://second.example.com'], '原分组', 'remove')
+
+    const selected = store.sources.find(item => item.bookSourceUrl === 'https://second.example.com')
+    const untouched = store.sources.find(item => item.bookSourceUrl === 'https://keep.example.com')
+    expect(selected).toMatchObject({
+      enabledExplore: true,
+      bookSourceGroup: '保留分组,新增分组',
+    })
+    expect(untouched).toMatchObject({
+      enabledExplore: false,
+      bookSourceGroup: '原分组',
+    })
+  })
+
+  it('批量置顶和置底保持所选书源的相对顺序', async () => {
+    mockSources.push(
+      {
+        bookSourceName: '第二书源',
+        bookSourceUrl: 'https://second.example.com',
+        bookSourceType: 0,
+        enabled: true,
+        customOrder: 2,
+      },
+      {
+        bookSourceName: '第三书源',
+        bookSourceUrl: 'https://third.example.com',
+        bookSourceType: 0,
+        enabled: true,
+        customOrder: 1,
+      },
+    )
+    const store = useBookSourceStore()
+    await store.loadSources()
+    const selection = ['https://second.example.com', 'https://old.example.com']
+
+    await store.moveSources(selection, 'top')
+    expect(store.sources.slice(0, 2).map(item => item.bookSourceUrl)).toEqual(selection)
+    expect(store.sources.slice(0, 2).every(item => item.isTop)).toBe(true)
+
+    await store.moveSources(selection, 'bottom')
+    expect(store.sources.slice(-2).map(item => item.bookSourceUrl)).toEqual(selection)
+    expect(store.sources.slice(-2).every(item => !item.isTop)).toBe(true)
+  })
 })

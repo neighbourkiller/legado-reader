@@ -11,6 +11,10 @@
         </span>
       </div>
       <div class="header-actions">
+        <el-button v-if="showSourceAuditEntry" text class="batch-audit-button" @click="openBatchAudit">
+          <el-icon><DataAnalysis /></el-icon>
+          批量测试
+        </el-button>
         <el-dropdown @command="handleNavigateCommand">
           <button
             type="button"
@@ -154,7 +158,7 @@
     <SourceBatchAuditDialog
       v-if="showSourceAuditEntry"
       v-model="showBatchAuditDialog"
-      :sources="bookSourceStore.sources"
+      :sources="auditSources"
       :latest-run="latestAuditRun"
       @debug="handleAuditDebug"
       @latest-run="applyLatestAuditRun"
@@ -296,6 +300,7 @@ import {
   VideoPlay,
   Reading,
   Check,
+  DataAnalysis,
   MagicStick,
   Menu,
   RefreshLeft,
@@ -350,6 +355,7 @@ const importCompatibilitySummary = ref<{ partial: number; unsupported: number } 
 const searchKeyword = ref('')
 const showSourceAuditEntry = platform.isDesktop && import.meta.env.DEV
 const showBatchAuditDialog = ref(false)
+const auditSourceUrls = ref<string[] | null>(null)
 const latestAuditRun = ref<SourceAuditRun>()
 const latestAuditByUrl = ref(new Map<string, SourceAuditEntry>())
 const selectionMode = ref(false)
@@ -366,11 +372,22 @@ const sourceSortLabels: Record<SourceSort, string> = {
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const selectedSourceGroup = ref<string | null>(null)
 
+function splitBookSourceGroups(groups?: string): string[] {
+  return groups?.split(/[,;，；]/).map(group => group.trim()).filter(Boolean) ?? []
+}
+
 const sourceGroups = computed(() => Array.from(new Set(
-  bookSourceStore.sources
-    .map(source => source.bookSourceGroup?.trim())
-    .filter((group): group is string => Boolean(group)),
+  bookSourceStore.sources.flatMap(source => splitBookSourceGroups(source.bookSourceGroup)),
 )).sort((a, b) => a.localeCompare(b, 'zh-CN')))
+
+const selectedSources = computed(() => bookSourceStore.sources.filter(
+  source => selectedUrls.value.has(source.bookSourceUrl),
+))
+const auditSources = computed(() => {
+  if (auditSourceUrls.value === null) return bookSourceStore.sources
+  const targets = new Set(auditSourceUrls.value)
+  return bookSourceStore.sources.filter(source => targets.has(source.bookSourceUrl))
+})
 
 // 选中书源与右侧展示模式
 const selectedSourceUrl = ref<string>('')
@@ -451,7 +468,7 @@ const filteredSources = computed(() => {
   }) : bookSourceStore.sources
   const sources = selectedSourceGroup.value === null
     ? keywordFilteredSources
-    : keywordFilteredSources.filter(source => (source.bookSourceGroup?.trim() || '') === selectedSourceGroup.value)
+    : keywordFilteredSources.filter(source => splitBookSourceGroups(source.bookSourceGroup).includes(selectedSourceGroup.value!))
 
   if (sourceSort.value === 'default') return sources
 
@@ -636,8 +653,10 @@ function selectAllFilteredSources() {
   selectedUrls.value = new Set(filteredSources.value.map(source => source.bookSourceUrl))
 }
 
-function clearSelectedSources() {
-  selectedUrls.value = new Set()
+function invertFilteredSourcesSelection() {
+  selectedUrls.value = new Set(filteredSources.value
+    .filter(source => !selectedUrls.value.has(source.bookSourceUrl))
+    .map(source => source.bookSourceUrl))
 }
 
 async function setSelectedSourcesEnabled(enabled: boolean) {
@@ -645,6 +664,94 @@ async function setSelectedSourcesEnabled(enabled: boolean) {
   if (urls.length === 0) return
   await bookSourceStore.setSourcesEnabled(urls, enabled)
   ElMessage.success(`已${enabled ? '启用' : '禁用'} ${urls.length} 个书源`)
+}
+
+async function setSelectedSourcesExploreEnabled(enabled: boolean) {
+  const urls = [...selectedUrls.value]
+  if (urls.length === 0) return
+  await bookSourceStore.setSourcesExploreEnabled(urls, enabled)
+  ElMessage.success(`已${enabled ? '启用' : '禁用'} ${urls.length} 个书源的发现功能`)
+}
+
+async function updateSelectedSourcesGroup(mode: 'add' | 'remove') {
+  const urls = [...selectedUrls.value]
+  if (urls.length === 0) return
+  try {
+    const { value } = await ElMessageBox.prompt(
+      mode === 'add' ? '输入要添加的分组；多个分组可用逗号分隔。' : '输入要移除的分组；多个分组可用逗号分隔。',
+      mode === 'add' ? '添加分组' : '移除分组',
+      {
+        confirmButtonText: mode === 'add' ? '添加' : '移除',
+        cancelButtonText: '取消',
+        inputPlaceholder: sourceGroups.value.length > 0 ? `现有分组：${sourceGroups.value.join('、')}` : '分组名称',
+        inputValidator: value => Boolean(value.trim()) || '请输入分组名称',
+      },
+    )
+    await bookSourceStore.updateSourcesGroup(urls, value, mode)
+    ElMessage.success(`已为 ${urls.length} 个书源${mode === 'add' ? '添加' : '移除'}分组`)
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error instanceof Error ? error.message : '批量更新分组失败')
+    }
+  }
+}
+
+async function moveSelectedSources(position: 'top' | 'bottom') {
+  const urls = [...selectedUrls.value]
+  if (urls.length === 0) return
+  await bookSourceStore.moveSources(urls, position)
+  ElMessage.success(`已将 ${urls.length} 个书源置${position === 'top' ? '顶' : '底'}`)
+}
+
+async function exportSelectedSources() {
+  if (selectedSources.value.length === 0) return
+  const path = await saveJsonFile(
+    serializeLegadoBookSources(selectedSources.value),
+    `book-sources-selected-${selectedSources.value.length}.json`,
+  )
+  if (path) ElMessage.success(`已导出 ${selectedSources.value.length} 个书源`)
+}
+
+async function shareSelectedSources() {
+  if (selectedSources.value.length === 0) return
+  const content = serializeLegadoBookSources(selectedSources.value)
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try {
+      await navigator.share({
+        title: `Legado 书源（${selectedSources.value.length} 个）`,
+        text: content,
+      })
+      return
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+    }
+  }
+  await copyTextToClipboard(content)
+  ElMessage.success(`当前环境不支持系统分享，已复制 ${selectedSources.value.length} 个书源的 JSON`)
+}
+
+function selectSelectedInterval() {
+  const selectedIndexes = filteredSources.value
+    .map((source, index) => selectedUrls.value.has(source.bookSourceUrl) ? index : -1)
+    .filter(index => index >= 0)
+  if (selectedIndexes.length < 2) return
+  const first = Math.min(...selectedIndexes)
+  const last = Math.max(...selectedIndexes)
+  selectedUrls.value = new Set(filteredSources.value
+    .slice(first, last + 1)
+    .map(source => source.bookSourceUrl))
+}
+
+function auditSelectedSources() {
+  const urls = [...selectedUrls.value]
+  if (urls.length === 0) return
+  auditSourceUrls.value = urls
+  showBatchAuditDialog.value = true
+}
+
+function openBatchAudit() {
+  auditSourceUrls.value = null
+  showBatchAuditDialog.value = true
 }
 
 async function deleteSelectedSources() {
@@ -669,6 +776,24 @@ async function deleteSelectedSources() {
       ElMessage.error(error instanceof Error ? error.message : '删除所选书源失败')
     }
     // 取消或删除失败时保留当前选择，便于重试。
+  }
+}
+
+async function handleSelectionCommand(command: string) {
+  switch (command) {
+    case 'enable': await setSelectedSourcesEnabled(true); break
+    case 'disable': await setSelectedSourcesEnabled(false); break
+    case 'addGroup': await updateSelectedSourcesGroup('add'); break
+    case 'removeGroup': await updateSelectedSourcesGroup('remove'); break
+    case 'enableExplore': await setSelectedSourcesExploreEnabled(true); break
+    case 'disableExplore': await setSelectedSourcesExploreEnabled(false); break
+    case 'moveTop': await moveSelectedSources('top'); break
+    case 'moveBottom': await moveSelectedSources('bottom'); break
+    case 'export': await exportSelectedSources(); break
+    case 'share': await shareSelectedSources(); break
+    case 'audit': auditSelectedSources(); break
+    case 'selectInterval': selectSelectedInterval(); break
+    case 'delete': await deleteSelectedSources(); break
   }
 }
 
@@ -821,13 +946,10 @@ const sidebarListeners = {
     activeViewMode.value = 'edit'
     if (isNarrowLayout.value) sidebarDrawerOpen.value = false
   },
-  audit: () => { showBatchAuditDialog.value = true },
   'toggle-selection-mode': toggleSelectionMode,
   'select-all': selectAllFilteredSources,
-  'clear-selection': clearSelectedSources,
-  'enable-selected': () => setSelectedSourcesEnabled(true),
-  'disable-selected': () => setSelectedSourcesEnabled(false),
-  'delete-selected': deleteSelectedSources,
+  'invert-selection': invertFilteredSourcesSelection,
+  'selection-command': handleSelectionCommand,
   sort: handleSourceSortCommand,
   'group-filter': handleSourceGroupFilter,
   select: handleSidebarSelect,
