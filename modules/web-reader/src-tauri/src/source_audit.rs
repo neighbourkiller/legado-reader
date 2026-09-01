@@ -704,10 +704,11 @@ mod tests {
 
     #[test]
     fn parses_strict_cli_options_and_rejects_relative_paths() {
+        let output = temporary_history_path("cli-options").with_file_name("report.json");
         let args = vec![
             "legado-reader".to_string(),
             "--source-audit-output".to_string(),
-            "/tmp/report.json".to_string(),
+            output.to_string_lossy().into_owned(),
             "--source-audit-mode=full".to_string(),
             "--source-audit-concurrency".to_string(),
             "3".to_string(),
@@ -715,7 +716,7 @@ mod tests {
         ];
         let state = parse_source_audit_cli_options(&args).unwrap();
         let options = state.options.unwrap();
-        assert_eq!(options.output_path, "/tmp/report.json");
+        assert_eq!(PathBuf::from(options.output_path), output);
         assert_eq!(options.concurrency, 3);
         assert_eq!(options.scope, "image");
         assert!(matches!(options.mode, SourceAuditMode::Full));
