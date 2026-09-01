@@ -2325,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "legado-reader"
-version = "1.26.9011"
+version = "1.26.9012"
 dependencies = [
  "aes",
  "base64 0.22.1",
