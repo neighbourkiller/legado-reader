@@ -49,4 +49,32 @@ describe('阅读页主题同步持久化', () => {
     await store.syncThemeWithGlobal(false)
     expect(store.settings.theme).toBe(4)
   })
+
+  it('补齐旧版布局默认值并持久化新的正文边距和 Dock 高度', async () => {
+    const layoutKeys = new Set(['contentPaddingTop', 'contentPaddingBottom', 'dockHeight'])
+    const legacySettings = Object.fromEntries(
+      Object.entries(DEFAULT_READ_SETTINGS).filter(([key]) => !layoutKeys.has(key)),
+    )
+    localStorage.setItem(
+      'legado_web_reader_settings',
+      JSON.stringify(legacySettings),
+    )
+    const store = useReadingStore()
+
+    expect(store.settings.contentPaddingTop).toBe(DEFAULT_READ_SETTINGS.contentPaddingTop)
+    expect(store.settings.contentPaddingBottom).toBe(DEFAULT_READ_SETTINGS.contentPaddingBottom)
+    expect(store.settings.dockHeight).toBe(DEFAULT_READ_SETTINGS.dockHeight)
+
+    await store.updateSettings({
+      contentPaddingTop: 50,
+      contentPaddingBottom: 86,
+      dockHeight: 72,
+    })
+
+    expect(JSON.parse(localStorage.getItem('legado_web_reader_settings')!)).toMatchObject({
+      contentPaddingTop: 50,
+      contentPaddingBottom: 86,
+      dockHeight: 72,
+    })
+  })
 })

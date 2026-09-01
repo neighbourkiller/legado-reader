@@ -31,8 +31,8 @@
       :is-online-book="currentBook?.format === 'online'"
       :is-fullscreen="isFullscreen"
       :is-night="isNight"
+      :height="settings.dockHeight"
       @to-shelf="toShelf"
-      @toggle-bookmark="toggleCurrentBookmark"
       @prev-chapter="toPreChapter"
       @next-chapter="toNextChapter"
       @refresh-chapter="refreshCurrentChapter"
@@ -162,7 +162,10 @@
       :loading="bookmarksLoading"
       :saving="bookmarkSaving"
       :current-position-bookmarked="isCurrentPositionBookmarked"
-      @toggle-current="toggleCurrentBookmark"
+      :current-position-available="Boolean(bookmarkDrawerPosition)"
+      :current-chapter-title="bookmarkDrawerChapterTitle"
+      :current-position-content="bookmarkDrawerPosition?.content || ''"
+      @toggle-current="toggleDrawerBookmark"
       @jump="jumpToBookmark"
       @delete="removeBookmarkFromDrawer"
       @highlight-jump="jumpToHighlight"
@@ -271,6 +274,10 @@ import {
   shouldShowReaderPageTurnGuide,
 } from '@/reader/pageTurnGuide'
 import { isPointerNearReaderDock } from '@/reader/dockVisibility'
+import {
+  findLastVisibleReaderLine,
+  type ReaderViewportBounds,
+} from '@/reader/pageEndBookmark'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
@@ -486,6 +493,8 @@ const chapterTheme = computed(() => {
     background: chapterColor.value,
     width: readWidth.value,
     color: textColor,
+    '--reader-content-padding-top': `${settings.value.contentPaddingTop}px`,
+    '--reader-content-padding-bottom': `${settings.value.contentPaddingBottom}px`,
   }
 })
 
@@ -832,11 +841,18 @@ const infiniteLoading = computed(
 const isCurrentPositionBookmarked = computed(
   () => currentPositionKey.value !== '' && currentPositionKey.value === bookmarkedPositionKey.value,
 )
+const bookmarkDrawerChapterTitle = computed(() => {
+  const position = bookmarkDrawerPosition.value
+  if (!position) return ''
+  return chapters.value[position.chapterIndex]?.title || `第${position.chapterIndex + 1}章`
+})
 
 interface ReadingPosition {
   chapterIndex: number
   chapterPos: number
   content: string
+  startOffset?: number
+  endOffset?: number
 }
 
 const findReadingPosition = (): ReadingPosition | null => {
@@ -862,9 +878,36 @@ const findReadingPosition = (): ReadingPosition | null => {
   return { chapterIndex, chapterPos, content }
 }
 
+const findPageEndReadingPosition = (): ReadingPosition | null => {
+  const viewport = pageViewportRef.value
+  if (!viewport) return findReadingPosition()
+
+  const viewportRect = viewport.getBoundingClientRect()
+  const scrollHostRect = contentRef.value
+    ?.closest<HTMLElement>('.app-content')
+    ?.getBoundingClientRect()
+  const clipRect = isPaginationMode.value ? viewportRect : scrollHostRect
+  const bounds: ReaderViewportBounds = {
+    top: Math.max(0, viewportRect.top, clipRect?.top ?? 0),
+    right: Math.min(window.innerWidth, viewportRect.right, clipRect?.right ?? window.innerWidth),
+    bottom: Math.min(window.innerHeight, viewportRect.bottom, clipRect?.bottom ?? window.innerHeight),
+    left: Math.max(0, viewportRect.left, clipRect?.left ?? 0),
+  }
+
+  return findLastVisibleReaderLine(viewport, bounds) ?? findReadingPosition()
+}
+
+const bookmarkStartOffset = (position: ReadingPosition) => Math.max(0, position.startOffset ?? 0)
+
+const bookmarkPositionKey = (bookId: string, position: ReadingPosition) => {
+  const baseKey = `${bookId}:${position.chapterIndex}:${position.chapterPos}`
+  const startOffset = bookmarkStartOffset(position)
+  return startOffset > 0 ? `${baseKey}:${startOffset}` : baseKey
+}
+
 const syncBookmarkState = async (position: ReadingPosition | null = findReadingPosition()) => {
   if (!position || !currentBook.value) return
-  const key = `${currentBook.value.id}:${position.chapterIndex}:${position.chapterPos}`
+  const key = bookmarkPositionKey(currentBook.value.id, position)
   if (key === currentPositionKey.value) return
 
   currentPositionKey.value = key
@@ -872,6 +915,7 @@ const syncBookmarkState = async (position: ReadingPosition | null = findReadingP
     currentBook.value.id,
     position.chapterIndex,
     position.chapterPos,
+    bookmarkStartOffset(position),
   ).catch(() => undefined)
   if (currentPositionKey.value === key) {
     bookmarkedPositionKey.value = bookmark ? key : ''
@@ -906,7 +950,7 @@ const highlightsForChapter = (chapterIndex: number) =>
   currentBookHighlights.value.filter(item => item.chapterIndex === chapterIndex)
 
 const openBookmarksDrawer = async () => {
-  const position = findReadingPosition()
+  const position = findPageEndReadingPosition()
   bookmarkDrawerPosition.value = position
   bookmarkDrawerVisible.value = true
   if (position) await syncBookmarkState(position)
@@ -927,8 +971,9 @@ const toggleBookmark = async (position: ReadingPosition | null) => {
       currentBook.value.id,
       position.chapterIndex,
       position.chapterPos,
+      bookmarkStartOffset(position),
     )
-    const key = `${currentBook.value.id}:${position.chapterIndex}:${position.chapterPos}`
+    const key = bookmarkPositionKey(currentBook.value.id, position)
     currentPositionKey.value = key
 
     if (existing) {
@@ -946,8 +991,8 @@ const toggleBookmark = async (position: ReadingPosition | null) => {
         chapterPos: position.chapterPos,
         chapterTitle,
         content: position.content || chapterTitle,
-        startOffset: 0,
-        endOffset: 0,
+        startOffset: bookmarkStartOffset(position),
+        endOffset: Math.max(bookmarkStartOffset(position), position.endOffset ?? 0),
         createdAt: Date.now(),
       })
       bookmarkedPositionKey.value = key
@@ -962,7 +1007,7 @@ const toggleBookmark = async (position: ReadingPosition | null) => {
   }
 }
 
-const toggleCurrentBookmark = () => toggleBookmark(bookmarkDrawerPosition.value)
+const toggleDrawerBookmark = () => toggleBookmark(bookmarkDrawerPosition.value)
 
 const removeBookmarkFromDrawer = async (bookmark: BookmarkRecord) => {
   try {
@@ -1024,6 +1069,8 @@ const jumpToBookmark = async (bookmark: BookmarkRecord) => {
     chapterIndex: bookmark.chapterIndex,
     chapterPos: bookmark.chapterPos,
     content: bookmark.content,
+    startOffset: bookmark.startOffset,
+    endOffset: bookmark.endOffset,
   }
   router.replace({
     path: route.path,
@@ -1647,6 +1694,8 @@ watch(
     settings.value.spacing.letter,
     settings.value.spacing.line,
     settings.value.spacing.paragraph,
+    settings.value.contentPaddingTop,
+    settings.value.contentPaddingBottom,
     renderRevision.value,
   ],
   schedulePaginationMeasurement,
@@ -2009,7 +2058,8 @@ onBeforeRouteLeave(async (to, from) => {
     font-family: 'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
       'Helvetica Neue Light', sans-serif;
     text-align: left;
-    padding: 38px 65px 72px;
+    padding: var(--reader-content-padding-top, 38px) 65px
+      var(--reader-content-padding-bottom, 72px);
     min-height: 100vh;
     margin: 0 auto;
     box-sizing: border-box;
@@ -2136,7 +2186,7 @@ onBeforeRouteLeave(async (to, from) => {
   align-items: center;
   justify-content: center;
   width: 52px;
-  height: 48px;
+  height: var(--reader-dock-item-height, 52px);
   padding: 0;
   border: none;
   background: transparent;
@@ -2187,7 +2237,8 @@ onBeforeRouteLeave(async (to, from) => {
 
     .chapter {
       width: 100vw !important;
-      padding: 24px 16px 64px;
+      padding: var(--reader-content-padding-top, 38px) 16px
+        var(--reader-content-padding-bottom, 72px);
       box-sizing: border-box;
     }
   }

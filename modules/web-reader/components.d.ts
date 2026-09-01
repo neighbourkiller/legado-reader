@@ -65,6 +65,7 @@ declare module 'vue' {
     ReaderFloatingDock: typeof import('./src/components/ReaderFloatingDock.vue')['default']
     ReaderPageTurnGuide: typeof import('./src/components/ReaderPageTurnGuide.vue')['default']
     ReaderSelectionMenu: typeof import('./src/components/ReaderSelectionMenu.vue')['default']
+    ReaderSettingStepper: typeof import('./src/components/ReaderSettingStepper.vue')['default']
     ReadingHistoryPanel: typeof import('./src/components/settings/ReadingHistoryPanel.vue')['default']
     ReadSettings: typeof import('./src/components/ReadSettings.vue')['default']
     ReplaceRuleDialog: typeof import('./src/components/ReplaceRuleDialog.vue')['default']

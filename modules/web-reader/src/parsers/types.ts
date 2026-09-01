@@ -67,6 +67,9 @@ export interface ReadSettings {
   fontSize: number
   spacing: SpacingConfig
   readWidth: number
+  contentPaddingTop: number
+  contentPaddingBottom: number
+  dockHeight: number
   pageAnimation: ReaderPageAnimation
   jumpDuration: number
   progressDisplayMode?: 'percentage' | 'page'
@@ -88,6 +91,9 @@ export const DEFAULT_READ_SETTINGS: ReadSettings = {
     paragraph: 1.0,
   },
   readWidth: 800,
+  contentPaddingTop: 38,
+  contentPaddingBottom: 72,
+  dockHeight: 64,
   pageAnimation: 'scroll',
   jumpDuration: 1000,
   progressDisplayMode: 'percentage',

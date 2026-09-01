@@ -21,6 +21,7 @@ import type { ImageReference } from '@/source/types/BookSource'
 import { characterOffsetToParagraphIndex } from '@/backup/compat'
 import { platform } from '@/platform/capabilities'
 import { downloadAndCacheChapterImages, loadCachedChapterImages } from '@/platform/sourceImages'
+import { normalizeReaderLayoutSettings } from '@/reader/readerLayoutSettings'
 
 export interface ChapterPayload {
   index: number
@@ -62,6 +63,7 @@ function normalizeSettings(
 
   return {
     ...normalized,
+    ...normalizeReaderLayoutSettings(normalized),
     pageAnimation: READER_PAGE_ANIMATIONS.has(normalized.pageAnimation)
       ? normalized.pageAnimation
       : DEFAULT_READ_SETTINGS.pageAnimation,
@@ -124,7 +126,7 @@ async function resolveImportedBookmarkPositions(
 let cachedDesktopReadSettings: ReadSettings | null = null
 
 export function setCachedDesktopReadSettings(s: ReadSettings): void {
-  cachedDesktopReadSettings = s
+  cachedDesktopReadSettings = normalizeSettings(s)
 }
 
 export const useReadingStore = defineStore('reading', () => {
@@ -163,7 +165,7 @@ export const useReadingStore = defineStore('reading', () => {
       if (cachedDesktopReadSettings) {
         settings.value = cachedDesktopReadSettings
       } else {
-        settings.value = await loadSettings()
+        settings.value = normalizeSettings(await loadSettings())
         cachedDesktopReadSettings = settings.value
       }
       settingsHydrated = true

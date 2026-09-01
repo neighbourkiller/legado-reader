@@ -188,6 +188,39 @@
           </div>
         </li>
 
+        <ReaderSettingStepper
+          label="正文上边距"
+          :model-value="settings.contentPaddingTop"
+          :min="READER_CONTENT_PADDING_MIN"
+          :max="READER_CONTENT_PADDING_MAX"
+          :step="READER_CONTENT_PADDING_STEP"
+          unit="px"
+          :night="isNight"
+          @update:model-value="setContentPaddingTop"
+        />
+
+        <ReaderSettingStepper
+          label="正文下边距"
+          :model-value="settings.contentPaddingBottom"
+          :min="READER_CONTENT_PADDING_MIN"
+          :max="READER_CONTENT_PADDING_MAX"
+          :step="READER_CONTENT_PADDING_STEP"
+          unit="px"
+          :night="isNight"
+          @update:model-value="setContentPaddingBottom"
+        />
+
+        <ReaderSettingStepper
+          label="Dock 高度"
+          :model-value="settings.dockHeight"
+          :min="READER_DOCK_HEIGHT_MIN"
+          :max="READER_DOCK_HEIGHT_MAX"
+          :step="READER_DOCK_HEIGHT_STEP"
+          unit="px"
+          :night="isNight"
+          @update:model-value="setDockHeight"
+        />
+
         <!-- 翻页速度 -->
         <li class="paragraph-spacing">
           <i>翻页速度</i>
@@ -258,6 +291,15 @@ import { useReadingStore } from '@/stores/reading'
 import type { ReaderPageAnimation } from '@/parsers/types'
 import themeConfig from '@/config/themeConfig'
 import SystemFontDialog from './SystemFontDialog.vue'
+import ReaderSettingStepper from './ReaderSettingStepper.vue'
+import {
+  READER_CONTENT_PADDING_MAX,
+  READER_CONTENT_PADDING_MIN,
+  READER_CONTENT_PADDING_STEP,
+  READER_DOCK_HEIGHT_MAX,
+  READER_DOCK_HEIGHT_MIN,
+  READER_DOCK_HEIGHT_STEP,
+} from '@/reader/readerLayoutSettings'
 import '@/assets/fonts/popfont.css'
 import '@/assets/fonts/iconfont.css'
 
@@ -529,6 +571,21 @@ const lessReadWidth = () => {
     settings.value.readWidth -= 160
     saveDebounced()
   }
+}
+
+const setContentPaddingTop = (value: number) => {
+  settings.value.contentPaddingTop = value
+  saveDebounced()
+}
+
+const setContentPaddingBottom = (value: number) => {
+  settings.value.contentPaddingBottom = value
+  saveDebounced()
+}
+
+const setDockHeight = (value: number) => {
+  settings.value.dockHeight = value
+  saveDebounced()
 }
 
 // 翻页速度

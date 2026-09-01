@@ -8,6 +8,7 @@
     }"
     :aria-hidden="!visible"
     :inert="!visible"
+    :style="dockStyle"
     @click.stop
   >
     <div class="reader-floating-dock" role="toolbar" aria-label="阅读控制栏">
@@ -50,13 +51,14 @@
         </button>
       </slot>
 
-      <!-- 快速书签 -->
+      <!-- 书签管理入口 -->
       <button
         type="button"
         class="dock-item"
         :class="{ active: isBookmarked }"
-        :title="isBookmarked ? '已添加书签（点击查看书签管理）' : '为此处添加书签'"
-        @click="emit('toggle-bookmark')"
+        title="打开本书书签管理"
+        aria-label="打开本书书签管理"
+        @click="emit('open-bookmarks-drawer')"
       >
         <el-icon class="dock-icon"><BookmarkIcon /></el-icon>
         <span class="dock-label">书签</span>
@@ -151,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { DropdownInstance } from 'element-plus'
 import {
   HomeFilled,
@@ -169,6 +171,10 @@ import {
   Bottom,
 } from '@element-plus/icons-vue'
 import IconPalette from './icons/IconPalette.vue'
+import {
+  READER_DOCK_HEIGHT_MAX,
+  READER_DOCK_HEIGHT_MIN,
+} from '@/reader/readerLayoutSettings'
 
 interface Props {
   visible: boolean
@@ -180,6 +186,7 @@ interface Props {
   isOnlineBook?: boolean
   isFullscreen?: boolean
   isNight?: boolean
+  height?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -192,13 +199,32 @@ const props = withDefaults(defineProps<Props>(), {
   isOnlineBook: false,
   isFullscreen: false,
   isNight: false,
+  height: 64,
 })
+
+const resolveDockDimensions = (requestedHeight: number) => {
+  const normalizedHeight = Number.isFinite(requestedHeight) ? requestedHeight : 64
+  const height = Math.min(
+    READER_DOCK_HEIGHT_MAX,
+    Math.max(READER_DOCK_HEIGHT_MIN, normalizedHeight),
+  )
+  const scale = (height - READER_DOCK_HEIGHT_MIN)
+    / (READER_DOCK_HEIGHT_MAX - READER_DOCK_HEIGHT_MIN)
+  return {
+    '--reader-dock-height': `${height}px`,
+    '--reader-dock-item-height': `${height - 12}px`,
+    '--reader-dock-icon-size': `${18 + scale * 6}px`,
+    '--reader-dock-label-size': `${10 + scale * 2}px`,
+    '--reader-dock-divider-height': `${22 + scale * 12}px`,
+  }
+}
+
+const dockStyle = computed(() => resolveDockDimensions(props.height))
 
 const emit = defineEmits<{
   'to-shelf': []
   'toggle-catalog': []
   'toggle-settings': []
-  'toggle-bookmark': []
   'prev-chapter': []
   'next-chapter': []
   'refresh-chapter': []
@@ -311,7 +337,9 @@ const handleMoreCommand = (command: string) => {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 12px;
+  height: var(--reader-dock-height, 64px);
+  padding: 5px 12px;
+  box-sizing: border-box;
   overflow: hidden;
   color: var(--dock-text-color);
   background: var(--dock-glass-background);
@@ -341,7 +369,7 @@ const handleMoreCommand = (command: string) => {
   align-items: center;
   justify-content: center;
   width: 52px;
-  height: 48px;
+  height: var(--reader-dock-item-height, 52px);
   padding: 0;
   border: none;
   background: transparent;
@@ -394,7 +422,7 @@ const handleMoreCommand = (command: string) => {
 
 .dock-icon,
 :slotted(.dock-icon) {
-  font-size: 19px;
+  font-size: var(--reader-dock-icon-size, 19.5px);
   line-height: 1;
 }
 
@@ -410,7 +438,7 @@ const handleMoreCommand = (command: string) => {
 .dock-label,
 :slotted(.dock-label) {
   margin-top: 3px;
-  font-size: 11px;
+  font-size: var(--reader-dock-label-size, 10.5px);
   line-height: 1;
   font-weight: 500;
   opacity: 0.85;
@@ -418,7 +446,7 @@ const handleMoreCommand = (command: string) => {
 
 .dock-divider {
   width: 1px;
-  height: 24px;
+  height: var(--reader-dock-divider-height, 25px);
   margin: 0 4px;
   background: var(--dock-divider-color);
 }
@@ -446,14 +474,14 @@ const handleMoreCommand = (command: string) => {
 
   .reader-floating-dock {
     justify-content: space-around;
-    padding: 4px 6px;
+    padding: 5px 6px;
   }
 
   .dock-item {
     width: auto;
     flex: 1;
     min-width: 0;
-    height: 44px;
+    height: var(--reader-dock-item-height, 52px);
   }
 
   .dock-item-arrow {
