@@ -4,7 +4,7 @@
   "version": "1.26.9012",
   "build": {
     "beforeDevCommand": "pnpm dev:desktop-ui",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:11521",
     "beforeBuildCommand": "pnpm build:desktop-ui",
     "frontendDist": "../dist"
   },
