@@ -2,9 +2,10 @@
   <el-alert
     title="从现有备份恢复阅读数据"
     type="info"
-    :closable="false"
+    :closable="!isRestoring"
     show-icon
     class="startup-restore-guide"
+    @close="emit('dismissed')"
   >
     <template #default>
       <p>检测到书架为空。可导入 Legado Android、Web 或 Tauri 客户端导出的 ZIP 备份；首次引导固定使用合并恢复，不会覆盖备份未涉及的数据。</p>
@@ -23,7 +24,7 @@ import { parseBackupArchive, restoreParsedBackup } from '@/backup/archive'
 import { STARTUP_RESTORE_MODE } from '@/backup/startupRestore'
 import { chooseBackupFile } from '@/platform/backupFiles'
 
-const emit = defineEmits<{ restored: [] }>()
+const emit = defineEmits<{ restored: [], dismissed: [] }>()
 const isRestoring = ref(false)
 
 function errorMessage(error: unknown): string {

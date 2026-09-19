@@ -140,6 +140,7 @@
         <StartupRestoreGuide
           v-if="showStartupRestoreGuide"
           @restored="reloadAfterRestore"
+          @dismissed="dismissStartupRestoreGuide"
         />
         <el-button type="primary" :icon="Plus" @click="triggerUpload">
           立即导入书籍
@@ -242,10 +243,15 @@ import type { BookMeta } from '@/parsers/types'
 import BookCard from '@/components/BookCard.vue'
 import StartupRestoreGuide from '@/components/StartupRestoreGuide.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
-import { shouldShowStartupRestoreGuide } from '@/backup/startupRestore'
+import {
+  shouldShowStartupRestoreGuide,
+  STARTUP_RESTORE_GUIDE_KEY,
+  STARTUP_RESTORE_GUIDE_VERSION,
+} from '@/backup/startupRestore'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import { useAppSettingsStore } from '@/stores/appSettings'
 import { useTheme } from '@/composables/useTheme'
+import { getPreference, setPreference } from '@/storage/preferences'
 
 import { platform } from '@/platform/capabilities'
 
@@ -269,6 +275,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const coverFileInputRef = ref<HTMLInputElement | null>(null)
 
 const showEditDialog = ref(false)
+const startupRestoreGuideVersion = ref(getPreference(STARTUP_RESTORE_GUIDE_KEY))
 const editForm = ref({
   id: '',
   name: '',
@@ -310,10 +317,18 @@ const showStartupRestoreGuide = computed(() => shouldShowStartupRestoreGuide(
   platform.supportsLocalBackup,
   bookshelfStore.isLoading,
   bookshelfStore.books.length,
+  startupRestoreGuideVersion.value,
 ))
 
 const reloadAfterRestore = () => {
   window.location.reload()
+}
+
+const dismissStartupRestoreGuide = () => {
+  const version = String(STARTUP_RESTORE_GUIDE_VERSION)
+  startupRestoreGuideVersion.value = version
+  setPreference(STARTUP_RESTORE_GUIDE_KEY, version)
+    .catch(error => console.error('保存启动恢复引导状态失败:', error))
 }
 
 const handleBookshelfSortCommand = (command: string) => {
