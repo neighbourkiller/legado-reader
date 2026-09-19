@@ -164,7 +164,18 @@ html.reader-surface-active #app {
   background: var(--reader-surface-background, #f4eee1);
 }
 
+.app-container.reader-surface-active {
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .app-container.reader-surface-active .app-content {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: none;
 }
 

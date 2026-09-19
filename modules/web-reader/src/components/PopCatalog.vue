@@ -132,6 +132,8 @@ const gotoChapter = (chapter: BookChapter) => {
     }
 
     &.night {
+      color: #c8c8c8;
+
       .cata {
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
@@ -141,6 +143,8 @@ const gotoChapter = (chapter: BookChapter) => {
     }
 
     &.day {
+      color: #333;
+
       .cata {
         border-bottom: 1px solid rgba(0, 0, 0, 0.05);
       }

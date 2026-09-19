@@ -72,12 +72,16 @@
       <!-- 排版设置 Popover -->
       <template #settings-trigger>
         <el-popover
-          placement="top"
-          :width="popupWidth"
+          ref="settingsPopoverRef"
+          :placement="settingsPopoverPlacement"
+          :width="settingsPopoverWidth"
+          :offset="settingsPopoverOffset"
+          :reference-el="settingsPopoverReference"
           trigger="click"
+          strategy="fixed"
           :show-arrow="false"
           v-model:visible="readSettingsVisible"
-          popper-class="pop-setting reader-dock-popover"
+          :popper-class="settingsPopoverClass"
           :popper-options="readerPopoverOptions"
         >
           <ReadSettings class="popup" />
@@ -94,6 +98,13 @@
         </el-popover>
       </template>
     </ReaderFloatingDock>
+
+    <span
+      ref="settingsPanelAnchorRef"
+      class="settings-panel-anchor"
+      :style="settingsPanelAnchorStyle"
+      aria-hidden="true"
+    ></span>
 
     <!-- 正文阅读区域 -->
     <div
@@ -357,7 +368,14 @@ const loadingRef = ref<HTMLElement>()
 const contentRef = ref<HTMLElement>()
 const pageViewportRef = ref<HTMLElement>()
 const pageContentRef = ref<HTMLElement>()
+const scrollHostRef = ref<HTMLElement | null>(null)
+const settingsPanelAnchorRef = ref<HTMLElement>()
+const settingsPopoverRef = ref()
 let readingSessionStartedAt = 0
+
+const readerScrollContainer = (): HTMLElement | Window => scrollHostRef.value ?? window
+const readerScrollMetrics = (): HTMLElement => scrollHostRef.value ?? document.documentElement
+const resetReaderScroll = () => readerScrollContainer().scrollTo(0, 0)
 
 // 胶囊栏与沉浸隐匿控制
 const dockVisible = ref(false)
@@ -477,6 +495,47 @@ const popupWidth = computed(() => {
     return window.innerWidth - 24
   }
 })
+
+const SETTINGS_SIDE_PANEL_WIDTH = 320
+const SETTINGS_SIDE_PANEL_GAP = 10
+const SETTINGS_SIDE_PANEL_VIEWPORT_PADDING = 8
+const viewportWidth = ref(window.innerWidth)
+const settingsPanelAnchorLeft = ref(0)
+const canDockSettingsPanel = computed(
+  () => !miniInterface.value &&
+    settingsPanelAnchorLeft.value >=
+      SETTINGS_SIDE_PANEL_WIDTH + SETTINGS_SIDE_PANEL_GAP + SETTINGS_SIDE_PANEL_VIEWPORT_PADDING,
+)
+const settingsPopoverPlacement = computed(() => canDockSettingsPanel.value ? 'left' : 'top')
+const settingsPopoverWidth = computed(() =>
+  canDockSettingsPanel.value ? SETTINGS_SIDE_PANEL_WIDTH : popupWidth.value,
+)
+const settingsPopoverOffset = computed(() =>
+  canDockSettingsPanel.value ? SETTINGS_SIDE_PANEL_GAP : 12,
+)
+const settingsPopoverReference = computed(() =>
+  canDockSettingsPanel.value ? settingsPanelAnchorRef.value : undefined,
+)
+const settingsPopoverClass = computed(() =>
+  canDockSettingsPanel.value
+    ? 'pop-setting reader-dock-popover reader-side-settings-popover'
+    : 'pop-setting reader-dock-popover',
+)
+const settingsPanelAnchorStyle = computed(() => ({
+  left: `${settingsPanelAnchorLeft.value}px`,
+  top: '50%',
+}))
+
+const updateSettingsPanelPosition = async () => {
+  viewportWidth.value = window.innerWidth
+  await nextTick()
+  const chapterRect = contentRef.value?.getBoundingClientRect()
+  const fallbackWidth = Math.min(settings.value.readWidth || 800, viewportWidth.value)
+  settingsPanelAnchorLeft.value = chapterRect?.left
+    ?? Math.max(0, (viewportWidth.value - fallbackWidth) / 2)
+  await nextTick()
+  settingsPopoverRef.value?.popperRef?.popperInstanceRef?.update?.()
+}
 
 const bodyTheme = computed(() => ({
   background: bodyColor.value,
@@ -883,9 +942,7 @@ const findPageEndReadingPosition = (): ReadingPosition | null => {
   if (!viewport) return findReadingPosition()
 
   const viewportRect = viewport.getBoundingClientRect()
-  const scrollHostRect = contentRef.value
-    ?.closest<HTMLElement>('.app-content')
-    ?.getBoundingClientRect()
+  const scrollHostRect = scrollHostRef.value?.getBoundingClientRect()
   const clipRect = isPaginationMode.value ? viewportRect : scrollHostRect
   const bounds: ReaderViewportBounds = {
     top: Math.max(0, viewportRect.top, clipRect?.top ?? 0),
@@ -1399,7 +1456,7 @@ const getContent = async (
   chapterLoading.value = true
 
   if (reloadChapter && !forceRefresh) {
-    window.scrollTo(0, 0)
+    resetReaderScroll()
     store.revokeChapterAssets()
     chapterData.value = []
     rawChapterData.value = []
@@ -1512,7 +1569,12 @@ const toTop = async () => {
     updateReadingProgress()
     return
   }
-  if (topRef.value) jump(topRef.value, { duration: settings.value.jumpDuration })
+  if (topRef.value) {
+    jump(topRef.value, {
+      duration: settings.value.jumpDuration,
+      container: readerScrollContainer(),
+    })
+  }
 }
 
 const toBottom = async () => {
@@ -1523,7 +1585,12 @@ const toBottom = async () => {
     updateReadingProgress()
     return
   }
-  if (bottomRef.value) jump(bottomRef.value, { duration: settings.value.jumpDuration })
+  if (bottomRef.value) {
+    jump(bottomRef.value, {
+      duration: settings.value.jumpDuration,
+      container: readerScrollContainer(),
+    })
+  }
 }
 
 const toShelf = () => {
@@ -1595,13 +1662,15 @@ const handleKeyPress = async (event: KeyboardEvent) => {
         if (!await turnPaginationPage('backward')) await toPreChapter('end')
         break
       }
-      if (document.documentElement.scrollTop === 0) {
+      const upwardScrollHost = readerScrollMetrics()
+      if (upwardScrollHost.scrollTop === 0) {
         ElMessage.warning('已到达页面顶部')
       } else {
         canJump = false
-        jump(0 - document.documentElement.clientHeight + 100, {
+        jump(0 - upwardScrollHost.clientHeight + 100, {
           duration: settings.value.jumpDuration,
           callback: () => (canJump = true),
+          container: readerScrollContainer(),
         })
       }
       break
@@ -1612,17 +1681,18 @@ const handleKeyPress = async (event: KeyboardEvent) => {
         if (!await turnPaginationPage('forward')) await toNextChapter()
         break
       }
+      const downwardScrollHost = readerScrollMetrics()
       if (
-        document.documentElement.clientHeight +
-          document.documentElement.scrollTop >=
-        document.documentElement.scrollHeight - 5
+        downwardScrollHost.clientHeight + downwardScrollHost.scrollTop >=
+        downwardScrollHost.scrollHeight - 5
       ) {
         ElMessage.warning('已到达页面底部')
       } else {
         canJump = false
-        jump(document.documentElement.clientHeight - 100, {
+        jump(downwardScrollHost.clientHeight - 100, {
           duration: settings.value.jumpDuration,
           callback: () => (canJump = true),
+          container: readerScrollContainer(),
         })
       }
       break
@@ -1661,6 +1731,7 @@ const onScroll = () => {
 // 窗口尺寸变化
 const onResize = () => {
   if (selectionSnapshot.value) clearSelectionMenu()
+  viewportWidth.value = window.innerWidth
   store.setMiniInterface(window.innerWidth < 776)
   if (!store.miniInterface) {
     if (settings.value.readWidth < 640) settings.value.readWidth = 640
@@ -1669,10 +1740,12 @@ const onResize = () => {
     }
   }
   schedulePaginationMeasurement()
+  updateSettingsPanelPosition()
 }
 
 watch(isPaginationMode, enabled => {
   clearPageOverlay()
+  resetReaderScroll()
   if (enabled) {
     if (chapterData.value.length > 1) {
       const currentIndex = currentChapterIndex.value
@@ -1701,6 +1774,16 @@ watch(
   schedulePaginationMeasurement,
 )
 
+watch(
+  [
+    () => settings.value.readWidth,
+    miniInterface,
+    isFullscreen,
+    readSettingsVisible,
+  ],
+  updateSettingsPanelPosition,
+)
+
 // 页面标题更新
 watchEffect(() => {
   const title = chapters.value[currentChapterIndex.value]?.title
@@ -1726,6 +1809,9 @@ onMounted(async () => {
     router.push('/bookshelf')
     return
   }
+
+  scrollHostRef.value = contentRef.value?.closest<HTMLElement>('.app-content') ?? null
+  await updateSettingsPanelPosition()
 
   if (shouldShowReaderPageTurnGuide(getPreference(READER_PAGE_TURN_GUIDE_KEY))) {
     pageTurnGuideVisible.value = true
@@ -1802,7 +1888,10 @@ onMounted(async () => {
         if (isPaginationMode.value) {
           await revealPaginationTarget(target)
         } else {
-          jump(target, { duration: 0 })
+          jump(target, {
+            duration: 0,
+            container: readerScrollContainer(),
+          })
         }
       }
     }
@@ -1810,7 +1899,7 @@ onMounted(async () => {
 
     window.addEventListener('keyup', handleKeyPress)
     window.addEventListener('keydown', ignoreKeyPress)
-    window.addEventListener('scroll', onScroll, { passive: true })
+    scrollHostRef.value?.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('mousemove', handleWindowMouseMove)
     document.addEventListener('pointerup', onSelectionPointerUp)
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -1819,6 +1908,7 @@ onMounted(async () => {
     timeInterval = window.setInterval(updateCurrentTime, 10000)
 
     scrollObserver = new IntersectionObserver(onReachBottom, {
+      root: scrollHostRef.value,
       rootMargin: '-100% 0% 20% 0%',
     })
     if (infiniteLoading.value && loadingRef.value) {
@@ -1839,7 +1929,7 @@ onUnmounted(() => {
   window.removeEventListener('keyup', handleKeyPress)
   window.removeEventListener('keydown', ignoreKeyPress)
   window.removeEventListener('resize', onResize)
-  window.removeEventListener('scroll', onScroll)
+  scrollHostRef.value?.removeEventListener('scroll', onScroll)
   window.removeEventListener('mousemove', handleWindowMouseMove)
   document.removeEventListener('pointerup', onSelectionPointerUp)
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -1851,6 +1941,7 @@ onUnmounted(() => {
   readSettingsVisible.value = false
   scrollObserver?.disconnect()
   scrollObserver = null
+  scrollHostRef.value = null
   store.flushProgress().catch(console.error)
   store.cleanup()
 })
@@ -1905,8 +1996,8 @@ onBeforeRouteLeave(async (to, from) => {
 </script>
 
 <style lang="scss" scoped>
-// App.vue 为桌面端路由根节点设置了 height: 100%。此选择器必须比该规则
-// 更具体，阅读正文超出首屏时才能按内容撑开，不露出全局主题背景。
+// 桌面端为所有路由根节点设置了 height: 100%。滚动阅读时必须允许正文
+// 按内容撑开，再由 .app-content 作为唯一滚动宿主。
 :global(.desktop-app .app-content > .chapter-wrapper.chapter-wrapper) {
   height: auto !important;
 }
@@ -1921,6 +2012,13 @@ onBeforeRouteLeave(async (to, from) => {
   min-height: 100vh;
   position: relative;
 
+  .settings-panel-anchor {
+    position: fixed;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+  }
+
   &.pagination-mode {
     height: 100vh;
     min-height: 0;
@@ -1933,6 +2031,7 @@ onBeforeRouteLeave(async (to, from) => {
 
       .page-viewport {
         height: 100%;
+        min-height: 0;
         overflow: hidden;
         position: relative;
       }
@@ -1948,10 +2047,11 @@ onBeforeRouteLeave(async (to, from) => {
 
       .page-transition-overlay {
         position: absolute;
-        top: 0;
+        top: var(--reader-content-padding-top, 38px);
+        bottom: var(--reader-content-padding-bottom, 72px);
         left: 0;
         width: 100%;
-        height: 100%;
+        height: auto;
         overflow: hidden;
         pointer-events: none;
         background-color: var(--reader-chapter-bg, inherit);
@@ -2058,12 +2158,43 @@ onBeforeRouteLeave(async (to, from) => {
     font-family: 'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
       'Helvetica Neue Light', sans-serif;
     text-align: left;
-    padding: var(--reader-content-padding-top, 38px) 65px
-      var(--reader-content-padding-bottom, 72px);
+    padding: 0 65px;
     min-height: 100vh;
     margin: 0 auto;
     box-sizing: border-box;
     transition: background-color 0.25s ease, color 0.25s ease;
+
+    // 连续滚动时保持稳定的视口安全区；首尾 padding 负责可滚动空间，
+    // 固定遮罩负责让每次边距微调都能立即反映在当前页面。
+    &:not(.pagination-chapter)::before,
+    &:not(.pagination-chapter)::after {
+      content: '';
+      position: fixed;
+      left: 50%;
+      width: inherit;
+      max-width: 100vw;
+      transform: translateX(-50%);
+      background: inherit;
+      pointer-events: none;
+      z-index: 70;
+    }
+
+    &:not(.pagination-chapter)::before {
+      top: var(--reader-toolbar-top, 0px);
+      height: var(--reader-content-padding-top, 38px);
+    }
+
+    &:not(.pagination-chapter)::after {
+      bottom: 0;
+      height: var(--reader-content-padding-bottom, 72px);
+    }
+
+    .page-viewport {
+      min-height: 100vh;
+      box-sizing: border-box;
+      padding-block: var(--reader-content-padding-top, 38px)
+        var(--reader-content-padding-bottom, 72px);
+    }
 
     &.page-transition--chapter-fade {
       animation: reader-chapter-fade 200ms ease-out both;
@@ -2071,6 +2202,7 @@ onBeforeRouteLeave(async (to, from) => {
 
     .content,
     .page-transition-overlay-content {
+      box-sizing: border-box;
       font-size: 18px;
       line-height: var(--reader-line-height, 1.8);
 
@@ -2237,8 +2369,7 @@ onBeforeRouteLeave(async (to, from) => {
 
     .chapter {
       width: 100vw !important;
-      padding: var(--reader-content-padding-top, 38px) 16px
-        var(--reader-content-padding-bottom, 72px);
+      padding: 0 16px;
       box-sizing: border-box;
     }
   }

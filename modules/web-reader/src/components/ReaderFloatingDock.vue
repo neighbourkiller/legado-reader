@@ -171,10 +171,7 @@ import {
   Bottom,
 } from '@element-plus/icons-vue'
 import IconPalette from './icons/IconPalette.vue'
-import {
-  READER_DOCK_HEIGHT_MAX,
-  READER_DOCK_HEIGHT_MIN,
-} from '@/reader/readerLayoutSettings'
+import { resolveReaderDockPositionOffset } from '@/reader/readerLayoutSettings'
 
 interface Props {
   visible: boolean
@@ -202,24 +199,13 @@ const props = withDefaults(defineProps<Props>(), {
   height: 64,
 })
 
-const resolveDockDimensions = (requestedHeight: number) => {
-  const normalizedHeight = Number.isFinite(requestedHeight) ? requestedHeight : 64
-  const height = Math.min(
-    READER_DOCK_HEIGHT_MAX,
-    Math.max(READER_DOCK_HEIGHT_MIN, normalizedHeight),
-  )
-  const scale = (height - READER_DOCK_HEIGHT_MIN)
-    / (READER_DOCK_HEIGHT_MAX - READER_DOCK_HEIGHT_MIN)
+const resolveDockPosition = (requestedHeight: number) => {
   return {
-    '--reader-dock-height': `${height}px`,
-    '--reader-dock-item-height': `${height - 12}px`,
-    '--reader-dock-icon-size': `${18 + scale * 6}px`,
-    '--reader-dock-label-size': `${10 + scale * 2}px`,
-    '--reader-dock-divider-height': `${22 + scale * 12}px`,
+    '--reader-dock-position-offset': `${resolveReaderDockPositionOffset(requestedHeight)}px`,
   }
 }
 
-const dockStyle = computed(() => resolveDockDimensions(props.height))
+const dockStyle = computed(() => resolveDockPosition(props.height))
 
 const emit = defineEmits<{
   'to-shelf': []
@@ -287,7 +273,7 @@ const handleMoreCommand = (command: string) => {
   position: fixed;
   bottom: 28px;
   left: 50%;
-  transform: translateX(-50%) translateY(0) scale(1);
+  transform: translateX(-50%) translateY(var(--reader-dock-position-offset, 0px)) scale(1);
   z-index: 1000;
   opacity: 1;
   transition: transform 0.24s cubic-bezier(0.2, 0.9, 0.3, 1),
@@ -298,7 +284,7 @@ const handleMoreCommand = (command: string) => {
 
 .reader-floating-dock-container.hidden {
   opacity: 0;
-  transform: translateX(-50%) translateY(18px) scale(0.96);
+  transform: translateX(-50%) translateY(calc(var(--reader-dock-position-offset, 0px) + 18px)) scale(0.96);
   pointer-events: none;
 }
 
@@ -337,7 +323,7 @@ const handleMoreCommand = (command: string) => {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: var(--reader-dock-height, 64px);
+  height: 64px;
   padding: 5px 12px;
   box-sizing: border-box;
   overflow: hidden;
@@ -369,7 +355,7 @@ const handleMoreCommand = (command: string) => {
   align-items: center;
   justify-content: center;
   width: 52px;
-  height: var(--reader-dock-item-height, 52px);
+  height: 52px;
   padding: 0;
   border: none;
   background: transparent;
@@ -422,7 +408,7 @@ const handleMoreCommand = (command: string) => {
 
 .dock-icon,
 :slotted(.dock-icon) {
-  font-size: var(--reader-dock-icon-size, 19.5px);
+  font-size: 19.5px;
   line-height: 1;
 }
 
@@ -438,7 +424,7 @@ const handleMoreCommand = (command: string) => {
 .dock-label,
 :slotted(.dock-label) {
   margin-top: 3px;
-  font-size: var(--reader-dock-label-size, 10.5px);
+  font-size: 10.5px;
   line-height: 1;
   font-weight: 500;
   opacity: 0.85;
@@ -446,7 +432,7 @@ const handleMoreCommand = (command: string) => {
 
 .dock-divider {
   width: 1px;
-  height: var(--reader-dock-divider-height, 25px);
+  height: 25px;
   margin: 0 4px;
   background: var(--dock-divider-color);
 }
@@ -481,7 +467,7 @@ const handleMoreCommand = (command: string) => {
     width: auto;
     flex: 1;
     min-width: 0;
-    height: var(--reader-dock-item-height, 52px);
+    height: 52px;
   }
 
   .dock-item-arrow {

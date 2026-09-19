@@ -24,6 +24,16 @@ function normalizeInteger(
   return Math.min(max, Math.max(min, Math.round(value)))
 }
 
+export function resolveReaderDockPositionOffset(value: unknown): number {
+  const height = normalizeInteger(
+    value,
+    DEFAULT_READ_SETTINGS.dockHeight,
+    READER_DOCK_HEIGHT_MIN,
+    READER_DOCK_HEIGHT_MAX,
+  )
+  return DEFAULT_READ_SETTINGS.dockHeight - height
+}
+
 export function normalizeReaderLayoutSettings(
   settings: Partial<ReadSettings>,
 ): ReaderLayoutSettings {

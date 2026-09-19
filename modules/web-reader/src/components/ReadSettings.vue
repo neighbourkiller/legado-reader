@@ -630,7 +630,39 @@ const setPageAnimation = (animation: ReaderPageAnimation) => {
     max-height: calc(75vh - 50px);
     overflow-y: auto;
     overflow-x: hidden;
+    overscroll-behavior: contain;
     padding-right: 16px;
+    scrollbar-color: var(--reader-settings-scrollbar-thumb)
+      var(--reader-settings-scrollbar-track);
+    scrollbar-width: thin;
+
+    &::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    &::-webkit-scrollbar-track,
+    &::-webkit-scrollbar-corner {
+      background: var(--reader-settings-scrollbar-track);
+    }
+
+    &::-webkit-scrollbar-thumb {
+      min-height: 36px;
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: var(--reader-settings-scrollbar-thumb);
+      background-clip: padding-box;
+    }
+
+    &::-webkit-scrollbar-thumb:hover {
+      background: var(--reader-settings-scrollbar-thumb-hover);
+      background-clip: padding-box;
+    }
+
+    &::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
 
     ul {
       list-style: none outside none;
@@ -850,6 +882,10 @@ const setPageAnimation = (animation: ReaderPageAnimation) => {
 }
 
 .night {
+  --reader-settings-scrollbar-track: transparent;
+  --reader-settings-scrollbar-thumb: rgba(200, 200, 200, 0.32);
+  --reader-settings-scrollbar-thumb-hover: rgba(200, 200, 200, 0.5);
+
   color: #c8c8c8;
 
   :deep(.theme-item) {
@@ -882,6 +918,10 @@ const setPageAnimation = (animation: ReaderPageAnimation) => {
 }
 
 .day {
+  --reader-settings-scrollbar-track: transparent;
+  --reader-settings-scrollbar-thumb: rgba(51, 51, 51, 0.26);
+  --reader-settings-scrollbar-thumb-hover: rgba(51, 51, 51, 0.42);
+
   color: #333;
 
   :deep(.theme-item) {
@@ -918,6 +958,45 @@ const setPageAnimation = (animation: ReaderPageAnimation) => {
   .settings-wrapper i {
     min-width: 48px !important;
     font-size: 12px !important;
+  }
+}
+</style>
+
+<style lang="scss">
+.reader-side-settings-popover {
+  .settings-wrapper {
+    margin: 0;
+    padding: 24px 0 24px 20px;
+  }
+
+  .setting-list {
+    padding-right: 12px;
+  }
+
+  .theme-list {
+    display: grid !important;
+    grid-template-columns: 58px repeat(4, 32px);
+    column-gap: 10px;
+    row-gap: 10px;
+    align-items: center;
+
+    > i {
+      grid-row: 1 / span 2;
+      margin-right: 0 !important;
+    }
+
+    .theme-item {
+      margin-right: 0 !important;
+    }
+  }
+
+  .font-size .resize,
+  .read-width .resize,
+  .letter-spacing .resize,
+  .line-spacing .resize,
+  .paragraph-spacing .resize,
+  .setting-stepper__control {
+    width: calc(100% - 74px) !important;
   }
 }
 </style>

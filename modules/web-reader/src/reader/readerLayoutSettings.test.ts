@@ -5,6 +5,7 @@ import {
   READER_DOCK_HEIGHT_MAX,
   READER_DOCK_HEIGHT_MIN,
   normalizeReaderLayoutSettings,
+  resolveReaderDockPositionOffset,
 } from './readerLayoutSettings'
 
 describe('阅读页布局设置归一化', () => {
@@ -29,5 +30,11 @@ describe('阅读页布局设置归一化', () => {
 
     expect(normalizeReaderLayoutSettings({ dockHeight: 999 }).dockHeight)
       .toBe(READER_DOCK_HEIGHT_MAX)
+  })
+
+  it('将 Dock 高度转换为位移，而不是缩放控制栏', () => {
+    expect(resolveReaderDockPositionOffset(DEFAULT_READ_SETTINGS.dockHeight)).toBe(0)
+    expect(resolveReaderDockPositionOffset(READER_DOCK_HEIGHT_MIN)).toBeGreaterThan(0)
+    expect(resolveReaderDockPositionOffset(READER_DOCK_HEIGHT_MAX)).toBeLessThan(0)
   })
 })
