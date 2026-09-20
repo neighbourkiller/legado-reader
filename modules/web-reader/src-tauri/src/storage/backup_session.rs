@@ -89,12 +89,8 @@ pub async fn storage_backup_export_begin(
     state: State<'_, Arc<StorageDb>>,
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<String, StorageErrorPayload> {
-    use tauri::Manager;
-
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| StorageErrorPayload::new("IO", "export_begin", e.to_string()))?;
+    let app_data_dir = crate::app_paths::prepare_app_data_dir(&app)
+        .map_err(|e| StorageErrorPayload::new("IO", "export_begin", e))?;
 
     let token = format!("exp_{}_{}", std::process::id(), fastrand_suffix());
     let temp_path = app_data_dir.join(format!("{token}.tmp.db"));
@@ -495,12 +491,8 @@ pub async fn storage_staging_create(
     app: tauri::AppHandle,
     sessions: State<'_, Arc<BackupSessionManager>>,
 ) -> Result<String, StorageErrorPayload> {
-    use tauri::Manager;
-
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| StorageErrorPayload::new("IO", "staging_create", e.to_string()))?;
+    let app_data_dir = crate::app_paths::prepare_app_data_dir(&app)
+        .map_err(|e| StorageErrorPayload::new("IO", "staging_create", e))?;
 
     let token = format!("stg_{}_{}", std::process::id(), fastrand_suffix());
     let temp_path = app_data_dir.join(format!("{token}.tmp.db"));

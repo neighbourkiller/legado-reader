@@ -9,7 +9,7 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const HISTORY_LIMIT: usize = 20;
 const MAX_RUN_BYTES: usize = 2 * 1024 * 1024;
@@ -238,10 +238,7 @@ enum SourceAuditRunStatus {
 }
 
 fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("无法确定应用数据目录: {error}"))?;
+    let app_data_dir = crate::app_paths::prepare_app_data_dir(app)?;
     Ok(app_data_dir.join("source-audit").join("history-v1.json"))
 }
 

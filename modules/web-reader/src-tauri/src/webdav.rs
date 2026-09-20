@@ -175,10 +175,7 @@ fn validate_backup_name(name: &str) -> Result<(), String> {
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_config_dir()
-        .map(|directory| directory.join(CONFIG_FILE))
-        .map_err(|error| format!("无法定位应用配置目录：{error}"))
+    crate::app_paths::prepare_app_data_dir(app).map(|directory| directory.join(CONFIG_FILE))
 }
 
 fn load_config(app: &AppHandle) -> Result<WebDavConfig, String> {

@@ -1,4 +1,5 @@
 mod app_files;
+mod app_paths;
 mod cookie_store;
 mod source_audit;
 mod source_http;
@@ -44,27 +45,16 @@ pub fn run() {
         .setup(move |app| {
             app.manage(audit_cli_state.clone());
             start_source_audit_cli_watchdog(app.handle().clone(), audit_cli_state.clone());
-            let source_cache_path = app.path().app_data_dir().ok().map(|directory| {
-                let _ = std::fs::create_dir_all(&directory);
-                directory.join("source_script_cache.json")
-            });
+            let app_data_dir = app_paths::prepare_app_data_dir(app.handle());
+            let source_cache_path = app_data_dir
+                .as_ref()
+                .ok()
+                .map(|directory| directory.join("source_script_cache.json"));
             app.manage(AppState::new(source_cache_path));
 
             if audit_cli_state.requires_internal_storage() {
                 let storage_result = (|| -> Result<std::sync::Arc<storage::StorageDb>, String> {
-                    let app_data_dir = app
-                        .path()
-                        .app_data_dir()
-                        .map_err(|e| format!("无法确定应用数据目录: {e}"))?;
-                    std::fs::create_dir_all(&app_data_dir)
-                        .map_err(|e| format!("无法创建应用数据目录: {e}"))?;
-
-                    let db_filename = if cfg!(debug_assertions) {
-                        "legado_reader.dev.db"
-                    } else {
-                        "legado_reader.db"
-                    };
-                    let db_path = app_data_dir.join(db_filename);
+                    let db_path = app_data_dir?.join(app_paths::database_filename());
                     let storage_db = storage::StorageDb::open(&db_path)
                         .map_err(|e| format!("数据库初始化失败: {e}"))?;
                     Ok(std::sync::Arc::new(storage_db))
