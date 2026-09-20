@@ -289,29 +289,29 @@ const handleMoreCommand = (command: string) => {
 }
 
 .reader-floating-dock-container.day {
-  --dock-glass-background: linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(245, 239, 227, 0.5));
-  --dock-glass-background-solid: rgba(250, 247, 240, 0.96);
-  --dock-glass-border: rgba(255, 255, 255, 0.78);
-  --dock-glass-highlight: rgba(255, 255, 255, 0.95);
-  --dock-glass-shadow: 0 18px 48px rgba(74, 63, 45, 0.18),
-                       0 4px 14px rgba(74, 63, 45, 0.1),
-                       inset 0 1px 0 rgba(255, 255, 255, 0.88),
-                       inset 0 -1px 0 rgba(83, 68, 42, 0.08);
+  --dock-glass-background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 244, 235, 0.94));
+  --dock-glass-background-solid: rgba(250, 247, 240, 0.98);
+  --dock-glass-border: rgba(255, 255, 255, 0.92);
+  --dock-glass-highlight: #ffffff;
+  --dock-glass-shadow: 0 16px 42px rgba(74, 63, 45, 0.16),
+                       0 4px 14px rgba(74, 63, 45, 0.08),
+                       inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                       inset 0 -1px 0 rgba(83, 68, 42, 0.06);
   --dock-text-color: #2c2925;
   --dock-focus-ring: rgba(91, 83, 70, 0.48);
-  --dock-hover-background: rgba(75, 67, 55, 0.1);
-  --dock-divider-color: rgba(76, 67, 54, 0.16);
+  --dock-hover-background: rgba(75, 67, 55, 0.09);
+  --dock-divider-color: rgba(76, 67, 54, 0.14);
 }
 
 .reader-floating-dock-container.night {
-  --dock-glass-background: linear-gradient(135deg, rgba(50, 50, 55, 0.72), rgba(20, 20, 24, 0.58));
-  --dock-glass-background-solid: rgba(29, 29, 33, 0.96);
-  --dock-glass-border: rgba(255, 255, 255, 0.16);
-  --dock-glass-highlight: rgba(255, 255, 255, 0.42);
-  --dock-glass-shadow: 0 20px 54px rgba(0, 0, 0, 0.48),
-                       0 5px 16px rgba(0, 0, 0, 0.3),
-                       inset 0 1px 0 rgba(255, 255, 255, 0.14),
-                       inset 0 -1px 0 rgba(0, 0, 0, 0.28);
+  --dock-glass-background: linear-gradient(135deg, rgba(38, 38, 44, 0.96), rgba(22, 22, 26, 0.94));
+  --dock-glass-background-solid: rgba(26, 26, 30, 0.98);
+  --dock-glass-border: rgba(255, 255, 255, 0.18);
+  --dock-glass-highlight: rgba(255, 255, 255, 0.35);
+  --dock-glass-shadow: 0 20px 54px rgba(0, 0, 0, 0.52),
+                       0 5px 16px rgba(0, 0, 0, 0.35),
+                       inset 0 1px 0 rgba(255, 255, 255, 0.18),
+                       inset 0 -1px 0 rgba(0, 0, 0, 0.32);
   --dock-text-color: #ecebe8;
   --dock-focus-ring: rgba(236, 235, 232, 0.52);
   --dock-hover-background: rgba(255, 255, 255, 0.11);
@@ -348,6 +348,26 @@ const handleMoreCommand = (command: string) => {
   background: linear-gradient(90deg, transparent, var(--dock-glass-highlight), transparent);
 }
 
+.reader-floating-dock :deep(.el-dropdown) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dock-text-color);
+  outline: none;
+}
+
+.reader-floating-dock :deep(.el-dropdown:hover),
+.reader-floating-dock :deep(.el-dropdown:focus),
+.reader-floating-dock :deep(.el-dropdown:focus-visible),
+.reader-floating-dock :deep(.el-dropdown:active) {
+  color: var(--dock-text-color);
+  outline: none;
+}
+
+.reader-floating-dock :deep(.el-tooltip__trigger) {
+  outline: none;
+}
+
 .dock-item,
 :slotted(.dock-item) {
   display: flex;
@@ -359,7 +379,7 @@ const handleMoreCommand = (command: string) => {
   padding: 0;
   border: none;
   background: transparent;
-  color: inherit;
+  color: var(--dock-text-color);
   border-radius: 12px;
   cursor: pointer;
   outline: none;
@@ -410,6 +430,7 @@ const handleMoreCommand = (command: string) => {
 :slotted(.dock-icon) {
   font-size: 19.5px;
   line-height: 1;
+  color: inherit;
 }
 
 .dock-text-icon,
@@ -419,6 +440,7 @@ const handleMoreCommand = (command: string) => {
   font-family: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
   line-height: 1.1;
   letter-spacing: -0.5px;
+  color: inherit;
 }
 
 .dock-label,
@@ -428,6 +450,7 @@ const handleMoreCommand = (command: string) => {
   line-height: 1;
   font-weight: 500;
   opacity: 0.85;
+  color: inherit;
 }
 
 .dock-divider {
@@ -461,6 +484,16 @@ const handleMoreCommand = (command: string) => {
   .reader-floating-dock {
     justify-content: space-around;
     padding: 5px 6px;
+  }
+
+  .reader-floating-dock :deep(.el-dropdown) {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+  }
+
+  .reader-floating-dock :deep(.el-dropdown .dock-item) {
+    width: 100%;
   }
 
   .dock-item {

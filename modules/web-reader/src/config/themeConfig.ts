@@ -61,9 +61,9 @@ const settings: SettingsConfig = {
       popup: '#ede7da url(' + popup_5 + ') repeat',
     },
     {
-      body: '#ede7da url(' + body_6 + ') repeat',
-      content: '#ede7da url(' + content_6 + ') repeat',
-      popup: '#ede7da url(' + popup_6 + ') repeat',
+      body: '#161619 url(' + body_6 + ') repeat',
+      content: '#161619 url(' + content_6 + ') repeat',
+      popup: '#222226 url(' + popup_6 + ') repeat',
     },
     {
       body: '#18181b',

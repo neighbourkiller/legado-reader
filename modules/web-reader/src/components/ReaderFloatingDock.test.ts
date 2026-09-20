@@ -27,6 +27,8 @@ describe('阅读器沉浸式浮岛控制栏测试', () => {
     expect(content).toContain('prev-chapter')
     expect(content).toContain('next-chapter')
     expect(content).toContain('el-dropdown')
+    expect(content).toContain(':deep(.el-dropdown)')
+    expect(content).toContain('color: var(--dock-text-color)')
   })
 
   it('IconPalette.vue 调色板图标组件存在且在控制栏中正确应用', () => {

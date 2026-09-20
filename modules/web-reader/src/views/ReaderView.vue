@@ -162,6 +162,13 @@
           <div v-if="pageOverlay.showShadow" class="page-transition-shadow-gradient"></div>
         </div>
       </div>
+
+      <!-- 底部柔和羽化雾层 (随 Dock 栏同步平滑显隐，Dock 隐藏时完全消失) -->
+      <div
+        class="reader-bottom-fog"
+        :class="{ 'is-active': dockVisible }"
+        aria-hidden="true"
+      ></div>
     </div>
 
     <NovelDownloadDialog
@@ -410,11 +417,9 @@ const clearDockHideTimer = () => {
   }
 }
 
+// 仅在 Dock 自带的内部扩展菜单（如“更多”）处于展开交互时，锁定 Dock 栏不隐藏；
+// 目录与设置菜单呼出后，用户去操作菜单且鼠标移出 Dock 区域时，Dock 栏与雾化应顺畅隐藏，避免遮挡底部正文
 const dockInteractionLocked = computed(() =>
-  popCataVisible.value ||
-  readSettingsVisible.value ||
-  bookmarkDrawerVisible.value ||
-  downloadDialogVisible.value ||
   moreMenuVisible.value
 )
 
@@ -436,7 +441,11 @@ const scheduleDockHide = () => {
 }
 
 const handleWindowMouseMove = (event: MouseEvent) => {
-  pointerNearDock.value = isPointerNearReaderDock({
+  // 当鼠标位于弹出的菜单面板（如目录、设置、下拉项）内部时，不计入 Dock 底部邻近感应区
+  const target = event.target as HTMLElement | null
+  const isInsidePopover = target?.closest('.reader-dock-popover, .el-popper') !== null
+
+  pointerNearDock.value = !isInsidePopover && isPointerNearReaderDock({
     clientX: event.clientX,
     clientY: event.clientY,
     viewportWidth: window.innerWidth,
@@ -449,22 +458,13 @@ const handleWindowMouseMove = (event: MouseEvent) => {
   }
 }
 
-watch(
-  [
-    popCataVisible,
-    readSettingsVisible,
-    bookmarkDrawerVisible,
-    downloadDialogVisible,
-    moreMenuVisible,
-  ],
-  ([cata, setting, bkm, dl, more]) => {
-    if (cata || setting || bkm || dl || more) {
-      showDock()
-    } else {
-      scheduleDockHide()
-    }
-  },
-)
+watch(moreMenuVisible, (more) => {
+  if (more) {
+    showDock()
+  } else if (!pointerNearDock.value) {
+    scheduleDockHide()
+  }
+})
 
 // 章节状态
 const currentChapterIndex = computed(() => currentBook.value?.currentChapter ?? 0)
@@ -547,6 +547,15 @@ const bodyTheme = computed(() => ({
   background: bodyColor.value,
 }))
 
+const chapterBaseColor = computed(() => {
+  if (isNight.value) {
+    return settings.value.theme === 6 ? '#161619' : '#18181b'
+  }
+  const raw = themeConfig.themes[settings.value.theme]?.content || '#ede7da'
+  const match = raw.match(/#[0-9a-fA-F]{3,8}/)
+  return match ? match[0] : '#ede7da'
+})
+
 const chapterTheme = computed(() => {
   let textColor = '#262626'
   if (settings.value.theme === 6) {
@@ -560,6 +569,7 @@ const chapterTheme = computed(() => {
     color: textColor,
     '--reader-content-padding-top': `${settings.value.contentPaddingTop}px`,
     '--reader-content-padding-bottom': `${settings.value.contentPaddingBottom}px`,
+    '--reader-chapter-color': chapterBaseColor.value,
   }
 })
 
@@ -2246,7 +2256,7 @@ onBeforeRouteLeave(async (to, from) => {
       max-width: 100vw;
       transform: translateX(-50%);
       pointer-events: none;
-      z-index: 71;
+      z-index: 76;
     }
 
     .reader-layout-guide {
@@ -2290,6 +2300,37 @@ onBeforeRouteLeave(async (to, from) => {
       height: var(--reader-content-padding-bottom, 72px);
     }
 
+    .reader-bottom-fog {
+      position: fixed;
+      left: 50%;
+      width: inherit;
+      max-width: 100vw;
+      transform: translateX(-50%);
+      bottom: 0;
+      height: 140px;
+      pointer-events: none;
+      z-index: 72;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.24s cubic-bezier(0.2, 0.9, 0.3, 1),
+                  visibility 0.24s cubic-bezier(0.2, 0.9, 0.3, 1),
+                  background-color 0.25s ease;
+      background: linear-gradient(
+        to top,
+        var(--reader-chapter-color, #ede7da) 0%,
+        var(--reader-chapter-color, #ede7da) 44px,
+        color-mix(in srgb, var(--reader-chapter-color, #ede7da) 85%, transparent) 76px,
+        color-mix(in srgb, var(--reader-chapter-color, #ede7da) 52%, transparent) 102px,
+        color-mix(in srgb, var(--reader-chapter-color, #ede7da) 18%, transparent) 124px,
+        transparent 100%
+      );
+
+      &.is-active {
+        opacity: 1;
+        visibility: visible;
+      }
+    }
+
     .page-viewport {
       min-height: 100vh;
       box-sizing: border-box;
@@ -2307,10 +2348,13 @@ onBeforeRouteLeave(async (to, from) => {
       font-size: 18px;
       line-height: var(--reader-line-height, 1.8);
 
-      .top-bar,
-      .bottom-bar {
-        // 仅保留跳转锚点，留白统一由 page-viewport 管理。
+      .top-bar {
         height: 0;
+      }
+
+      .bottom-bar {
+        // 在连续滚动触底时提供缓冲，避免最后一行被 Dock 遮挡
+        height: 56px;
       }
 
       .loading {
@@ -2374,6 +2418,7 @@ onBeforeRouteLeave(async (to, from) => {
 
 @media (prefers-reduced-motion: reduce) {
   .page-transition-overlay,
+  .reader-bottom-fog,
   .chapter.pagination-chapter .content,
   .chapter[class*='page-transition--'] {
     animation-duration: 1ms !important;
@@ -2405,6 +2450,18 @@ onBeforeRouteLeave(async (to, from) => {
 
   .chapter {
     color: #d4d4d8;
+  }
+
+  .reader-bottom-fog {
+    background: linear-gradient(
+      to top,
+      var(--reader-chapter-color, #18181b) 0%,
+      var(--reader-chapter-color, #18181b) 44px,
+      color-mix(in srgb, var(--reader-chapter-color, #18181b) 85%, transparent) 76px,
+      color-mix(in srgb, var(--reader-chapter-color, #18181b) 52%, transparent) 102px,
+      color-mix(in srgb, var(--reader-chapter-color, #18181b) 18%, transparent) 124px,
+      transparent 100%
+    );
   }
 }
 
