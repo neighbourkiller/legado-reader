@@ -202,13 +202,14 @@ mod tests {
 
     #[test]
     fn executable_directory_should_place_data_in_sibling_data_directory() {
-        let executable = Path::new(r"C:\portable\legado-reader.exe");
+        let root = std::env::temp_dir().join("portable");
+        let executable = root.join("legado-reader.exe");
 
-        let directory = executable_directory(executable)
+        let directory = executable_directory(&executable)
             .unwrap()
             .join(PORTABLE_DATA_DIRECTORY);
 
-        assert_eq!(directory, PathBuf::from(r"C:\portable\data"));
+        assert_eq!(directory, root.join("data"));
     }
 
     #[test]
