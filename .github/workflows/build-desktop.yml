@@ -13,26 +13,14 @@ permissions:
   contents: write
 
 jobs:
-  publish:
-    name: Build (${{ matrix.name }})
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux x86_64 (deb, rpm, tar.gz)
-          - name: Linux x64
-            platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            args: "--bundles deb,rpm"
-
-          # Windows x86_64 (msi, portable exe)
-          - name: Windows x64
-            platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            args: "--bundles msi"
-
-    runs-on: ${{ matrix.platform }}
+  # ============================================================
+  # Job 1: Build Linux artifacts (deb, rpm, tar.gz)
+  # ============================================================
+  build-linux:
+    name: Build (Linux x64)
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       # ------------------------------------------------------------
@@ -66,7 +54,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
           components: rustfmt, clippy
 
       # ------------------------------------------------------------
@@ -83,7 +70,6 @@ jobs:
       # Tauri 2 使用 WebKitGTK 4.1，打包 rpm 需要 rpm 工具
       # ------------------------------------------------------------
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
 
@@ -108,120 +94,242 @@ jobs:
 
       - name: Run Rust Clippy
         working-directory: modules/web-reader
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Run Rust tests
         working-directory: modules/web-reader
-        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       # ------------------------------------------------------------
-      # Build Tauri + Publish GitHub Release
+      # Extract version
       # ------------------------------------------------------------
-      - name: Build and publish desktop application
-        uses: tauri-apps/tauri-action@v1.0.0
-
-        env:
-          # GitHub 自动提供，无需自己创建 Secret
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Linux 构建时禁止 strip
-          # 避免部分 Runner 环境下 strip ELF 失败
-          NO_STRIP: ${{ runner.os == 'Linux' && 'true' || '' }}
-
-        with:
-          # 当前仓库是 monorepo，Tauri 项目不在仓库根目录
-          projectPath: modules/web-reader
-
-          # __VERSION__ 自动读取 tauri.conf.json 中的 version
-          tagName: reader-v__VERSION__
-
-          # GitHub Release 名称
-          releaseName: "Legado Reader v__VERSION__"
-
-          # 由 GitHub 自动生成 Release Notes
-          generateReleaseNotes: true
-
-          # false = 构建成功后直接公开发布
-          releaseDraft: false
-
-          # 正式版
-          prerelease: false
-
-          # Linux: --bundles deb,rpm
-          # Windows: --bundles msi
-          args: ${{ matrix.args }}
-
-      # ------------------------------------------------------------
-      # Linux tar.gz archive
-      # ------------------------------------------------------------
-      - name: Prepare Linux tar.gz archive
-        if: runner.os == 'Linux'
-        id: linux-archive
+      - name: Extract version
+        id: version
         run: |
           VERSION=$(jq -r .version modules/web-reader/src-tauri/tauri.conf.json)
-          SOURCE="modules/web-reader/src-tauri/target/release/legado-reader"
-          OUTPUT="Legado.Reader_${VERSION}_linux-x64.tar.gz"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-          if [ ! -f "$SOURCE" ]; then
-            echo "Binary not found: $SOURCE"
+      # ------------------------------------------------------------
+      # Build deb + rpm
+      # ------------------------------------------------------------
+      - name: Build Tauri bundles
+        working-directory: modules/web-reader
+        env:
+          NO_STRIP: true
+        run: pnpm tauri build --bundles deb,rpm
+
+      # ------------------------------------------------------------
+      # Rename and collect all Linux artifacts
+      # ------------------------------------------------------------
+      - name: Rename and collect artifacts
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUNDLE_DIR="modules/web-reader/src-tauri/target/release/bundle"
+          BINARY="modules/web-reader/src-tauri/target/release/legado-reader"
+          OUTPUT_DIR="release-artifacts"
+          mkdir -p "$OUTPUT_DIR"
+
+          # DEB: legado-reader_<ver>_amd64.deb → Legado.Reader_<ver>_linux-x64.deb
+          cp "$BUNDLE_DIR/deb/legado-reader_${VERSION}_amd64.deb" \
+             "$OUTPUT_DIR/Legado.Reader_${VERSION}_linux-x64.deb"
+
+          # RPM: legado-reader-<ver>-1.x86_64.rpm → Legado.Reader_<ver>_linux-x64.rpm
+          cp "$BUNDLE_DIR/rpm/legado-reader-${VERSION}-1.x86_64.rpm" \
+             "$OUTPUT_DIR/Legado.Reader_${VERSION}_linux-x64.rpm"
+
+          # tar.gz: 从 release binary 打包
+          if [ ! -f "$BINARY" ]; then
+            echo "::error::Binary not found: $BINARY"
             exit 1
           fi
+          tar -czvf "$OUTPUT_DIR/Legado.Reader_${VERSION}_linux-x64.tar.gz" \
+            -C "modules/web-reader/src-tauri/target/release" \
+            legado-reader
 
-          tar -czvf "$OUTPUT" -C "modules/web-reader/src-tauri/target/release" legado-reader
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "file=$OUTPUT" >> $GITHUB_OUTPUT
-
-      # ------------------------------------------------------------
-      # Upload Linux tar.gz archive
-      # 上传到 tauri-action 创建的同一个 GitHub Release
-      # ------------------------------------------------------------
-      - name: Upload Linux tar.gz archive
-        if: runner.os == 'Linux'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload \
-            "reader-v${{ steps.linux-archive.outputs.version }}" \
-            "${{ steps.linux-archive.outputs.file }}" \
-            --clobber
+          echo "=== Linux artifacts ==="
+          ls -lh "$OUTPUT_DIR/"
 
       # ------------------------------------------------------------
-      # Windows portable executable
+      # Upload as GitHub Actions Artifact
       # ------------------------------------------------------------
-      - name: Prepare Windows portable executable
-        if: runner.os == 'Windows'
-        id: windows-portable
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-artifacts
+          path: release-artifacts/*
+
+  # ============================================================
+  # Job 2: Build Windows artifacts (NSIS setup, portable zip)
+  # ============================================================
+  build-windows:
+    name: Build (Windows x64)
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # ------------------------------------------------------------
+      # pnpm
+      # ------------------------------------------------------------
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 9.15.9
+          run_install: false
+
+      # ------------------------------------------------------------
+      # Node.js
+      # ------------------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: modules/web-reader/pnpm-lock.yaml
+
+      # ------------------------------------------------------------
+      # Rust
+      # ------------------------------------------------------------
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # ------------------------------------------------------------
+      # Rust cache
+      # ------------------------------------------------------------
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            modules/web-reader/src-tauri -> target
+
+      # ------------------------------------------------------------
+      # Frontend dependencies
+      # ------------------------------------------------------------
+      - name: Install frontend dependencies
+        working-directory: modules/web-reader
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Rust formatting
+        working-directory: modules/web-reader
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Run Rust Clippy
+        working-directory: modules/web-reader
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: modules/web-reader
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # ------------------------------------------------------------
+      # Extract version
+      # ------------------------------------------------------------
+      - name: Extract version
+        id: version
         shell: pwsh
         run: |
           $config = Get-Content "modules/web-reader/src-tauri/tauri.conf.json" | ConvertFrom-Json
-          $version = $config.version
-
-          $source = "modules/web-reader/src-tauri/target/release/legado-reader.exe"
-          $output = "Legado.Reader_${version}_windows-x64-portable.exe"
-
-          if (-not (Test-Path $source)) {
-            throw "Portable executable not found: $source"
-          }
-
-          Copy-Item $source $output
-
-          Write-Host "Portable executable created:"
-          Write-Host $output
-
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "file=$output" >> $env:GITHUB_OUTPUT
+          "version=$($config.version)" >> $env:GITHUB_OUTPUT
 
       # ------------------------------------------------------------
-      # Upload Windows portable executable
-      # 上传到 tauri-action 创建的同一个 GitHub Release
+      # Build NSIS installer
       # ------------------------------------------------------------
-      - name: Upload Windows portable executable
-        if: runner.os == 'Windows'
+      - name: Build Tauri bundles
+        working-directory: modules/web-reader
+        run: pnpm tauri build --bundles nsis
+
+      # ------------------------------------------------------------
+      # Rename NSIS + create portable zip
+      # ------------------------------------------------------------
+      - name: Rename and collect artifacts
         shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $bundleDir = "modules/web-reader/src-tauri/target/release/bundle/nsis"
+          $binaryPath = "modules/web-reader/src-tauri/target/release/legado-reader.exe"
+          $outputDir = "release-artifacts"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+
+          # NSIS: legado-reader_<ver>_x64-setup.exe → Legado.Reader_<ver>_windows-x64-setup.exe
+          Copy-Item "$bundleDir/legado-reader_${version}_x64-setup.exe" `
+                     "$outputDir/Legado.Reader_${version}_windows-x64-setup.exe"
+
+          # Portable ZIP
+          if (-not (Test-Path $binaryPath)) {
+            throw "Portable executable not found: $binaryPath"
+          }
+          $portableDir = Join-Path $outputDir "Legado.Reader_${version}_windows-x64-portable"
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+          Copy-Item $binaryPath (Join-Path $portableDir "legado-reader.exe")
+          Compress-Archive -LiteralPath $portableDir `
+                           -DestinationPath "$outputDir/Legado.Reader_${version}_windows-x64-portable.zip" `
+                           -CompressionLevel Optimal
+          Remove-Item -Recurse -Force $portableDir
+
+          Write-Host "=== Windows artifacts ==="
+          Get-ChildItem $outputDir | Format-Table Name, Length
+
+      # ------------------------------------------------------------
+      # Upload as GitHub Actions Artifact
+      # ------------------------------------------------------------
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-artifacts
+          path: release-artifacts/*
+
+  # ============================================================
+  # Job 3: Create Release and upload all artifacts
+  # ============================================================
+  release:
+    name: Publish Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      # ------------------------------------------------------------
+      # Download all artifacts from build jobs
+      # ------------------------------------------------------------
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhS all-artifacts/
+
+      # ------------------------------------------------------------
+      # Create GitHub Release and upload all assets
+      # ------------------------------------------------------------
+      - name: Create Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload `
-            "reader-v${{ steps.windows-portable.outputs.version }}" `
-            "${{ steps.windows-portable.outputs.file }}" `
+          VERSION="${{ needs.build-linux.outputs.version }}"
+          TAG="reader-v${VERSION}"
+
+          # 创建 Release（如果已存在则跳过）
+          gh release create "$TAG" \
+            --title "Legado Reader v${VERSION}" \
+            --generate-notes \
+            --latest \
+            || echo "Release $TAG already exists, uploading assets..."
+
+          # 按 Linux → Windows 顺序上传所有产物
+          gh release upload "$TAG" \
+            "all-artifacts/Legado.Reader_${VERSION}_linux-x64.deb" \
+            "all-artifacts/Legado.Reader_${VERSION}_linux-x64.rpm" \
+            "all-artifacts/Legado.Reader_${VERSION}_linux-x64.tar.gz" \
+            "all-artifacts/Legado.Reader_${VERSION}_windows-x64-portable.zip" \
+            "all-artifacts/Legado.Reader_${VERSION}_windows-x64-setup.exe" \
             --clobber
