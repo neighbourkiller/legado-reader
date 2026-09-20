@@ -183,7 +183,10 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn load_config(app: &AppHandle) -> Result<WebDavConfig, String> {
     if let Some(storage_db) = app.try_state::<Arc<StorageDb>>() {
-        if let Ok(Some(raw)) = storage_db.get_preference("legado_webdav_config") {
+        if let Some(raw) = storage_db
+            .get_preference("legado_webdav_config")
+            .map_err(|error| format!("读取 WebDAV 配置失败：{error}"))?
+        {
             if let Ok(config) = serde_json::from_str::<WebDavConfig>(&raw) {
                 return normalized_config(config);
             }
@@ -193,19 +196,35 @@ fn load_config(app: &AppHandle) -> Result<WebDavConfig, String> {
     // 回退或读取旧 webdav.json 迁移
     if let Ok(path) = config_path(app) {
         if path.exists() {
-            if let Ok(raw) = fs::read_to_string(&path) {
-                if let Ok(config) = serde_json::from_str::<WebDavConfig>(&raw) {
-                    if let Some(storage_db) = app.try_state::<Arc<StorageDb>>() {
-                        let _ = storage_db.save_preference("legado_webdav_config", &raw);
-                        let _ = fs::remove_file(path);
-                    }
-                    return normalized_config(config);
-                }
+            let raw = fs::read_to_string(&path)
+                .map_err(|error| format!("读取旧 WebDAV 配置失败：{error}"))?;
+            if let Some(storage_db) = app.try_state::<Arc<StorageDb>>() {
+                return migrate_legacy_config(&storage_db, &raw, || fs::remove_file(&path));
             }
+            return normalized_config(
+                serde_json::from_str(&raw)
+                    .map_err(|error| format!("解析旧 WebDAV 配置失败：{error}"))?,
+            );
         }
     }
 
     Ok(WebDavConfig::default())
+}
+
+fn migrate_legacy_config(
+    db: &StorageDb,
+    raw: &str,
+    remove_legacy: impl FnOnce() -> std::io::Result<()>,
+) -> Result<WebDavConfig, String> {
+    let config = normalized_config(
+        serde_json::from_str(raw).map_err(|error| format!("解析旧 WebDAV 配置失败：{error}"))?,
+    )?;
+    db.save_preference("legado_webdav_config", raw)
+        .map_err(|error| format!("迁移 WebDAV 配置到数据库失败：{error}"))?;
+    if let Err(error) = remove_legacy() {
+        log::warn!("WebDAV 配置已迁移，删除旧配置失败：{error}");
+    }
+    Ok(config)
 }
 
 fn save_config_file(app: &AppHandle, config: &WebDavConfig) -> Result<(), String> {
@@ -354,17 +373,35 @@ async fn get_backup(
     if !response.status().is_success() {
         return Err(format!("下载 WebDAV 备份失败：HTTP {}", response.status()));
     }
-    if response.content_length().unwrap_or(0) > MAX_DOWNLOAD_BYTES {
+    read_limited_backup(response, MAX_DOWNLOAD_BYTES).await
+}
+
+async fn read_limited_backup(response: reqwest::Response, limit: u64) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit)
+    {
         return Err("WebDAV 备份超过 512 MiB 下载上限".to_string());
     }
-    let bytes = response
-        .bytes()
+    let mut response = response;
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(limit)
+            .min(8192) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("读取 WebDAV 备份失败：{error}"))?;
-    if bytes.len() as u64 > MAX_DOWNLOAD_BYTES {
-        return Err("WebDAV 备份超过 512 MiB 下载上限".to_string());
+        .map_err(|error| format!("读取 WebDAV 备份失败：{error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) as u64 > limit {
+            return Err("WebDAV 备份超过 512 MiB 下载上限".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 fn local_name_from_href(href: &str) -> String {
@@ -578,6 +615,10 @@ pub async fn download_webdav_backup(app: AppHandle, name: String) -> Result<Resp
     let bytes = get_backup(&webdav_client()?, &config, &password, &name).await?;
     Ok(Response::new(bytes))
 }
+
+#[cfg(test)]
+#[path = "webdav_regression_tests.rs"]
+mod regression_tests;
 
 #[cfg(test)]
 mod tests {
