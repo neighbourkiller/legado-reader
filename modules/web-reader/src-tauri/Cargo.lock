@@ -2333,6 +2333,7 @@ dependencies = [
  "cipher",
  "des",
  "ecb",
+ "encoding_rs",
  "httpdate",
  "jsonpath_lib",
  "keyring",

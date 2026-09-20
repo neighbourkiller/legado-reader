@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -10,6 +11,7 @@ use cipher::{
     BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit,
 };
 use des::{Des, TdesEde3};
+use encoding_rs::UTF_8;
 use regex::Regex;
 use reqwest::blocking::Client;
 use reqwest::cookie::{CookieStore, Jar};
@@ -23,6 +25,7 @@ use crate::source_policy::{redirect_policy, validate_url, PublicDnsResolver};
 
 const DEFAULT_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 const DEFAULT_STACK_LIMIT: usize = 512 * 1024;
+const MAX_SCRIPT_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +61,100 @@ fn script_error(code: &'static str, message: impl Into<String>) -> SourceScriptE
         code,
         stage: "javascript",
         message: message.into(),
+    }
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn decode_hex_bytes(value: &str) -> Result<Vec<u8>, String> {
+    let clean: String = value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if !clean.len().is_multiple_of(2) {
+        return Err("hex input must contain an even number of characters".to_string());
+    }
+    if !clean.is_ascii() {
+        return Err("hex input must contain ASCII characters".to_string());
+    }
+
+    let bytes = clean.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+    for index in (0..bytes.len()).step_by(2) {
+        let high = hex_nibble(bytes[index])
+            .ok_or_else(|| "hex input contains an invalid digit".to_string())?;
+        let low = hex_nibble(bytes[index + 1])
+            .ok_or_else(|| "hex input contains an invalid digit".to_string())?;
+        decoded.push((high << 4) | low);
+    }
+    Ok(decoded)
+}
+
+fn read_limited_script_response(
+    response: reqwest::blocking::Response,
+    deadline: Instant,
+    limit: usize,
+) -> Result<String, String> {
+    ensure_script_deadline(deadline).map_err(|error| error.message)?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err("script HTTP response exceeds 10 MiB".to_string());
+    }
+
+    let encoding = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|content_type| {
+            content_type.split(';').skip(1).find_map(|parameter| {
+                let (name, value) = parameter.split_once('=')?;
+                if name.trim().eq_ignore_ascii_case("charset") {
+                    Some(value.trim().trim_matches('"'))
+                } else {
+                    None
+                }
+            })
+        })
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(UTF_8);
+
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(limit as u64)
+            .min(8192) as usize,
+    );
+    let mut limited = response.take((limit + 1) as u64);
+    limited
+        .read_to_end(&mut body)
+        .map_err(|error| format!("failed to read script HTTP response: {error}"))?;
+    if body.len() > limit {
+        return Err("script HTTP response exceeds 10 MiB".to_string());
+    }
+
+    let (text, _, _) = encoding.decode(&body);
+    ensure_script_deadline(deadline).map_err(|error| error.message)?;
+    Ok(text.into_owned())
+}
+
+fn ensure_script_deadline(deadline: Instant) -> Result<(), SourceScriptError> {
+    if Instant::now() >= deadline {
+        Err(script_error(
+            "JS_TIMEOUT",
+            "script execution deadline exceeded",
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -659,6 +756,22 @@ fn execute_script(
     source_cache: Arc<Mutex<HashMap<String, String>>>,
     source_cache_path: Arc<Option<PathBuf>>,
 ) -> Result<SourceScriptResponse, SourceScriptError> {
+    let client = Client::builder()
+        .cookie_provider(cookie_jar.clone())
+        .dns_resolver(Arc::new(PublicDnsResolver))
+        .redirect(redirect_policy(true))
+        .build()
+        .map_err(|error| script_error("JS_HTTP_INIT", error.to_string()))?;
+    execute_script_with_client(request, cookie_jar, source_cache, source_cache_path, client)
+}
+
+fn execute_script_with_client(
+    request: SourceScriptRequest,
+    cookie_jar: Arc<Jar>,
+    source_cache: Arc<Mutex<HashMap<String, String>>>,
+    source_cache_path: Arc<Option<PathBuf>>,
+    client: Client,
+) -> Result<SourceScriptResponse, SourceScriptError> {
     if request.code.contains("Packages")
         || request.code.contains("java.io.")
         || request.code.contains("java.nio.file")
@@ -695,20 +808,15 @@ fn execute_script(
             .unwrap_or(DEFAULT_STACK_LIMIT)
             .clamp(64 * 1024, 8 * 1024 * 1024),
     );
-    runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+    let interrupt_deadline = deadline;
+    runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= interrupt_deadline)));
     let context = Context::full(&runtime)
         .map_err(|error| script_error("JS_CONTEXT_INIT", error.to_string()))?;
     let logs = Arc::new(Mutex::new(Vec::<String>::new()));
-    let client = Client::builder()
-        .cookie_provider(cookie_jar.clone())
-        .dns_resolver(Arc::new(PublicDnsResolver))
-        .redirect(redirect_policy(true))
-        .build()
-        .map_err(|error| script_error("JS_HTTP_INIT", error.to_string()))?;
-
     let json_result = context.with(|ctx| -> rquickjs::Result<String> {
         let globals = ctx.globals();
         let ajax_client = client.clone();
+        let ajax_deadline = deadline;
         globals.set("__hostAjax", Function::new(ctx.clone(), move |raw: String| -> rquickjs::Result<String> {
             let options = if raw.trim_start().starts_with('{') {
                 serde_json::from_str::<AjaxOptions>(&raw).map_err(|error|
@@ -719,17 +827,30 @@ fn execute_script(
             validate_url(&options.url).map_err(|error|
                 rquickjs::Error::new_from_js_message("url", "safe URL", error))?;
             let method = options.method.as_deref().unwrap_or("GET").to_uppercase();
+            let remaining = ajax_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(rquickjs::Error::new_from_js_message(
+                    "HTTP",
+                    "deadline",
+                    "script execution deadline exceeded",
+                ));
+            }
+            let requested_timeout = Duration::from_millis(
+                options.timeout.unwrap_or(15_000).clamp(100, 60_000),
+            );
             let mut builder = match method.as_str() {
                 "POST" => ajax_client.post(&options.url),
                 "HEAD" => ajax_client.head(&options.url),
                 _ => ajax_client.get(&options.url),
-            }.timeout(Duration::from_millis(options.timeout.unwrap_or(15_000).clamp(100, 60_000)));
+            }.timeout(requested_timeout.min(remaining));
             if let Some(headers) = options.headers {
                 for (name, value) in headers { builder = builder.header(name, value); }
             }
             if let Some(body) = options.body { builder = builder.body(body); }
-            builder.send().and_then(|response| response.text()).map_err(|error|
-                rquickjs::Error::new_from_js_message("HTTP", "string", error.to_string()))
+            let response = builder.send().map_err(|error|
+                rquickjs::Error::new_from_js_message("HTTP", "response", error.to_string()))?;
+            read_limited_script_response(response, ajax_deadline, MAX_SCRIPT_RESPONSE_BYTES).map_err(|error|
+                rquickjs::Error::new_from_js_message("HTTP", "string", error))
         })?)?;
 
         let get_jar = cookie_jar.clone();
@@ -761,26 +882,15 @@ fn execute_script(
         globals.set("__hostHexEncode", Function::new(ctx.clone(), |value: String| -> String {
             value.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect()
         })?)?;
-        globals.set("__hostHexDecodeToString", Function::new(ctx.clone(), |value: String| -> String {
-            let clean: String = value.chars().filter(|c| !c.is_whitespace()).collect();
-            if !clean.len().is_multiple_of(2) {
-                return String::new();
-            }
-            let bytes: Vec<u8> = (0..clean.len())
-                .step_by(2)
-                .filter_map(|i| u8::from_str_radix(&clean[i..i + 2], 16).ok())
-                .collect();
-            String::from_utf8(bytes).unwrap_or_default()
+        globals.set("__hostHexDecodeToString", Function::new(ctx.clone(), |value: String| -> rquickjs::Result<String> {
+            let bytes = decode_hex_bytes(&value).map_err(|error|
+                rquickjs::Error::new_from_js_message("hex", "bytes", error))?;
+            String::from_utf8(bytes).map_err(|error|
+                rquickjs::Error::new_from_js_message("hex", "UTF-8 string", error.to_string()))
         })?)?;
-        globals.set("__hostHexDecode", Function::new(ctx.clone(), |value: String| -> Vec<u8> {
-            let clean: String = value.chars().filter(|c| !c.is_whitespace()).collect();
-            if !clean.len().is_multiple_of(2) {
-                return Vec::new();
-            }
-            (0..clean.len())
-                .step_by(2)
-                .filter_map(|i| u8::from_str_radix(&clean[i..i + 2], 16).ok())
-                .collect()
+        globals.set("__hostHexDecode", Function::new(ctx.clone(), |value: String| -> rquickjs::Result<Vec<u8>> {
+            decode_hex_bytes(&value).map_err(|error|
+                rquickjs::Error::new_from_js_message("hex", "bytes", error))
         })?)?;
         globals.set("__hostMd5", Function::new(ctx.clone(), |value: String| -> String {
             format!("{:x}", md5::compute(value.as_bytes()))
@@ -964,12 +1074,14 @@ fn execute_script(
         script_error(code, err_str)
     })?;
 
+    ensure_script_deadline(deadline)?;
     let payload: ScriptEvaluationPayload = serde_json::from_str(&json_result)
         .map_err(|error| script_error("JS_RESULT_SERIALIZATION", error.to_string()))?;
     let logs = logs
         .lock()
         .map(|entries| entries.clone())
         .unwrap_or_default();
+    ensure_script_deadline(deadline)?;
     Ok(SourceScriptResponse {
         result: payload.result,
         logs,
@@ -992,6 +1104,10 @@ pub async fn execute_source_script(
         .await
         .map_err(|error| script_error("JS_TASK_FAILED", error.to_string()))?
 }
+
+#[cfg(test)]
+#[path = "source_script_regression_tests.rs"]
+mod regression_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1036,6 +1152,12 @@ mod tests {
     fn decodes_hex_to_string() {
         let response = run("java.hexDecodeToString(java.hexEncode('测试文本'))", 1_000).unwrap();
         assert_eq!(response.result, "测试文本");
+    }
+
+    #[test]
+    fn rejects_non_ascii_hex_input_without_panicking() {
+        let error = run("java.hexDecode('中文')", 1_000).unwrap_err();
+        assert_eq!(error.code, "JS_EXECUTION_FAILED");
     }
 
     #[test]
