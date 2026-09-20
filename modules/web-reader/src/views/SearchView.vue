@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Search } from '@element-plus/icons-vue'
@@ -117,6 +117,8 @@ const targetSource = computed<BookSource | undefined>(() => {
 })
 
 const clearTargetSource = () => {
+  searchRequestId += 1
+  isSearching.value = false
   targetSourceUrl.value = ''
   searchStore.targetSourceUrl = ''
   router.replace({ path: '/search' })
@@ -124,6 +126,7 @@ const clearTargetSource = () => {
 }
 
 let engine: SourceEngine | null = null
+let searchRequestId = 0
 
 function getEngine(): SourceEngine {
   if (!engine) {
@@ -133,8 +136,10 @@ function getEngine(): SourceEngine {
 }
 
 const handleSearch = async () => {
+  const requestId = ++searchRequestId
   const query = keyword.value.trim()
   if (!query) {
+    isSearching.value = false
     ElMessage.warning('请输入搜索关键词')
     return
   }
@@ -144,14 +149,16 @@ const handleSearch = async () => {
   if (targetSource.value) {
     searchSources = [targetSource.value]
   } else {
-    searchSources = bookSourceStore.getEnabledSources()
+    searchSources = [...bookSourceStore.getEnabledSources()]
   }
 
   if (searchSources.length === 0) {
+    isSearching.value = false
     ElMessage.warning('没有可用的书源进行搜索，请先启用至少一个书源')
     return
   }
 
+  const requestTargetSourceUrl = targetSourceUrl.value
   isSearching.value = true
 
   try {
@@ -173,17 +180,24 @@ const handleSearch = async () => {
       }
     }
 
-    searchStore.setResults(query, merged, targetSourceUrl.value)
+    if (requestId !== searchRequestId) return
+
+    searchStore.setResults(query, merged, requestTargetSourceUrl)
     if (merged.length === 0) {
       ElMessage.info('未找到相关书籍')
     }
   } catch (err) {
+    if (requestId !== searchRequestId) return
     console.error('搜索失败:', err)
     ElMessage.error('搜索失败，请重试')
   } finally {
-    isSearching.value = false
+    if (requestId === searchRequestId) isSearching.value = false
   }
 }
+
+onUnmounted(() => {
+  searchRequestId += 1
+})
 
 const openBookDetail = (result: SearchResult) => {
   const bookId = generateBookId(result.name, result.author, result.sourceUrl)
