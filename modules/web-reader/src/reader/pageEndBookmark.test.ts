@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { findLastVisibleReaderLine } from './pageEndBookmark'
+import { findFirstVisibleReaderLine, findLastVisibleReaderLine } from './pageEndBookmark'
 
 interface RectInit {
   left: number
@@ -54,6 +54,24 @@ function installRangeRects() {
 }
 
 describe('Dock 当前页末尾行书签定位', () => {
+  it('大边距排除遮挡文字，跨页长段落的页首锚点保留字符偏移', () => {
+    installRangeRects()
+    document.body.innerHTML = `<main><section data-chapter-index="2"><div data-reader-body><p data-chapterpos="0">隐藏首行尾行遮挡</p></div></section></main>`
+    const root = document.querySelector('main')!
+    const paragraph = document.querySelector('p')!
+    const text = paragraph.firstChild as Text
+    const lines = [100, 220, 400, 650].map(top => rect({ left: 100, top, width: 100, height: 20 }))
+    mockPositionElement(paragraph, lines)
+    mockTextLines(text, lines.flatMap(line => [line, line]))
+    const bounds = { top: 200, bottom: 600, left: 0, right: 800 }
+    expect(findFirstVisibleReaderLine(root, bounds)).toMatchObject({
+      chapterPos: 0, content: '首行', startOffset: 2, endOffset: 4,
+    })
+    expect(findLastVisibleReaderLine(root, bounds)).toMatchObject({
+      content: '尾行', startOffset: 4, endOffset: 6,
+    })
+  })
+
   it('滚动阅读时选择视口内最下方完整行并保留精确正文偏移', () => {
     installRangeRects()
     document.body.innerHTML = `

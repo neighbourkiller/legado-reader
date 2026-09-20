@@ -169,3 +169,19 @@ export function findLastVisibleReaderLine(
   }
   return null
 }
+
+/** 用文字行锚点恢复重排位置，避免长段落跨页时退回段首。 */
+export function findFirstVisibleReaderLine(
+  root: HTMLElement,
+  bounds: ReaderViewportBounds,
+): ReaderPageEndPosition | null {
+  if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return null
+  const sources = collectVisibleLineSources(root, bounds).sort((left, right) =>
+    left.rect.top - right.rect.top || left.rect.left - right.rect.left,
+  )
+  for (const source of sources) {
+    const position = resolveLinePosition(source, sources, bounds)
+    if (position) return position
+  }
+  return null
+}

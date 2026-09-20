@@ -210,6 +210,10 @@
           @update:model-value="setContentPaddingBottom"
         />
 
+        <li class="layout-spacing-hint">
+          虚线表示正文边界。翻页按整行排版，末行可能留有额外空白。
+        </li>
+
         <ReaderSettingStepper
           label="Dock 高度"
           :model-value="settings.dockHeight"
@@ -668,6 +672,14 @@ const setPageAnimation = (animation: ReaderPageAnimation) => {
       list-style: none outside none;
       margin: 0;
       padding: 0;
+
+      li.layout-spacing-hint {
+        display: block;
+        margin-top: 10px;
+        font-size: 12px;
+        line-height: 1.6;
+        opacity: 0.65;
+      }
 
       li {
         list-style: none outside none;

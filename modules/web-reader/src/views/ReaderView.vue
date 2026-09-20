@@ -114,6 +114,10 @@
       :style="[chapterTheme, pageTransitionTheme]"
       @click="handleChapterClick"
     >
+      <div v-if="readSettingsVisible" class="reader-layout-guides" aria-hidden="true">
+        <i class="reader-layout-guide reader-layout-guide--top"></i>
+        <i class="reader-layout-guide reader-layout-guide--bottom"></i>
+      </div>
       <div class="page-viewport" ref="pageViewportRef">
         <div class="content" ref="pageContentRef" :style="paginationContentStyle">
           <div class="top-bar" ref="topRef"></div>
@@ -286,9 +290,11 @@ import {
 } from '@/reader/pageTurnGuide'
 import { isPointerNearReaderDock } from '@/reader/dockVisibility'
 import {
+  findFirstVisibleReaderLine,
   findLastVisibleReaderLine,
   type ReaderViewportBounds,
 } from '@/reader/pageEndBookmark'
+import { resolveReaderViewport, readerPageScrollDistance } from '@/reader/readerViewport'
 import '@/assets/fonts/iconfont.css'
 
 const route = useRoute()
@@ -677,6 +683,7 @@ const playChapterTransition = async (direction?: PageTransitionDirection) => {
 
 const turnPaginationPage = async (direction: PageTransitionDirection) => {
   if (!isPaginationMode.value || chapterLoading.value) return false
+  layoutAnchor = null
   measurePagination()
   const oldIndex = paginationPageIndex.value
   const nextIndex = oldIndex + (direction === 'forward' ? 1 : -1)
@@ -914,45 +921,104 @@ interface ReadingPosition {
   endOffset?: number
 }
 
+const readerVisibleBounds = (): ReaderViewportBounds => {
+  const viewport = pageViewportRef.value
+  if (!viewport) return { top: 0, bottom: 0, left: 0, right: 0 }
+  const host = scrollHostRef.value?.getBoundingClientRect()
+  const style = getComputedStyle(viewport)
+  return resolveReaderViewport(viewport.getBoundingClientRect(), {
+    top: Math.max(0, host?.top ?? 0),
+    bottom: Math.min(window.innerHeight, host?.bottom ?? window.innerHeight),
+    left: Math.max(0, host?.left ?? 0),
+    right: Math.min(window.innerWidth, host?.right ?? window.innerWidth),
+  }, parseFloat(style.paddingTop) || 0, parseFloat(style.paddingBottom) || 0, isPaginationMode.value)
+}
+
 const findReadingPosition = (): ReadingPosition | null => {
+  const bounds = readerVisibleBounds()
+  if (bounds.bottom <= bounds.top || bounds.right <= bounds.left) return null
+  // 高频滚动进度只做命中测试，精确字符扫描留给重排和书签操作。
   const elements = document.elementsFromPoint(
-    window.innerWidth / 2,
-    Math.min(180, Math.max(80, window.innerHeight / 4)),
+    (bounds.left + bounds.right) / 2,
+    bounds.top + Math.min(40, (bounds.bottom - bounds.top) / 2),
   )
-  const readingElement = elements.find(element => element.closest('[data-chapter-index]'))
-  const chapterElement = readingElement?.closest<HTMLElement>('[data-chapter-index]')
-  if (!chapterElement) return null
-
-  const chapterIndex = Number(chapterElement.dataset.chapterIndex)
+  const element = elements.find(item => pageContentRef.value?.contains(item)
+    && item.closest('[data-chapter-index]'))
+  const chapter = element?.closest<HTMLElement>('[data-chapter-index]')
+  if (!chapter) return null
+  const chapterIndex = Number(chapter.dataset.chapterIndex)
   if (!Number.isInteger(chapterIndex)) return null
-
-  const positionElement = readingElement?.closest<HTMLElement>('[data-chapterpos]')
-  const rawPosition = Number(positionElement?.dataset.chapterpos)
-  const chapterPos = Number.isInteger(rawPosition) ? rawPosition : 0
-  const content = (positionElement?.innerText || readingElement?.textContent || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 180)
-
-  return { chapterIndex, chapterPos, content }
+  const paragraph = element?.closest<HTMLElement>('[data-chapterpos]')
+  const chapterPos = Number(paragraph?.dataset.chapterpos ?? 0)
+  return {
+    chapterIndex,
+    chapterPos: Number.isInteger(chapterPos) ? chapterPos : 0,
+    content: (paragraph?.innerText || element?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180),
+  }
 }
 
 const findPageEndReadingPosition = (): ReadingPosition | null => {
   const viewport = pageViewportRef.value
-  if (!viewport) return findReadingPosition()
-
-  const viewportRect = viewport.getBoundingClientRect()
-  const scrollHostRect = scrollHostRef.value?.getBoundingClientRect()
-  const clipRect = isPaginationMode.value ? viewportRect : scrollHostRect
-  const bounds: ReaderViewportBounds = {
-    top: Math.max(0, viewportRect.top, clipRect?.top ?? 0),
-    right: Math.min(window.innerWidth, viewportRect.right, clipRect?.right ?? window.innerWidth),
-    bottom: Math.min(window.innerHeight, viewportRect.bottom, clipRect?.bottom ?? window.innerHeight),
-    left: Math.max(0, viewportRect.left, clipRect?.left ?? 0),
-  }
-
-  return findLastVisibleReaderLine(viewport, bounds) ?? findReadingPosition()
+  return viewport
+    ? findLastVisibleReaderLine(viewport, readerVisibleBounds()) ?? findReadingPosition()
+    : null
 }
+
+const scrollPageDistance = () => {
+  const content = pageContentRef.value
+  const lineHeight = content ? parseFloat(getComputedStyle(content).lineHeight) : 0
+  return readerPageScrollDistance(readerVisibleBounds(), lineHeight || 36)
+}
+
+let layoutRevision = 0
+let layoutAnchor: ReadingPosition | null = null
+let layoutAtScrollStart = false
+const reflowReaderLayout = async () => {
+  // flush: 'post' — DOM 已更新，CSS 变量与 padding 已反映新值。
+  if (!layoutAnchor) {
+    layoutAnchor = pageViewportRef.value
+      ? findFirstVisibleReaderLine(pageViewportRef.value, readerVisibleBounds())
+      : null
+    layoutAtScrollStart = readerScrollMetrics().scrollTop === 0
+  }
+  const revision = ++layoutRevision
+  clearPageOverlay()
+  suppressPageTransition.value = true
+  // 等待浏览器完成布局重排（column layout 特别需要这一帧）
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  if (revision !== layoutRevision) return
+  measurePagination()
+  await nextTick()
+  if (revision !== layoutRevision) return
+  const anchor = layoutAnchor
+  const body = anchor && pageContentRef.value?.querySelector<HTMLElement>(
+    `[data-chapter-index="${anchor.chapterIndex}"] [data-reader-body]`,
+  )
+  const range = body && anchor?.startOffset !== undefined
+    ? findTextRange(body, anchor.startOffset, anchor.startOffset + 1)
+    : null
+  const rect = range?.getClientRects()[0]
+  if (rect && pageContentRef.value && pageViewportRef.value) {
+    if (isPaginationMode.value && paginationPageWidth.value > 0) {
+      const offset = rect.left - pageContentRef.value.getBoundingClientRect().left
+      paginationPageIndex.value = Math.max(0, Math.min(
+        paginationPageCount.value - 1, Math.floor((offset + 0.5) / paginationPageWidth.value),
+      ))
+    } else if (!isPaginationMode.value && !layoutAtScrollStart) {
+      readerScrollContainer().scrollBy(0, rect.top - readerVisibleBounds().top)
+    }
+  }
+  // 设置面板中的连续微调复用同一个字符锚点，避免反复取新页首而累积回退。
+  if (!readSettingsVisible.value) layoutAnchor = null
+  await nextTick()
+  if (revision !== layoutRevision) return
+  // 强制提交无动画的重排结果，再恢复正常翻页动画。
+  pageContentRef.value?.getBoundingClientRect()
+  suppressPageTransition.value = false
+  updateReadingProgress()
+}
+
+watch(readSettingsVisible, () => { layoutAnchor = null })
 
 const bookmarkStartOffset = (position: ReadingPosition) => Math.max(0, position.startOffset ?? 0)
 
@@ -1450,6 +1516,7 @@ const getContent = async (
   paginationTargetPage: 'start' | 'end' = 'start',
 ): Promise<boolean> => {
   if (index < 0 || index >= chapters.value.length) return false
+  if (reloadChapter) layoutAnchor = null
 
   clearPageOverlay()
   const generation = reloadChapter ? ++contentGeneration : contentGeneration
@@ -1667,7 +1734,7 @@ const handleKeyPress = async (event: KeyboardEvent) => {
         ElMessage.warning('已到达页面顶部')
       } else {
         canJump = false
-        jump(0 - upwardScrollHost.clientHeight + 100, {
+        jump(-scrollPageDistance(), {
           duration: settings.value.jumpDuration,
           callback: () => (canJump = true),
           container: readerScrollContainer(),
@@ -1689,7 +1756,7 @@ const handleKeyPress = async (event: KeyboardEvent) => {
         ElMessage.warning('已到达页面底部')
       } else {
         canJump = false
-        jump(downwardScrollHost.clientHeight - 100, {
+        jump(scrollPageDistance(), {
           duration: settings.value.jumpDuration,
           callback: () => (canJump = true),
           container: readerScrollContainer(),
@@ -1743,7 +1810,9 @@ const onResize = () => {
   updateSettingsPanelPosition()
 }
 
+
 watch(isPaginationMode, enabled => {
+  layoutAnchor = null
   clearPageOverlay()
   resetReaderScroll()
   if (enabled) {
@@ -1771,7 +1840,8 @@ watch(
     settings.value.contentPaddingBottom,
     renderRevision.value,
   ],
-  schedulePaginationMeasurement,
+  reflowReaderLayout,
+  { flush: 'post' },
 )
 
 watch(
@@ -2041,6 +2111,10 @@ onBeforeRouteLeave(async (to, from) => {
         column-width: var(--reader-pagination-page-width);
         column-gap: 0;
         column-fill: auto;
+        // 浏览器默认保留两行孤行，会把本可容纳的末行推到下一页，
+        // 放大上下边距调整时的留白跳变。阅读分页允许逐行换列。
+        orphans: 1;
+        widows: 1;
         transition: transform var(--reader-page-transition-duration) cubic-bezier(0.25, 1, 0.5, 1);
         will-change: transform;
       }
@@ -2164,6 +2238,33 @@ onBeforeRouteLeave(async (to, from) => {
     box-sizing: border-box;
     transition: background-color 0.25s ease, color 0.25s ease;
 
+    .reader-layout-guides {
+      position: fixed;
+      inset-block: 0;
+      left: 50%;
+      width: inherit;
+      max-width: 100vw;
+      transform: translateX(-50%);
+      pointer-events: none;
+      z-index: 71;
+    }
+
+    .reader-layout-guide {
+      position: absolute;
+      left: 65px;
+      right: 65px;
+      border-top: 1px dashed currentColor;
+      opacity: 0.4;
+    }
+
+    .reader-layout-guide--top {
+      top: calc(var(--reader-toolbar-top, 0px) + var(--reader-content-padding-top, 38px));
+    }
+
+    .reader-layout-guide--bottom {
+      bottom: var(--reader-content-padding-bottom, 72px);
+    }
+
     // 连续滚动时保持稳定的视口安全区；首尾 padding 负责可滚动空间，
     // 固定遮罩负责让每次边距微调都能立即反映在当前页面。
     &:not(.pagination-chapter)::before,
@@ -2208,7 +2309,8 @@ onBeforeRouteLeave(async (to, from) => {
 
       .top-bar,
       .bottom-bar {
-        height: 32px;
+        // 仅保留跳转锚点，留白统一由 page-viewport 管理。
+        height: 0;
       }
 
       .loading {
@@ -2371,6 +2473,11 @@ onBeforeRouteLeave(async (to, from) => {
       width: 100vw !important;
       padding: 0 16px;
       box-sizing: border-box;
+
+      .reader-layout-guide {
+        left: 16px;
+        right: 16px;
+      }
     }
   }
 }
