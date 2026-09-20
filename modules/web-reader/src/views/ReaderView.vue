@@ -373,6 +373,8 @@ const readerPopoverOptions = computed(() => ({
   ],
 }))
 let contentGeneration = 0
+let readerLifecycleGeneration = 0
+let startupFailureTimer: ReturnType<typeof setTimeout> | undefined
 let scrollObserver: IntersectionObserver | null = null
 
 const topRef = ref<HTMLElement>()
@@ -1551,6 +1553,7 @@ const getContent = async (
 
     if (payload) {
       const processedPayload = await processChapterPayload(payload)
+      if (generation !== contentGeneration) return false
       if (forceRefresh) {
         rawChapterData.value = [payload]
         chapterData.value = [processedPayload]
@@ -1883,6 +1886,8 @@ const onVisibilityChange = () => {
 }
 
 onMounted(async () => {
+  const lifecycleGeneration = ++readerLifecycleGeneration
+  const isLifecycleActive = () => lifecycleGeneration === readerLifecycleGeneration
   const rawId = route.params.id
   const bookId = Array.isArray(rawId) ? rawId[0] : (rawId as string)
   if (!bookId) {
@@ -1892,6 +1897,7 @@ onMounted(async () => {
 
   scrollHostRef.value = contentRef.value?.closest<HTMLElement>('.app-content') ?? null
   await updateSettingsPanelPosition()
+  if (!isLifecycleActive()) return
 
   if (shouldShowReaderPageTurnGuide(getPreference(READER_PAGE_TURN_GUIDE_KEY))) {
     pageTurnGuideVisible.value = true
@@ -1903,11 +1909,17 @@ onMounted(async () => {
     if (bookshelfStore.books.length === 0) {
       await bookshelfStore.loadBooks().catch(console.error)
     }
-    await store.loadBook(bookId)
-    replaceRules.value = await getAllReplaceRules().catch(() => [])
+    if (!isLifecycleActive()) return
+    const loaded = await store.loadBook(bookId)
+    if (!loaded || !isLifecycleActive()) return
+    const loadedReplaceRules = await getAllReplaceRules().catch(() => [])
+    if (!isLifecycleActive()) return
+    replaceRules.value = loadedReplaceRules
     await loadCurrentBookHighlights()
+    if (!isLifecycleActive()) return
     if (currentBook.value) {
       await addReadingTime(currentBook.value, 0).catch(console.error)
+      if (!isLifecycleActive()) return
       readingSessionStartedAt = Date.now()
     }
 
@@ -1929,6 +1941,7 @@ onMounted(async () => {
         fontface
           .load()
           .then(loaded => {
+            if (!isLifecycleActive()) return
             document.fonts.add(loaded)
             schedulePaginationMeasurement()
           })
@@ -1956,7 +1969,9 @@ onMounted(async () => {
       )
     )
     await getContent(initialChapter, true)
+    if (!isLifecycleActive()) return
     await nextTick()
+    if (!isLifecycleActive()) return
     const requestedPosition = route.query.pos !== undefined
       ? Number(route.query.pos)
       : currentBook.value?.currentChapterPos
@@ -1967,6 +1982,7 @@ onMounted(async () => {
       if (target) {
         if (isPaginationMode.value) {
           await revealPaginationTarget(target)
+          if (!isLifecycleActive()) return
         } else {
           jump(target, {
             duration: 0,
@@ -1976,6 +1992,7 @@ onMounted(async () => {
       }
     }
     await syncBookmarkState()
+    if (!isLifecycleActive()) return
 
     window.addEventListener('keyup', handleKeyPress)
     window.addEventListener('keydown', ignoreKeyPress)
@@ -1995,15 +2012,21 @@ onMounted(async () => {
       scrollObserver.observe(loadingRef.value)
     }
   } catch (err) {
+    if (!isLifecycleActive()) return
     console.error('加载图书失败详情:', err)
     ElMessage.error(
       err instanceof Error ? `加载图书失败: ${err.message}` : '加载图书失败，正在返回书架...'
     )
-    setTimeout(toShelf, 1500)
+    startupFailureTimer = setTimeout(() => {
+      if (isLifecycleActive()) toShelf()
+    }, 1500)
   }
 })
 
 onUnmounted(() => {
+  readerLifecycleGeneration += 1
+  contentGeneration += 1
+  clearTimeout(startupFailureTimer)
   clearPageOverlay()
   flushReadingSession(false).catch(console.error)
   window.removeEventListener('keyup', handleKeyPress)

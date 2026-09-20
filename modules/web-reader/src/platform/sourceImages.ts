@@ -53,20 +53,26 @@ export async function downloadAndCacheChapterImages(
   bookId: string,
   chapterIndex: number,
   payload: ImageChapterPayload,
+  signal?: AbortSignal,
 ): Promise<MaterializedImageChapter> {
+  signal?.throwIfAborted()
   if (!platform.isDesktop) return { images: payload.images, blobUrls: [], cached: false }
 
   const records: NativeImageRecord[] = new Array(payload.images.length)
   let cursor = 0
   const worker = async () => {
     while (cursor < payload.images.length) {
+      signal?.throwIfAborted()
       const position = cursor++
       const image = payload.images[position]!
       try {
         const response = await engine.fetchSourceAsset(source, image.url, payload.sourceUrl)
+        signal?.throwIfAborted()
+        const contentHash = await sha256(response.body)
+        signal?.throwIfAborted()
         records[position] = {
           bookId, chapterIndex, imageIndex: position, sourceUrl: image.url,
-          mime: response.mime, contentHash: await sha256(response.body), data: Array.from(response.body),
+          mime: response.mime, contentHash, data: Array.from(response.body),
         }
       } catch (cause) {
         throw new Error(`第 ${position + 1} 张图片下载失败: ${cause instanceof Error ? cause.message : String(cause)}`)
@@ -75,7 +81,9 @@ export async function downloadAndCacheChapterImages(
   }
   await Promise.all(Array.from({ length: Math.min(4, Math.max(1, payload.images.length)) }, () => worker()))
   const { invoke } = await import('@tauri-apps/api/core')
+  signal?.throwIfAborted()
   // 后端先删除旧数据、再写入全部图片并一次提交；失败不会留下“完整章节”的假象。
   await invoke('storage_replace_chapter_images', { images: records })
+  signal?.throwIfAborted()
   return recordsToImages(records)
 }
