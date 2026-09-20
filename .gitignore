@@ -27,3 +27,4 @@ target/
 /AGENTS.md
 .agents
 skills-lock.json
+/modules/web-reader/release-artifacts/

@@ -1,6 +1,12 @@
 name: Check Web Reader
 
 on:
+  workflow_call:
+    inputs:
+      commit:
+        description: '待验证的完整提交 SHA'
+        required: true
+        type: string
   push:
     paths:
       - "modules/web-reader/**"
@@ -23,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - uses: pnpm/action-setup@v6.0.10
         with:
           version: 9.15.9
@@ -35,6 +43,8 @@ jobs:
       - name: Install dependencies
         working-directory: modules/web-reader
         run: pnpm install --frozen-lockfile
+      - name: Test release orchestration
+        run: node --test modules/web-reader/scripts/desktop-release.test.mjs
       - name: Test
         working-directory: modules/web-reader
         run: pnpm test
@@ -49,14 +59,24 @@ jobs:
         run: pnpm build:desktop-ui
 
   rust:
-    name: Rust
-    runs-on: ubuntu-22.04
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: modules/web-reader/src-tauri -> target
       - name: Install Tauri dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
