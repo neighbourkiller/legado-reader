@@ -4,13 +4,14 @@ import { resolve } from 'node:path'
 
 describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   const panelPath = resolve(__dirname, './SourceEditPanel.vue')
+  const readPanel = () => readFileSync(panelPath, 'utf-8').replace(/\r\n/g, '\n')
 
   it('SourceEditPanel.vue 文件存在', () => {
     expect(existsSync(panelPath)).toBe(true)
   })
 
   it('具备完整的 6 个二级子分类 Tabs', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('name="base"')
     expect(content).toContain('name="search"')
     expect(content).toContain('name="explore"')
@@ -22,7 +23,7 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('基本设置包含书源类型、CF WebView 穿透及网络配置', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('v-model="formData.bookSourceType"')
     expect(content).toContain('v-model="formData.useWebView"')
     expect(content).toContain('v-model="formData.enabledExplore"')
@@ -35,7 +36,7 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('按自然语言与规则语义分离 UI 字体和代码字体', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain(`:class="{ 'rule-font-fields': activeSection !== 'base' }"`)
     expect(content).toMatch(/v-model="formData\.bookSourceName"[^>]+class="sharp-input"/)
     expect(content).not.toMatch(/v-model="formData\.bookSourceName"[^>]+code-input/)
@@ -47,7 +48,7 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('详情页规则包含此前缺失的 intro、author、coverUrl 等全部核心字段', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('v-model="formData.ruleBookInfo.intro"')
     expect(content).toContain('v-model="formData.ruleBookInfo.author"')
     expect(content).toContain('v-model="formData.ruleBookInfo.coverUrl"')
@@ -61,7 +62,7 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('目录页规则包含翻页 nextTocUrl、分卷与脚本', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('v-model="formData.ruleToc.nextTocUrl"')
     expect(content).toContain('v-model="formData.ruleToc.isVolume"')
     expect(content).toContain('v-model="formData.ruleToc.isVip"')
@@ -71,7 +72,7 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('正文页规则包含标题、副内容、动态渲染与漫画样式/解密', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('v-model="formData.ruleContent.title"')
     expect(content).toContain('v-model="formData.ruleContent.subContent"')
     expect(content).toContain('v-model="formData.ruleContent.replaceRegex"')
@@ -81,20 +82,20 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('发现规则包含快捷复制搜索规则功能', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('copySearchToExplore')
     expect(content).toContain('v-model="formData.exploreUrl"')
     expect(content).toContain('v-model="formData.ruleExplore.bookList"')
   })
 
   it('支持 cleanEmptyRules 自动过滤保存时的空字段', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('function cleanEmptyRules(')
     expect(content).toContain('cleanEmptyRules(formData.value)')
   })
 
   it('高级配置按已有字段自动展开，并向父级暴露统一工具方法', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content).toContain('resolveAdvancedSections')
     expect(content).toContain('activeAdvancedSections')
     expect(content).toContain('save: handleSave')
@@ -103,7 +104,7 @@ describe('SourceEditPanel.vue 结构与字段完整性测试', () => {
   })
 
   it('表单可变输入框与普通输入框同样式并严格按内容行数增高', () => {
-    const content = readFileSync(panelPath, 'utf-8')
+    const content = readPanel()
     expect(content.match(/:autosize="\{ minRows: 1 \}"/g)).toHaveLength(14)
     expect(content.match(/class="sharp-input auto-height-input/g)).toHaveLength(14)
     expect(content).not.toContain('maxRows')

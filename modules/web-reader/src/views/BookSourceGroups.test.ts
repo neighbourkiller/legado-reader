@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const source = (path: string) => readFileSync(resolve(__dirname, path), 'utf-8')
+const source = (path: string) => readFileSync(resolve(__dirname, path), 'utf-8').replace(/\r\n/g, '\n')
 
 describe('书源分组交互', () => {
   const view = source('./BookSourcesView.vue')

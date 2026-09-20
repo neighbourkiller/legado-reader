@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const bookSourcesView = readFileSync(resolve(__dirname, './BookSourcesView.vue'), 'utf-8')
+const bookSourcesView = readFileSync(resolve(__dirname, './BookSourcesView.vue'), 'utf-8').replace(/\r\n/g, '\n')
 
 describe('书源导入入口', () => {
   it('把导入书源放入前往菜单并复用原有导入弹窗', () => {
