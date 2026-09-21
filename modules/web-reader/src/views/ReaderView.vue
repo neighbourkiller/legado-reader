@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="readerRootRef"
     class="chapter-wrapper"
     :style="bodyTheme"
     :class="{
@@ -8,6 +9,8 @@
       'pagination-mode': isPaginationMode,
     }"
     @click="handleWrapperClick"
+    @contextmenu="onReaderContextMenu"
+    @keydown="onReaderContextKeyDown"
   >
     <!-- 常驻淡雅微页眉 -->
     <header class="reader-hud-header" :class="{ night: isNight }">
@@ -54,6 +57,7 @@
           v-model:visible="popCataVisible"
           popper-class="pop-cata reader-dock-popover"
           :popper-options="readerPopoverOptions"
+          @after-enter="focusContextPanel('.pop-cata')"
         >
           <PopCatalog @getContent="getContent" class="popup" />
           <template #reference>
@@ -83,6 +87,7 @@
           v-model:visible="readSettingsVisible"
           :popper-class="settingsPopoverClass"
           :popper-options="readerPopoverOptions"
+          @after-enter="focusContextPanel('.pop-setting')"
         >
           <ReadSettings class="popup" />
           <template #reference>
@@ -111,6 +116,8 @@
       class="chapter"
       :class="[pageTransitionClass, { 'pagination-chapter': isPaginationMode }]"
       ref="contentRef"
+      tabindex="0"
+      aria-label="阅读正文"
       :style="[chapterTheme, pageTransitionTheme]"
       @click="handleChapterClick"
     >
@@ -195,6 +202,17 @@
       @highlight-delete="removeHighlight"
     />
 
+    <ReaderContextMenu
+      v-if="contextMenuPosition"
+      :position="contextMenuPosition"
+      :background="popupColor"
+      :color="isNight ? '#d4d4d8' : chapterTheme.color"
+      :is-night="isNight"
+      :is-fullscreen="isFullscreen"
+      @action="handleContextMenuAction"
+      @close="closeContextMenu()"
+    />
+
     <ReaderSelectionMenu
       v-if="selectionSnapshot"
       class="reader-selection-menu"
@@ -249,6 +267,8 @@ import { useReadingStore, type ChapterPayload } from '@/stores/reading'
 import { useBookshelfStore } from '@/stores/bookshelf'
 import type { ReaderPageAnimation } from '@/parsers/types'
 import { useFullscreen } from '@/composables/useFullscreen'
+import { useReaderContextMenu, type ReaderContextMenuAction } from '@/composables/useReaderContextMenu'
+import ReaderContextMenu from '@/components/ReaderContextMenu.vue'
 import PopCatalog from '@/components/PopCatalog.vue'
 import ReadSettings from '@/components/ReadSettings.vue'
 import ChapterContent from '@/components/ChapterContent.vue'
@@ -381,6 +401,7 @@ const topRef = ref<HTMLElement>()
 const bottomRef = ref<HTMLElement>()
 const loadingRef = ref<HTMLElement>()
 const contentRef = ref<HTMLElement>()
+const readerRootRef = ref<HTMLElement>()
 const pageViewportRef = ref<HTMLElement>()
 const pageContentRef = ref<HTMLElement>()
 const scrollHostRef = ref<HTMLElement | null>(null)
@@ -397,6 +418,78 @@ const dockVisible = ref(false)
 const pointerNearDock = ref(false)
 let dockHideTimer: number | undefined
 const moreMenuVisible = ref(false)
+let selectionMenuTimer: ReturnType<typeof setTimeout> | undefined
+let contextPanelToFocus: string | null = null
+const {
+  position: contextMenuPosition,
+  close: closeContextMenu,
+  onContextMenu: onReaderContextMenu,
+  onKeyDown: onReaderContextKeyDown,
+} = useReaderContextMenu({
+  root: readerRootRef,
+  content: contentRef,
+  blocked: () => !currentBook.value || downloadDialogVisible.value || replaceDialogVisible.value
+    || highlightEditVisible.value || bookmarkDrawerVisible.value || pageTurnGuideVisible.value,
+  beforeOpen: () => {
+    clearSelectionMenu(false)
+    popCataVisible.value = false
+    readSettingsVisible.value = false
+    contextPanelToFocus = null
+    dockVisible.value = false
+    clearDockHideTimer()
+  },
+})
+
+const focusContextPanel = (selector: string) => {
+  if (contextPanelToFocus !== selector) return
+  contextPanelToFocus = null
+  const panel = document.querySelector<HTMLElement>(selector)
+  if (!panel) return
+  const target = panel.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')
+  if (target) target.focus({ preventScroll: true })
+  else {
+    panel.tabIndex = -1
+    panel.focus({ preventScroll: true })
+  }
+}
+
+const handleContextMenuAction = async (action: ReaderContextMenuAction) => {
+  const generation = readerLifecycleGeneration
+  // 先恢复到正文/原入口，使新面板关闭时不会尝试回到已卸载的菜单项。
+  closeContextMenu()
+  popCataVisible.value = false
+  readSettingsVisible.value = false
+  contextPanelToFocus = null
+  if (action === 'catalog' || action === 'settings') {
+    showDock()
+    await nextTick()
+    if (generation !== readerLifecycleGeneration) return
+    if (action === 'catalog') {
+      contextPanelToFocus = '.pop-cata'
+      popCataVisible.value = true
+    } else {
+      await updateSettingsPanelPosition()
+      if (generation !== readerLifecycleGeneration) return
+      contextPanelToFocus = '.pop-setting'
+      readSettingsVisible.value = true
+    }
+    scheduleDockHide()
+  } else if (action === 'bookmarks') {
+    await openBookmarksDrawer()
+  } else if (action === 'fullscreen') {
+    try { await toggleFullscreen() } catch (error) {
+      console.error('切换全屏失败', error)
+      ElMessage.error('切换全屏失败，请重试')
+    }
+  } else {
+    toShelf()
+  }
+}
+
+watch(() => [currentBook.value?.id, currentBook.value?.currentChapter, route.query], () => {
+  closeContextMenu()
+  contextPanelToFocus = null
+})
 const currentTimeStr = ref('')
 let timeInterval: number | undefined
 
@@ -443,6 +536,7 @@ const scheduleDockHide = () => {
 }
 
 const handleWindowMouseMove = (event: MouseEvent) => {
+  if (contextMenuPosition.value) return
   // 当鼠标位于弹出的菜单面板（如目录、设置、下拉项）内部时，不计入 Dock 底部邻近感应区
   const target = event.target as HTMLElement | null
   const isInsidePopover = target?.closest('.reader-dock-popover, .el-popper') !== null
@@ -1293,6 +1387,8 @@ const removeHighlight = async (highlight: HighlightRecord) => {
 }
 
 const clearSelectionMenu = (clearNativeSelection = true) => {
+  clearTimeout(selectionMenuTimer)
+  selectionMenuTimer = undefined
   selectionSnapshot.value = null
   if (clearNativeSelection) window.getSelection()?.removeAllRanges()
 }
@@ -1306,6 +1402,8 @@ const isImageChapter = (chapterIndex?: number) => {
 }
 
 const showSelectionMenu = () => {
+  selectionMenuTimer = undefined
+  if (contextMenuPosition.value) return
   if (replaceDialogVisible.value || highlightEditVisible.value) return
   const snapshot = captureReaderSelection(window.getSelection())
   if (!snapshot) {
@@ -1328,12 +1426,14 @@ const showSelectionMenu = () => {
 }
 
 const onSelectionPointerUp = (event: PointerEvent) => {
+  if (contextMenuPosition.value || (event.pointerType !== 'touch' && event.button !== 0)) return
   if (isImageChapter()) {
     clearSelectionMenu()
     return
   }
   if ((event.target as Element | null)?.closest('.reader-selection-menu')) return
-  window.setTimeout(showSelectionMenu, 0)
+  clearTimeout(selectionMenuTimer)
+  selectionMenuTimer = setTimeout(showSelectionMenu, 0)
 }
 
 const copySelection = async () => {
@@ -1718,6 +1818,7 @@ const toNextChapter = async () => {
 // 键盘事件
 let canJump = true
 const handleKeyPress = async (event: KeyboardEvent) => {
+  if (contextMenuPosition.value) return
   if (event.key === 'Escape' && selectionSnapshot.value) {
     event.stopPropagation()
     clearSelectionMenu()
@@ -2024,6 +2125,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearTimeout(selectionMenuTimer)
+  contextPanelToFocus = null
   readerLifecycleGeneration += 1
   contentGeneration += 1
   clearTimeout(startupFailureTimer)
@@ -2052,6 +2155,9 @@ onUnmounted(() => {
 let isLeavingConfirmed = false
 
 onBeforeRouteLeave(async (to, from) => {
+  closeContextMenu()
+  clearTimeout(selectionMenuTimer)
+  contextPanelToFocus = null
   // 如果只是在当前阅读器内部切换 query（如跳转到特定书签或章节位置），不触发离开逻辑
   if (to.name === 'reader' && to.params.id === from.params.id) {
     return true
