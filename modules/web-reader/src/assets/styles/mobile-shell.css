@@ -1,0 +1,76 @@
+:root {
+  --mobile-primary-nav-height: 64px;
+  --mobile-primary-nav-total-height: calc(
+    var(--mobile-primary-nav-height) + env(safe-area-inset-bottom, 0px)
+  );
+}
+
+html.dark .mobile-primary-shell {
+  --mobile-bg: #0d1218;
+  --mobile-surface: #171e27;
+  --mobile-surface-raised: #1d2631;
+  --mobile-border: #2b3541;
+  --mobile-text: #f3f6fa;
+  --mobile-text-muted: #929ead;
+  --mobile-nav-background: rgba(13, 18, 24, 0.94);
+  --mobile-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+  color-scheme: dark;
+}
+
+html:not(.dark) .mobile-primary-shell {
+  --mobile-bg: #f4f6f9;
+  --mobile-surface: #ffffff;
+  --mobile-surface-raised: #eef2f6;
+  --mobile-border: #dce3eb;
+  --mobile-text: #18212c;
+  --mobile-text-muted: #687586;
+  --mobile-nav-background: rgba(255, 255, 255, 0.94);
+  --mobile-shadow: 0 16px 34px rgba(44, 62, 80, 0.1);
+  color-scheme: light;
+}
+
+/* 手机端表格使用直角外框，保留行列边界和内部交互控件的原有形态。 */
+html.mobile-web .el-table,
+html.mobile-web .el-table__inner-wrapper,
+html.mobile-web .el-table__header-wrapper,
+html.mobile-web .el-table__body-wrapper,
+html.mobile-web .el-table__footer-wrapper,
+html.mobile-web .el-table--border,
+html.mobile-web .el-table__empty-block,
+html.mobile-web .el-table-v2,
+html.mobile-web .el-table-v2__root,
+html.mobile-web .el-table-v2__main,
+html.mobile-web .el-table-v2__left,
+html.mobile-web .el-table-v2__right,
+html.mobile-web .audit-matrix,
+html.mobile-web table {
+  border-radius: 0 !important;
+}
+
+/* 手机端内容面板采用直角矩形；封面、进度条和圆形图标保留各自语义形态。 */
+html.mobile-web .el-button,
+html.mobile-web .el-input__wrapper,
+html.mobile-web .el-select__wrapper,
+html.mobile-web .el-card,
+html.mobile-web .book-item-card,
+html.mobile-web .recent-reading-card,
+html.mobile-web .recent-reading-card__action,
+html.mobile-web .mobile-home-dashboard__empty button,
+html.mobile-web .mobile-home-dashboard__empty-mark,
+html.mobile-web .shelf-empty,
+html.mobile-web .navigation-group,
+html.mobile-web .preference-list,
+html.mobile-web .about-card,
+html.mobile-web .about-details,
+html.mobile-web .record-list,
+html.mobile-web .summary-card,
+html.mobile-web .history-list,
+html.mobile-web .native-folder-action,
+html.mobile-web .scope-tip,
+html.mobile-web .list-header,
+html.mobile-web .file-list,
+html.mobile-web .cache-summary,
+html.mobile-web .cache-list,
+html.mobile-web .rule-list {
+  border-radius: 0 !important;
+}

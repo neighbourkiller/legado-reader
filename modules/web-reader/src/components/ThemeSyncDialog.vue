@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="prompt.visible"
     title="同步阅读页主题"
-    width="420px"
+    width="min(420px, calc(100vw - 32px))"
     :close-on-click-modal="false"
     @close="closePrompt"
   >

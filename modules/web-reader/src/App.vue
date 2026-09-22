@@ -6,6 +6,7 @@
         'desktop-app': isDesktop,
         'desktop-app-with-titlebar': isDesktop && !isFullscreen,
         'reader-surface-active': isReaderRoute,
+        'mobile-primary-shell': showMobilePrimaryNav,
       }"
       :style="readerSurfaceStyle"
     >
@@ -15,22 +16,29 @@
       </div>
       <GlobalDownloadProgress />
       <ThemeSyncDialog />
-      <GlobalHomeButton />
-      <GlobalSettingsButton />
+      <MobilePrimaryNav v-if="showMobilePrimaryNav" :items="mobileNavItems" />
+      <template v-else>
+        <GlobalHomeButton />
+        <GlobalSettingsButton />
+      </template>
     </div>
   </el-config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, markRaw, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { Collection, HomeFilled, Setting } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFullscreen } from '@/composables/useFullscreen'
+import { useMobileWebLayout } from '@/composables/useMobileWebLayout'
 import GlobalDownloadProgress from '@/components/GlobalDownloadProgress.vue'
 import ThemeSyncDialog from '@/components/ThemeSyncDialog.vue'
 import GlobalHomeButton from '@/components/GlobalHomeButton.vue'
 import GlobalSettingsButton from '@/components/GlobalSettingsButton.vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
+import MobilePrimaryNav from '@/components/mobile/MobilePrimaryNav.vue'
+import type { MobileNavItem } from '@/mobile/navigation'
 import { useAppSettingsStore } from '@/stores/appSettings'
 import { useReadingStore } from '@/stores/reading'
 import {
@@ -48,6 +56,17 @@ useAppSettingsStore()
 const route = useRoute()
 const readingStore = useReadingStore()
 const { isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen()
+const { isMobileWeb } = useMobileWebLayout()
+
+const mobileNavItems: readonly MobileNavItem[] = [
+  { name: 'home', label: '首页', to: '/', icon: markRaw(HomeFilled) },
+  { name: 'bookshelf', label: '书架', to: '/bookshelf', icon: markRaw(Collection) },
+  { name: 'settings', label: '设置', to: '/settings', icon: markRaw(Setting) },
+]
+const mobilePrimaryRoutes = new Set(['home', 'bookshelf', 'settings'])
+const showMobilePrimaryNav = computed(() =>
+  isMobileWeb.value && mobilePrimaryRoutes.has(String(route.name ?? '')),
+)
 
 const isReaderRoute = computed(() => route.name === 'reader')
 const readerSurfaceBackground = computed(() =>
@@ -76,6 +95,13 @@ const stopWatchingFullscreen = watch(isFullscreen, syncDesktopTitlebarClass, {
   immediate: true,
 })
 
+const stopWatchingMobileWeb = watch(isMobileWeb, (mobile) => {
+  if (typeof document === 'undefined') return
+  document.documentElement.classList.toggle('mobile-web', mobile)
+}, {
+  immediate: true,
+})
+
 const handleGlobalKeyDown = async (e: KeyboardEvent) => {
   if (e.key === 'F11') {
     e.preventDefault()
@@ -94,8 +120,10 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeyDown)
   stopWatchingFullscreen()
+  stopWatchingMobileWeb()
   stopWatchingReaderSurface()
   document.documentElement.classList.remove('desktop-with-titlebar')
+  document.documentElement.classList.remove('mobile-web')
   syncReaderSurfaceDocument(false, readerSurfaceBackground.value)
 })
 </script>
@@ -162,6 +190,27 @@ html.reader-surface-active #app {
 .app-container.reader-surface-active,
 .app-container.reader-surface-active .app-content {
   background: var(--reader-surface-background, #f4eee1);
+}
+
+.mobile-primary-shell {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--mobile-text);
+  background: var(--mobile-bg);
+}
+
+.mobile-primary-shell .app-content {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: var(--mobile-primary-nav-total-height);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  background: var(--mobile-bg);
 }
 
 .app-container.reader-surface-active {

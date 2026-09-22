@@ -1,7 +1,7 @@
 <template>
   <div
     class="bookshelf-index-wrapper"
-    :class="{ dark: isDark, light: !isDark }"
+    :class="{ dark: isDark, light: !isDark, 'mobile-layout': isMobileWeb }"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
@@ -19,17 +19,31 @@
     <!-- Left Navigation Sidebar -->
     <aside class="navigation-wrapper">
       <div class="nav-top">
-        <div class="navigation-title-wrapper" @click="router.push('/')">
+        <header v-if="isMobileWeb" class="mobile-shelf-heading">
+          <h1>书架</h1>
+          <button
+            type="button"
+            aria-label="搜索书架"
+            :aria-expanded="isMobileSearchVisible"
+            @click="showMobileSearch"
+          >
+            <el-icon><Search /></el-icon>
+          </button>
+        </header>
+
+        <div v-else class="navigation-title-wrapper" @click="router.push('/')">
           <div class="navigation-title">阅读</div>
           <div class="navigation-sub-title">清风不识字，何故乱翻书</div>
         </div>
 
-        <div class="search-wrapper">
+        <div v-show="!isMobileWeb || isMobileSearchVisible" class="search-wrapper">
           <el-input
+            ref="searchInputRef"
             v-model="searchWord"
             placeholder="搜索书架中的书籍..."
             class="search-input"
             clearable
+            @keydown.esc="closeMobileSearch"
           >
             <template #prefix>
               <el-icon class="search-icon"><Search /></el-icon>
@@ -37,7 +51,7 @@
           </el-input>
         </div>
 
-        <div class="bottom-wrapper">
+        <div v-if="!isMobileWeb" class="bottom-wrapper">
           <div class="recent-wrapper">
             <div class="recent-title">最近阅读</div>
             <div class="reading-recent">
@@ -104,7 +118,7 @@
             书源管理
           </el-button>
           <el-button type="primary" :icon="Plus" class="import-btn" @click="triggerUpload">
-            传书 / 导入书籍
+            导入书籍
           </el-button>
           <el-button plain class="back-home-btn" @click="router.push('/')">
             返回首页
@@ -233,9 +247,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessageBox, ElMessage } from 'element-plus'
+import { ref, computed, nextTick, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox, ElMessage, type InputInstance } from 'element-plus'
 import { ArrowDown, Plus, Search, Sort as SortIcon, UploadFilled } from '@element-plus/icons-vue'
 import '@/assets/fonts/shelffont.css'
 import defaultCover from '@/assets/imgs/default_cover.jpg'
@@ -252,16 +266,21 @@ import { useBookshelfStore } from '@/stores/bookshelf'
 import { useAppSettingsStore } from '@/stores/appSettings'
 import { useTheme } from '@/composables/useTheme'
 import { getPreference, setPreference } from '@/storage/preferences'
+import { useBookImport } from '@/composables/useBookImport'
+import { useMobileWebLayout } from '@/composables/useMobileWebLayout'
 
 import { platform } from '@/platform/capabilities'
 
 const router = useRouter()
+const route = useRoute()
 const isDesktop = platform.isDesktop
 const bookshelfStore = useBookshelfStore()
 const appSettingsStore = useAppSettingsStore()
 const { isDark } = useTheme()
+const { isMobileWeb } = useMobileWebLayout()
 
-const searchWord = ref('')
+const searchWord = ref(typeof route.query.q === 'string' ? route.query.q : '')
+const isMobileSearchVisible = shallowRef(Boolean(searchWord.value))
 type BookshelfSort = 'recent' | 'name' | 'author' | 'progress'
 const bookshelfSort = ref<BookshelfSort>('recent')
 const bookshelfSortLabels: Record<BookshelfSort, string> = {
@@ -271,8 +290,10 @@ const bookshelfSortLabels: Record<BookshelfSort, string> = {
   progress: '阅读进度',
 }
 const isDragging = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
+const searchInputRef = useTemplateRef<InputInstance>('searchInputRef')
+const fileInputRef = useTemplateRef<HTMLInputElement>('fileInputRef')
 const coverFileInputRef = ref<HTMLInputElement | null>(null)
+const { importFiles } = useBookImport()
 
 const showEditDialog = ref(false)
 const startupRestoreGuideVersion = ref(getPreference(STARTUP_RESTORE_GUIDE_KEY))
@@ -288,6 +309,23 @@ let dragCounter = 0
 onMounted(async () => {
   await bookshelfStore.loadBooks()
 })
+
+watch(() => route.query.q, value => {
+  searchWord.value = typeof value === 'string' ? value : ''
+  if (searchWord.value) isMobileSearchVisible.value = true
+})
+
+const showMobileSearch = async () => {
+  isMobileSearchVisible.value = true
+  await nextTick()
+  searchInputRef.value?.focus()
+}
+
+const closeMobileSearch = () => {
+  if (!isMobileWeb.value) return
+  searchWord.value = ''
+  isMobileSearchVisible.value = false
+}
 
 const filteredBooks = computed(() => {
   const query = searchWord.value.trim().toLowerCase()
@@ -401,7 +439,7 @@ const handleFileSelect = async (e: Event) => {
   const files = target.files
   if (!files || files.length === 0) return
 
-  await processFiles(Array.from(files))
+  await importFiles(files)
   target.value = ''
 }
 
@@ -428,37 +466,7 @@ const onDrop = async (e: DragEvent) => {
   const files = e.dataTransfer?.files
   if (!files || files.length === 0) return
 
-  await processFiles(Array.from(files))
-}
-
-const processFiles = async (files: File[]) => {
-  const validFiles = files.filter(f => {
-    const ext = f.name.split('.').pop()?.toLowerCase()
-    return ext === 'txt' || ext === 'epub'
-  })
-
-  if (validFiles.length === 0) {
-    ElMessage.error('仅支持导入 TXT 和 EPUB 格式的小说文件')
-    return
-  }
-
-  const loading = ElMessage({
-    message: `正在导入 ${validFiles.length} 本书籍...`,
-    type: 'info',
-    duration: 0
-  })
-
-  try {
-    for (const file of validFiles) {
-      await bookshelfStore.parseAndImportBook(file)
-    }
-    loading.close()
-    ElMessage.success('导入成功')
-  } catch (error) {
-    loading.close()
-    ElMessage.error('导入失败，请重试')
-    console.error(error)
-  }
+  await importFiles(files)
 }
 
 const handleEditBook = (book: BookMeta) => {
@@ -966,6 +974,145 @@ const saveEditBook = async () => {
 
   .books-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media screen and (max-width: 767px) {
+  .bookshelf-index-wrapper.mobile-layout {
+    height: auto;
+    min-height: calc(100vh - var(--mobile-primary-nav-total-height));
+    min-height: calc(100dvh - var(--mobile-primary-nav-total-height));
+    overflow: visible;
+    color: var(--mobile-text);
+    background: var(--mobile-bg);
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .navigation-wrapper {
+    width: 100%;
+    height: auto;
+    padding: calc(18px + env(safe-area-inset-top, 0px)) 16px 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--mobile-border);
+    background: var(--mobile-bg);
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .mobile-shelf-heading {
+    display: flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .mobile-shelf-heading h1 {
+    margin: 0;
+    color: var(--mobile-text);
+    font-size: 30px;
+    font-weight: 760;
+    line-height: 1.2;
+    letter-spacing: -0.035em;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .mobile-shelf-heading button {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--mobile-border);
+    border-radius: 50%;
+    color: var(--mobile-text);
+    background: var(--mobile-surface-raised);
+    font-size: 21px;
+    cursor: pointer;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .mobile-shelf-heading button:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 2px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .search-wrapper {
+    margin-top: 14px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .search-input :deep(.el-input__wrapper) {
+    min-height: 52px;
+    padding: 0 14px;
+    border-radius: 14px;
+    background: var(--mobile-surface-raised);
+    box-shadow: 0 0 0 1px var(--mobile-border) inset;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .search-input :deep(.el-input__inner) {
+    color: var(--mobile-text);
+    font-size: 15px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .bottom-icons {
+    display: none;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-wrapper {
+    height: auto;
+    min-height: 0;
+    padding: 20px 16px 28px;
+    overflow: visible;
+    background: var(--mobile-bg);
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-header {
+    gap: 14px;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-color: var(--mobile-border);
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-count-text {
+    color: var(--mobile-text);
+    font-size: 20px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-header-right {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+    width: 100%;
+    gap: 10px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-header-right > * {
+    margin: 0;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-header-right :deep(.el-button) {
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    border-radius: 12px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .back-home-btn {
+    display: none;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .books-grid {
+    gap: 10px;
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .books-grid :deep(.book-item-card) {
+    min-height: 126px;
+    padding: 14px;
+    border: 1px solid var(--mobile-border);
+    border-radius: 14px;
+    background: var(--mobile-surface);
+  }
+
+  .bookshelf-index-wrapper.mobile-layout .shelf-empty {
+    padding: 48px 12px;
+    border: 1px dashed var(--mobile-border);
+    border-radius: 16px;
+    background: var(--mobile-surface);
   }
 }
 

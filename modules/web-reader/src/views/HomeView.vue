@@ -1,5 +1,7 @@
 <template>
+  <MobileHomeDashboard v-if="isMobileWeb" />
   <div
+    v-else
     class="home-wrapper"
     :class="{ 'menu-open': showMenu }"
     @dragover.prevent="onDragOver"
@@ -160,21 +162,27 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { useBookshelfStore } from '@/stores/bookshelf'
 import { platform } from '@/platform/capabilities'
+import { useBookImport } from '@/composables/useBookImport'
+import { useMobileWebLayout } from '@/composables/useMobileWebLayout'
+import MobileHomeDashboard from '@/components/mobile/MobileHomeDashboard.vue'
 
 const router = useRouter()
-const bookshelfStore = useBookshelfStore()
+const { isMobileWeb } = useMobileWebLayout()
+const { importFiles } = useBookImport({
+  afterSuccess: async () => {
+    await router.push('/bookshelf')
+  },
+})
 
 const showMenu = ref(false)
 const showBookSourceModal = ref(false)
 const showRssSourceModal = ref(false)
 const isDragging = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
+const fileInputRef = useTemplateRef<HTMLInputElement>('fileInputRef')
 
 let dragCounter = 0
 
@@ -230,7 +238,7 @@ const onDrop = async (e: DragEvent) => {
   const files = e.dataTransfer?.files
   if (!files || files.length === 0) return
 
-  await processFiles(Array.from(files))
+  await importFiles(files)
 }
 
 const handleFileSelect = async (e: Event) => {
@@ -238,39 +246,8 @@ const handleFileSelect = async (e: Event) => {
   const files = target.files
   if (!files || files.length === 0) return
 
-  await processFiles(Array.from(files))
+  await importFiles(files)
   target.value = ''
-}
-
-const processFiles = async (files: File[]) => {
-  const validFiles = files.filter(f => {
-    const ext = f.name.split('.').pop()?.toLowerCase()
-    return ext === 'txt' || ext === 'epub'
-  })
-
-  if (validFiles.length === 0) {
-    ElMessage.error('仅支持导入 TXT 和 EPUB 格式的小说文件')
-    return
-  }
-
-  const loading = ElMessage({
-    message: `正在导入 ${validFiles.length} 本书籍...`,
-    type: 'info',
-    duration: 0
-  })
-
-  try {
-    for (const file of validFiles) {
-      await bookshelfStore.parseAndImportBook(file)
-    }
-    loading.close()
-    ElMessage.success('导入成功')
-    router.push('/bookshelf')
-  } catch (error) {
-    loading.close()
-    ElMessage.error('导入失败，请重试')
-    console.error(error)
-  }
 }
 </script>
 

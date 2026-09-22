@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-view">
+  <div class="settings-view" :class="{ 'mobile-layout': isMobileWeb }">
     <header class="settings-header">
       <el-button text @click="closeSettings">
         <el-icon><ArrowLeft /></el-icon>
@@ -9,7 +9,7 @@
     </header>
 
     <main class="settings-window">
-      <aside class="settings-sidebar">
+      <aside v-if="!isMobileWeb || !mobilePanelOpen" class="settings-sidebar">
         <el-input
           v-model="searchKeyword"
           class="settings-search"
@@ -26,11 +26,12 @@
               :key="item.key"
               type="button"
               class="navigation-item"
-              :class="{ active: selectedKey === item.key }"
+              :class="{ active: !isMobileWeb && selectedKey === item.key }"
               @click="selectItem(item)"
             >
               <el-icon><component :is="item.icon" /></el-icon>
               <span>{{ item.title }}</span>
+              <el-icon v-if="isMobileWeb" class="navigation-chevron"><ArrowRight /></el-icon>
             </button>
           </section>
 
@@ -42,7 +43,16 @@
         </nav>
       </aside>
 
-      <section class="settings-panel">
+      <section v-if="!isMobileWeb || mobilePanelOpen" class="settings-panel">
+        <button
+          v-if="isMobileWeb"
+          type="button"
+          class="mobile-panel-back"
+          @click="backToSettingsList"
+        >
+          <el-icon><ArrowLeft /></el-icon>
+          设置列表
+        </button>
         <div class="panel-breadcrumb">{{ selectedGroupTitle }} &gt; {{ selectedItem.title }}</div>
         <div class="panel-heading">
           <div class="heading-icon"><el-icon><component :is="selectedItem.icon" /></el-icon></div>
@@ -133,11 +143,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import type { Component } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
+  ArrowRight,
   Search,
   Collection,
   Operation,
@@ -163,6 +174,7 @@ import FileManagerPanel from '@/components/settings/FileManagerPanel.vue'
 import BackupPanel from '@/components/settings/BackupPanel.vue'
 import AboutPanel from '@/components/settings/AboutPanel.vue'
 import ReplaceRulesPanel from '@/components/settings/ReplaceRulesPanel.vue'
+import { useMobileWebLayout } from '@/composables/useMobileWebLayout'
 
 type SettingKey =
   | 'preferences'
@@ -189,8 +201,10 @@ interface SettingGroup {
 }
 
 const router = useRouter()
+const route = useRoute()
 const appSettingsStore = useAppSettingsStore()
-const searchKeyword = ref('')
+const { isMobileWeb } = useMobileWebLayout()
+const searchKeyword = shallowRef('')
 const isDesktopBuild = import.meta.env.VITE_APP_TARGET === 'desktop'
 
 const groups: SettingGroup[] = [
@@ -226,7 +240,14 @@ const groups: SettingGroup[] = [
 ]
 
 const selectableItems = groups.flatMap(group => group.items).filter(item => !item.path)
-const selectedKey = ref<SettingKey>('preferences')
+const resolveSettingKey = (value: unknown): SettingKey | null => {
+  if (typeof value !== 'string') return null
+  return selectableItems.some(item => item.key === value) ? value as SettingKey : null
+}
+
+const initialSettingKey = resolveSettingKey(route.query.section)
+const selectedKey = shallowRef<SettingKey>(initialSettingKey ?? 'preferences')
+const mobilePanelOpen = shallowRef(Boolean(initialSettingKey))
 
 const selectedItem = computed(() => {
   return selectableItems.find(item => item.key === selectedKey.value) ?? selectableItems[0]
@@ -250,6 +271,23 @@ const filteredGroups = computed(() => {
     .filter(group => group.items.length > 0)
 })
 
+const resetMobileScroll = async () => {
+  if (!isMobileWeb.value) return
+  await nextTick()
+  document.querySelector<HTMLElement>('.app-content')?.scrollTo({ top: 0 })
+}
+
+watch(() => route.query.section, section => {
+  const settingKey = resolveSettingKey(section)
+  if (settingKey) {
+    selectedKey.value = settingKey
+    if (isMobileWeb.value) mobilePanelOpen.value = true
+  } else if (isMobileWeb.value) {
+    mobilePanelOpen.value = false
+  }
+  void resetMobileScroll()
+})
+
 const closeSettings = () => {
   if (window.history.state?.back) {
     router.back()
@@ -264,6 +302,15 @@ const selectItem = (item: SettingItem) => {
     return
   }
   selectedKey.value = item.key as SettingKey
+  if (isMobileWeb.value) {
+    mobilePanelOpen.value = true
+    void router.push({ path: '/settings', query: { section: item.key } })
+  }
+}
+
+const backToSettingsList = () => {
+  mobilePanelOpen.value = false
+  void router.replace('/settings')
 }
 
 const handleActionChange = (value: string | number | boolean | undefined) => {
@@ -499,6 +546,157 @@ const handleReaderInfiniteLoadingChange = (value: string | number | boolean | un
 
   .panel-breadcrumb {
     margin-bottom: 16px;
+  }
+}
+
+@media screen and (max-width: 767px) {
+  .settings-view.mobile-layout {
+    height: auto;
+    min-height: calc(100vh - var(--mobile-primary-nav-total-height));
+    min-height: calc(100dvh - var(--mobile-primary-nav-total-height));
+    overflow: visible;
+    color: var(--mobile-text);
+    background: var(--mobile-bg);
+  }
+
+  .settings-view.mobile-layout .settings-header {
+    height: auto;
+    min-height: 72px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 12px;
+    border-color: var(--mobile-border);
+    background: var(--mobile-bg);
+  }
+
+  .settings-view.mobile-layout .settings-header :deep(.el-button) {
+    display: none;
+  }
+
+  .settings-view.mobile-layout .settings-header h1 {
+    color: var(--mobile-text);
+    font-size: 30px;
+    font-weight: 760;
+    letter-spacing: -0.035em;
+  }
+
+  .settings-view.mobile-layout .settings-window {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .settings-view.mobile-layout .settings-sidebar {
+    min-height: 0;
+    max-height: none;
+    padding: 14px 16px 18px;
+    border-right: 0;
+    border-bottom: 1px solid var(--mobile-border);
+    background: var(--mobile-bg);
+  }
+
+  .settings-view.mobile-layout .settings-search :deep(.el-input__wrapper) {
+    min-height: 50px;
+    padding: 0 14px;
+    border-radius: 14px;
+    background: var(--mobile-surface-raised);
+    box-shadow: 0 0 0 1px var(--mobile-border) inset;
+  }
+
+  .settings-view.mobile-layout .settings-navigation {
+    display: grid;
+    gap: 14px;
+    overflow: visible;
+  }
+
+  .settings-view.mobile-layout .navigation-group {
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--mobile-border);
+    border-radius: 14px;
+    background: var(--mobile-surface);
+  }
+
+  .settings-view.mobile-layout .navigation-group h2 {
+    margin: 6px 10px 7px;
+    color: var(--mobile-text-muted);
+  }
+
+  .settings-view.mobile-layout .navigation-item {
+    min-height: 44px;
+    height: auto;
+    border-radius: 10px;
+    color: var(--mobile-text-muted);
+  }
+
+  .settings-view.mobile-layout .navigation-item > span {
+    flex: 1;
+  }
+
+  .settings-view.mobile-layout .navigation-chevron {
+    flex: 0 0 auto;
+    color: var(--mobile-text-muted);
+    font-size: 16px;
+  }
+
+  .settings-view.mobile-layout .navigation-item.active {
+    color: var(--el-color-primary);
+    background: rgba(var(--legado-primary-rgb), 0.12);
+  }
+
+  .settings-view.mobile-layout .settings-panel {
+    min-height: calc(100dvh - 72px - var(--mobile-primary-nav-total-height));
+    padding: 14px 16px 32px;
+    overflow: visible;
+    background: var(--mobile-bg);
+  }
+
+  .settings-view.mobile-layout .mobile-panel-back {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 12px -8px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 10px;
+    color: var(--el-color-primary);
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .settings-view.mobile-layout .mobile-panel-back:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 1px;
+  }
+
+  .settings-view.mobile-layout .panel-breadcrumb {
+    display: none;
+  }
+
+  .settings-view.mobile-layout .panel-heading {
+    align-items: flex-start;
+    border-color: var(--mobile-border);
+  }
+
+  .settings-view.mobile-layout .heading-icon {
+    flex: 0 0 auto;
+    border-radius: 12px;
+    background: rgba(var(--legado-primary-rgb), 0.12);
+  }
+
+  .settings-view.mobile-layout .preference-list {
+    border-color: var(--mobile-border);
+    border-radius: 14px;
+    background: var(--mobile-surface);
+  }
+
+  .settings-view.mobile-layout .preference-row {
+    gap: 14px;
+    padding: 16px;
+    border-color: var(--mobile-border);
   }
 }
 </style>
