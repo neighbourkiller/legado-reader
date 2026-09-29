@@ -1,9 +1,26 @@
 use super::*;
 use std::io::Write;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc;
 use std::thread;
 
 type HttpParts = Vec<(Duration, Vec<u8>)>;
+
+fn read_test_request(stream: &mut TcpStream) -> std::io::Result<bool> {
+    // Windows accept 会继承监听 socket 的非阻塞模式；请求尚未到达时必须等待，
+    // 否则 WouldBlock 会使测试服务提前断开，根本没有执行预期的延迟响应。
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut request = Vec::new();
+    let mut byte = [0u8];
+    while !request.ends_with(b"\r\n\r\n") {
+        if stream.read(&mut byte)? == 0 {
+            return Ok(false);
+        }
+        request.push(byte[0]);
+    }
+    Ok(true)
+}
 
 // 仅测试客户端将公开域名解析到本地服务；生产 URL/DNS 策略保持不变。
 fn server(responses: Vec<HttpParts>) -> (String, Client, thread::JoinHandle<()>) {
@@ -25,16 +42,8 @@ fn server(responses: Vec<HttpParts>) -> (String, Client, thread::JoinHandle<()>)
                     Err(error) => panic!("{error}"),
                 }
             };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let mut request = Vec::new();
-            let mut byte = [0u8];
-            while !request.ends_with(b"\r\n\r\n") {
-                if stream.read(&mut byte).unwrap_or(0) == 0 {
-                    return;
-                }
-                request.push(byte[0]);
+            if !read_test_request(&mut stream).expect("读取测试 HTTP 请求头失败") {
+                return;
             }
             for (delay, bytes) in parts {
                 thread::sleep(delay);
@@ -55,6 +64,36 @@ fn server(responses: Vec<HttpParts>) -> (String, Client, thread::JoinHandle<()>)
         client,
         handle,
     )
+}
+
+#[test]
+fn test_server_waits_for_request_on_inherited_nonblocking_socket() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (mut stream, _) = listener.accept().unwrap();
+    // 显式模拟 Windows 继承的非阻塞连接，让其他平台也能覆盖同一故障路径。
+    stream.set_nonblocking(true).unwrap();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        ready_tx.send(()).unwrap();
+        result_tx.send(read_test_request(&mut stream)).unwrap();
+    });
+    ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    // 请求头尚未发送时，服务端必须等待，不能把 WouldBlock 当成 EOF。
+    let early_result = result_rx.recv_timeout(Duration::from_millis(100));
+    assert!(
+        matches!(early_result, Err(mpsc::RecvTimeoutError::Timeout)),
+        "服务端在请求到达前结束读取: {early_result:?}"
+    );
+    client
+        .write_all(b"GET / HTTP/1.1\r\nHost: script.test\r\n\r\n")
+        .unwrap();
+    assert!(result_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap());
+    worker.join().unwrap();
 }
 
 fn execute_with_http(
@@ -78,28 +117,42 @@ fn execute_with_http(
     )
 }
 
-#[test]
-fn caught_host_timeout_cannot_return_success() {
-    for slow_body in [false, true] {
-        let header = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n".to_vec();
-        let parts = if slow_body {
-            vec![
-                (Duration::ZERO, header),
-                (Duration::from_millis(600), b"ok".to_vec()),
-            ]
-        } else {
-            vec![(
-                Duration::from_millis(600),
-                [header, b"ok".to_vec()].concat(),
-            )]
+fn assert_caught_host_timeout(slow_body: bool) {
+    let header = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n".to_vec();
+    let parts = if slow_body {
+        vec![
+            (Duration::ZERO, header),
+            (Duration::from_millis(600), b"ok".to_vec()),
+        ]
+    } else {
+        vec![(
+            Duration::from_millis(600),
+            [header, b"ok".to_vec()].concat(),
+        )]
+    };
+    let (url, client, worker) = server(vec![parts]);
+    let code = format!("try {{ java.ajax({url:?}); }} catch (e) {{ java.log(String(e)); }}; 'ok'");
+    let started = Instant::now();
+    let result = execute_with_http(code, client, 150);
+    let elapsed = started.elapsed();
+    worker.join().unwrap();
+    let error = match result {
+            Err(error) => error,
+            Ok(response) => panic!(
+                "预期总预算超时: slow_body={slow_body}, budget=150ms, elapsed={elapsed:?}, response={response:?}"
+            ),
         };
-        let (url, client, worker) = server(vec![parts]);
-        let code = format!("try {{ java.ajax({url:?}); }} catch (e) {{}}; 'ok'");
-        let result = execute_with_http(code, client, 150);
-        worker.join().unwrap();
-        let error = result.unwrap_err();
-        assert_eq!(error.code, "JS_TIMEOUT", "{}", error.message);
-    }
+    assert_eq!(error.code, "JS_TIMEOUT", "{}", error.message);
+}
+
+#[test]
+fn caught_host_header_timeout_cannot_return_success() {
+    assert_caught_host_timeout(false);
+}
+
+#[test]
+fn caught_host_body_timeout_cannot_return_success() {
+    assert_caught_host_timeout(true);
 }
 
 #[test]
