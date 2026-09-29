@@ -120,7 +120,15 @@
           <el-button type="primary" :icon="Plus" class="import-btn" @click="triggerUpload">
             导入书籍
           </el-button>
-          <el-button plain class="back-home-btn" @click="router.push('/')">
+          <el-button
+            v-if="isDesktop"
+            plain
+            :icon="Search"
+            aria-label="搜索书籍"
+            title="搜索书籍"
+            @click="router.push('/search')"
+          />
+          <el-button v-else plain class="back-home-btn" @click="router.push('/')">
             返回首页
           </el-button>
         </div>

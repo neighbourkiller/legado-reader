@@ -7,6 +7,9 @@ export const useSearchStore = defineStore('search', () => {
   const results = ref<SearchResult[]>([])
   const hasSearched = ref(false)
   const targetSourceUrl = ref('')
+  const exactSearch = ref(false)
+  // null 表示全部已启用书源，空数组表示未选择任何分组；空字符串代表未分组。
+  const selectedGroups = ref<string[] | null>(null)
 
   function setResults(kw: string, res: SearchResult[], sourceUrl = '') {
     keyword.value = kw
@@ -25,6 +28,8 @@ export const useSearchStore = defineStore('search', () => {
     results,
     hasSearched,
     targetSourceUrl,
+    exactSearch,
+    selectedGroups,
     setResults,
     clearResults,
   }

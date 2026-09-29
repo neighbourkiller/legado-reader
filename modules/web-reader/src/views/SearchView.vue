@@ -2,12 +2,17 @@
   <div class="search-view">
     <div class="page-header">
       <div class="header-left">
-        <el-button text @click="router.push('/book-sources')">
+        <el-button text aria-label="返回" @click="goBack">
           <el-icon><ArrowLeft /></el-icon>
         </el-button>
         <h2 class="page-title">搜索书籍</h2>
       </div>
     </div>
+
+    <p class="search-scope" v-if="searchStore.exactSearch || searchStore.selectedGroups !== null">
+      <span v-if="searchStore.exactSearch">精准搜索：完整匹配书名或作者。</span>
+      <span v-if="searchStore.selectedGroups !== null">当前分组：{{ searchStore.selectedGroups.map(group => group || '未分组').join('、') || '未选择' }}</span>
+    </p>
 
     <!-- 指定书源检索指示条 -->
     <div class="target-source-bar" v-if="targetSource">
@@ -27,14 +32,19 @@
         size="large"
         clearable
         @keyup.enter="handleSearch"
-      >
-        <template #append>
-          <el-button @click="handleSearch" :loading="isSearching">
-            <el-icon><Search /></el-icon>
-            搜索
-          </el-button>
-        </template>
-      </el-input>
+      />
+      <el-button size="large" :icon="Search" :loading="isSearching" @click="handleSearch">
+        搜索
+      </el-button>
+      <SearchOptionsMenu
+        :exact-search="searchStore.exactSearch"
+        :groups="sourceGroups"
+        :selected-groups="searchStore.selectedGroups"
+        @toggle-exact="searchStore.exactSearch = !searchStore.exactSearch"
+        @manage-sources="router.push('/book-sources')"
+        @select-groups="selectGroups"
+        @all-sources="clearTargetSource"
+      />
     </div>
 
     <div class="search-results" v-loading="isSearching">
@@ -74,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Search } from '@element-plus/icons-vue'
@@ -83,6 +93,8 @@ import { useSearchStore } from '@/stores/search'
 import { SourceEngine } from '@/source/engine/SourceEngine'
 import { generateBookId } from '@/source/engine/RuleParser'
 import type { SearchResult, BookSource } from '@/source/types/BookSource'
+import SearchOptionsMenu from '@/components/search/SearchOptionsMenu.vue'
+import { getSearchSourceGroups, matchesExactSearch } from '@/utils/searchFilters'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,18 +108,25 @@ const keyword = computed({
 const isSearching = ref(false)
 const hasSearched = computed(() => searchStore.hasSearched)
 const results = computed(() => searchStore.results)
-const targetSourceUrl = ref<string>('')
+const targetSourceUrl = computed({
+  get: () => searchStore.targetSourceUrl,
+  set: (value: string) => { searchStore.targetSourceUrl = value },
+})
+const sourceGroups = computed(() => [...new Set(bookSourceStore.sources.flatMap(getSearchSourceGroups))]
+  .sort((a, b) => a.localeCompare(b, 'zh-CN')))
+
+function goBack() {
+  if (router.options.history.state.back) router.back()
+  else router.replace('/bookshelf')
+}
 
 onMounted(async () => {
+  if (typeof route.query.sourceUrl === 'string' && route.query.sourceUrl) {
+    searchStore.selectedGroups = null
+    targetSourceUrl.value = route.query.sourceUrl
+  }
   if (bookSourceStore.sources.length === 0) {
     await bookSourceStore.loadSources()
-  }
-
-  if (route.query.sourceUrl) {
-    targetSourceUrl.value = String(route.query.sourceUrl)
-    searchStore.targetSourceUrl = targetSourceUrl.value
-  } else if (searchStore.targetSourceUrl) {
-    targetSourceUrl.value = searchStore.targetSourceUrl
   }
 })
 
@@ -117,16 +136,27 @@ const targetSource = computed<BookSource | undefined>(() => {
 })
 
 const clearTargetSource = () => {
-  searchRequestId += 1
-  isSearching.value = false
   targetSourceUrl.value = ''
-  searchStore.targetSourceUrl = ''
+  searchStore.selectedGroups = null
   router.replace({ path: '/search' })
   ElMessage.info('已切回全书源搜索模式')
 }
 
+function selectGroups(groups: string[]) {
+  targetSourceUrl.value = ''
+  searchStore.selectedGroups = groups
+  router.replace({ path: '/search' })
+}
+
 let engine: SourceEngine | null = null
 let searchRequestId = 0
+
+// 选项变化立即使旧请求失效，避免旧范围的结果覆盖新选择。
+watch(() => [searchStore.exactSearch, searchStore.selectedGroups, targetSourceUrl.value], () => {
+  searchRequestId += 1
+  isSearching.value = false
+  searchStore.clearResults()
+}, { flush: 'sync', deep: true })
 
 function getEngine(): SourceEngine {
   if (!engine) {
@@ -146,19 +176,22 @@ const handleSearch = async () => {
 
   let searchSources: BookSource[] = []
 
-  if (targetSource.value) {
-    searchSources = [targetSource.value]
+  if (targetSourceUrl.value) {
+    searchSources = targetSource.value ? [targetSource.value] : []
   } else {
-    searchSources = [...bookSourceStore.getEnabledSources()]
+    const groups = searchStore.selectedGroups
+    searchSources = bookSourceStore.getEnabledSources().filter(source =>
+      groups === null || getSearchSourceGroups(source).some(group => groups.includes(group)))
   }
 
   if (searchSources.length === 0) {
     isSearching.value = false
-    ElMessage.warning('没有可用的书源进行搜索，请先启用至少一个书源')
+    ElMessage.warning('当前搜索范围没有可用书源，请选择分组或启用书源')
     return
   }
 
   const requestTargetSourceUrl = targetSourceUrl.value
+  const requestExactSearch = searchStore.exactSearch
   isSearching.value = true
 
   try {
@@ -182,8 +215,9 @@ const handleSearch = async () => {
 
     if (requestId !== searchRequestId) return
 
-    searchStore.setResults(query, merged, requestTargetSourceUrl)
-    if (merged.length === 0) {
+    const filtered = requestExactSearch ? merged.filter(result => matchesExactSearch(result, query)) : merged
+    searchStore.setResults(query, filtered, requestTargetSourceUrl)
+    if (filtered.length === 0) {
       ElMessage.info('未找到相关书籍')
     }
   } catch (err) {
@@ -239,7 +273,13 @@ const onImageError = (e: Event) => {
 .page-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: 20px;
+}
+
+.search-scope {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .header-left {
@@ -274,8 +314,21 @@ const onImageError = (e: Event) => {
 }
 
 .search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   max-width: 640px;
   margin-bottom: 32px;
+}
+
+.search-bar > .el-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-bar > .el-button,
+.search-bar > :deep(.el-dropdown) {
+  flex-shrink: 0;
 }
 
 .result-list {
