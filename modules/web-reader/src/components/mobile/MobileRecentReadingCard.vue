@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
+import { computed } from 'vue'
 import { Reading } from '@element-plus/icons-vue'
 import type { BookMeta } from '@/parsers/types'
-import defaultCover from '@/assets/imgs/default_cover.jpg'
+import SourceCover from '../SourceCover.vue'
 import { clampBookProgress } from '@/mobile/mobileHome'
 
 const props = defineProps<{
@@ -13,27 +13,16 @@ const emit = defineEmits<{
   continue: [id: string]
 }>()
 
-const imageLoadFailed = shallowRef(false)
 const progress = computed(() => clampBookProgress(props.book.currentProgress))
-const coverSrc = computed(() =>
-  props.book.coverUrl && !imageLoadFailed.value ? props.book.coverUrl : defaultCover,
-)
 const chapterText = computed(() =>
   props.book.durChapterTitle || `第 ${Math.max(1, props.book.currentChapter + 1)} 章`,
 )
-
-watch(() => props.book.id, () => {
-  imageLoadFailed.value = false
-})
 </script>
 
 <template>
   <article class="recent-reading-card">
     <div class="recent-reading-card__cover">
-      <img :src="coverSrc" :alt="book.name" @error="imageLoadFailed = true" />
-      <span v-if="!book.coverUrl || imageLoadFailed" class="recent-reading-card__cover-title">
-        {{ book.name }}
-      </span>
+      <SourceCover :src="book.coverUrl" :source-url="book.sourceUrl" :referer="book.bookUrl" :alt="book.name" />
     </div>
 
     <div class="recent-reading-card__body">

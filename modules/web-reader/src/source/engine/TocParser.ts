@@ -1,3 +1,4 @@
+import { notifyDiagnostic } from './SourceDiagnostics'
 import type { TocRule } from '@/source/types/BookSource'
 import { parseElementListAsync, parseStringAsync, resolveAbsoluteUrl } from './RuleParser'
 import type { RuleExecutionContext } from './RuleTypes'
@@ -24,6 +25,7 @@ export async function parseToc(
   rule: TocRule,
   baseUrl: string,
   options?: Partial<RuleExecutionContext>,
+  onStatistics?: (stats: { parsed: number; filtered: number }) => void,
 ): Promise<TocItem[]> {
   const isJson = html.trim().startsWith('{') || html.trim().startsWith('[')
   const context = isJson ? JSON.parse(html) : new DOMParser().parseFromString(html, 'text/html')
@@ -66,7 +68,9 @@ export async function parseToc(
         variableMap: baseVariableMap(options),
       }
     }))
-  return result.filter(item => Boolean(item.name && item.url))
+  const filtered = result.filter(item => Boolean(item.name && item.url))
+  notifyDiagnostic(onStatistics, { parsed: result.length, filtered: result.length - filtered.length })
+  return filtered
 }
 
 function baseVariableMap(options?: Partial<RuleExecutionContext>): Record<string, string> | undefined {

@@ -210,8 +210,10 @@
         <el-form-item label="封面设置">
           <div class="cover-edit-section">
             <div class="cover-preview-box">
-              <img
-                :src="editForm.coverUrl || defaultCover"
+              <SourceCover
+                :src="editForm.coverUrl"
+                :source-url="editForm.sourceUrl"
+                :referer="editForm.bookUrl"
                 class="preview-img"
                 alt="封面预览"
               />
@@ -260,7 +262,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage, type InputInstance } from 'element-plus'
 import { ArrowDown, Plus, Search, Sort as SortIcon, UploadFilled } from '@element-plus/icons-vue'
 import '@/assets/fonts/shelffont.css'
-import defaultCover from '@/assets/imgs/default_cover.jpg'
+import SourceCover from '@/components/SourceCover.vue'
 import type { BookMeta } from '@/parsers/types'
 import BookCard from '@/components/BookCard.vue'
 import StartupRestoreGuide from '@/components/StartupRestoreGuide.vue'
@@ -310,6 +312,8 @@ const editForm = ref({
   name: '',
   author: '',
   coverUrl: '',
+  sourceUrl: '',
+  bookUrl: '',
 })
 
 let dragCounter = 0
@@ -483,6 +487,8 @@ const handleEditBook = (book: BookMeta) => {
     name: book.name,
     author: book.author || '',
     coverUrl: book.coverUrl || '',
+    sourceUrl: book.sourceUrl || '',
+    bookUrl: book.bookUrl || '',
   }
   showEditDialog.value = true
 }

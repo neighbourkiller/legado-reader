@@ -23,6 +23,20 @@ beforeEach(() => {
 })
 
 describe('阅读页主题同步持久化', () => {
+  it('旧设置默认保留原文，简繁选择保存后可重新加载', async () => {
+    localStorage.setItem('legado_web_reader_settings', JSON.stringify({ theme: 1 }))
+    const store = useReadingStore()
+    expect(store.settings.chineseConversion).toBe('original')
+    await store.updateSettings({ chineseConversion: 'traditional' })
+    setActivePinia(createPinia())
+    expect(useReadingStore().settings.chineseConversion).toBe('traditional')
+  })
+
+  it('无效的简繁设置回退到原文', () => {
+    localStorage.setItem('legado_web_reader_settings', JSON.stringify({ chineseConversion: 'invalid' }))
+    expect(useReadingStore().settings.chineseConversion).toBe('original')
+  })
+
   it('同步明暗主题并写入阅读设置存储', async () => {
     localStorage.setItem(
       'legado_web_reader_settings',

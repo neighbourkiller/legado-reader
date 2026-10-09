@@ -57,6 +57,7 @@ export interface SpacingConfig {
 }
 
 export type ReaderPageAnimation = 'cover' | 'slide' | 'simulation' | 'scroll' | 'none'
+export type ChineseConversion = 'original' | 'simplified' | 'traditional'
 
 export interface ReadSettings {
   theme: number
@@ -65,6 +66,7 @@ export interface ReadSettings {
   customFontUrl?: string
   favoriteFonts?: string[]
   fontSize: number
+  chineseConversion: ChineseConversion
   spacing: SpacingConfig
   readWidth: number
   contentPaddingTop: number
@@ -85,6 +87,7 @@ export const DEFAULT_READ_SETTINGS: ReadSettings = {
   customFontName: '',
   favoriteFonts: [],
   fontSize: 18,
+  chineseConversion: 'original',
   spacing: {
     letter: 0,
     line: 0.8,

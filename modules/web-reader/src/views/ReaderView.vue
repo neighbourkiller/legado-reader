@@ -130,7 +130,7 @@
           <div class="top-bar" ref="topRef"></div>
 
           <div
-            v-for="data in chapterData"
+            v-for="data in displayedChapterData"
             :key="data.index"
             :data-chapter-index="data.index"
           >
@@ -304,7 +304,8 @@ import type {
 } from '@/storage/db'
 import { characterOffsetToParagraphIndex } from '@/backup/compat'
 import { useAppSettingsStore } from '@/stores/appSettings'
-import { captureReaderSelection, findTextRange, resolveTextAnchor } from '@/utils/textSelection'
+import { captureReaderSelection, findTextRange } from '@/utils/textSelection'
+import { convertChapterChinese, convertChineseText, resolveChineseTextAnchor } from '@/reader/chineseConversion'
 import type { ReaderSelectionSnapshot } from '@/utils/textSelection'
 import { applyRulesToChapter, ReplacementTimeoutError } from '@/utils/replaceRules'
 import { openExternalUrl } from '@/platform/externalBrowser'
@@ -349,6 +350,9 @@ const {
 } = storeToRefs(store)
 
 const chapterData = ref<ChapterPayload[]>([])
+const displayedChapterData = computed(() =>
+  chapterData.value.map(chapter => convertChapterChinese(chapter, settings.value.chineseConversion)),
+)
 const rawChapterData = ref<ChapterPayload[]>([])
 const chapterLoading = ref(false)
 const downloadDialogVisible = ref(false)
@@ -502,7 +506,7 @@ const updateCurrentTime = () => {
 
 const currentChapterTitle = computed(() => {
   const ch = chapters.value[currentChapterIndex.value]
-  return ch?.title || currentBook.value?.name || ''
+  return convertChineseText(ch?.title || currentBook.value?.name || '', settings.value.chineseConversion)
 })
 
 const clearDockHideTimer = () => {
@@ -1276,7 +1280,7 @@ const jumpToBookmark = async (bookmark: BookmarkRecord) => {
   )
   const hasPreciseAnchor = (bookmark.endOffset || 0) > (bookmark.startOffset || 0)
   const resolvedAnchor = body && hasPreciseAnchor
-    ? resolveTextAnchor(body.textContent || '', bookmark.content, bookmark.startOffset || 0)
+    ? resolveChineseTextAnchor(body.textContent || '', bookmark.content, bookmark.startOffset || 0)
     : null
   if (hasPreciseAnchor && !resolvedAnchor) {
     ElMessage.warning('该书签受正文替换影响，当前无法定位')
@@ -1319,7 +1323,7 @@ const resolvedHighlightRange = (highlight: HighlightRecord): Range | null => {
   const body = chapterBody(highlight.chapterIndex)
   if (!body) return null
   const fullText = body.textContent || ''
-  const resolved = resolveTextAnchor(fullText, highlight.text, highlight.startOffset)
+  const resolved = resolveChineseTextAnchor(fullText, highlight.text, highlight.startOffset)
   return resolved ? findTextRange(body, resolved.startOffset, resolved.endOffset) : null
 }
 
@@ -1943,6 +1947,14 @@ watch(isPaginationMode, enabled => {
   }
 })
 
+watch(() => settings.value.chineseConversion, () => {
+  clearSelectionMenu()
+  layoutAnchor = pageViewportRef.value
+    ? findFirstVisibleReaderLine(pageViewportRef.value, readerVisibleBounds())
+    : null
+  layoutAtScrollStart = readerScrollMetrics().scrollTop === 0
+}, { flush: 'pre' })
+
 watch(
   () => [
     settings.value.fontSize,
@@ -1952,6 +1964,7 @@ watch(
     settings.value.spacing.paragraph,
     settings.value.contentPaddingTop,
     settings.value.contentPaddingBottom,
+    settings.value.chineseConversion,
     renderRevision.value,
   ],
   reflowReaderLayout,

@@ -67,7 +67,7 @@ import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import type { SpacingConfig } from '@/parsers/types'
 import type { HighlightRecord } from '@/storage/db'
 import type { ImageReference } from '@/source/types/BookSource'
-import { resolveTextAnchor } from '@/utils/textSelection'
+import { resolveChineseTextAnchor } from '@/reader/chineseConversion'
 import jump from '@/plugins/jump'
 
 const props = defineProps<{
@@ -146,7 +146,7 @@ const applyHighlights = () => {
   annotateEpubParagraphs()
   const fullText = root.textContent || ''
   const highlights = (props.highlights || []).flatMap(item => {
-    const resolved = resolveTextAnchor(fullText, item.text, item.startOffset)
+    const resolved = resolveChineseTextAnchor(fullText, item.text, item.startOffset)
     return resolved ? [{ ...item, ...resolved }] : []
   }).filter(item => item.endOffset > item.startOffset)
   if (highlights.length === 0) return

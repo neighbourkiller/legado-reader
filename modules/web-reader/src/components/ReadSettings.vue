@@ -39,6 +39,23 @@
           </div>
         </li>
 
+        <li class="page-animation">
+          <i id="chinese-conversion-label">简繁转换</i>
+          <div class="page-animation-items" role="group" aria-labelledby="chinese-conversion-label">
+            <button
+              v-for="mode in chineseConversionModes"
+              :key="mode.value"
+              type="button"
+              class="page-animation-item"
+              :class="{ selected: settings.chineseConversion === mode.value }"
+              :aria-pressed="settings.chineseConversion === mode.value"
+              @click="setChineseConversion(mode.value)"
+            >
+              {{ mode.label }}
+            </button>
+          </div>
+        </li>
+
         <!-- 常用置顶字体 (如有使用或收藏的自定义字体) -->
         <li class="font-list" v-if="favoriteFontsList.length > 0">
           <i>常用字体</i>
@@ -292,7 +309,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useDebounceFn } from '@vueuse/shared'
 import { useReadingStore } from '@/stores/reading'
-import type { ReaderPageAnimation } from '@/parsers/types'
+import type { ChineseConversion, ReaderPageAnimation } from '@/parsers/types'
 import themeConfig from '@/config/themeConfig'
 import SystemFontDialog from './SystemFontDialog.vue'
 import ReaderSettingStepper from './ReaderSettingStepper.vue'
@@ -315,6 +332,19 @@ const saveDebounced = useDebounceFn(() => {
 }, 400)
 
 const isNight = computed(() => settings.value.theme === 6 || settings.value.theme === 7)
+
+const chineseConversionModes: Array<{ label: string; value: ChineseConversion }> = [
+  { label: '原文', value: 'original' },
+  { label: '简体', value: 'simplified' },
+  { label: '繁体', value: 'traditional' },
+]
+
+const setChineseConversion = (mode: ChineseConversion) => {
+  store.updateSettings({ chineseConversion: mode }).catch(error => {
+    console.error('保存简繁转换设置失败', error)
+    ElMessage.error('简繁转换已生效，但设置保存失败，请重试')
+  })
+}
 
 const pageAnimations: Array<{ label: string; value: ReaderPageAnimation }> = [
   { label: '覆盖', value: 'cover' },

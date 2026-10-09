@@ -200,7 +200,7 @@
           </div>
           <div class="step-detail" v-if="stepResults.content">
             <div class="detail-row">
-              <span class="label">首章字数:</span>
+              <span class="label">首章字符数:</span>
               <span class="val font-bold">{{ stepResults.content.charCount }} 字</span>
               <span class="time-cost" v-if="stepResults.content.time">({{ stepResults.content.time }}ms)</span>
             </div>
@@ -248,12 +248,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, watch } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, VideoPause, Key, Search, QuestionFilled, Compass, ArrowDown } from '@element-plus/icons-vue'
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import type { TocItem } from '@/source/engine/TocParser'
-import { SourceEngine, parseSearchUrl, CloudflareChallengeError, SecurityChallengeError } from '@/source/engine/SourceEngine'
+import { SourceEngine, CloudflareChallengeError, SecurityChallengeError } from '@/source/engine/SourceEngine'
+import { redactDebugText, logBookFields, logRequestTrace, logStageDiagnostic, logContentPayload, formatDebugSummary } from '@/source/engine/SourceDebugLog'
 import { getTransport } from '@/source/transport'
 import { parseDebugInput, parseExploreUrlOptions, type DebugInputType } from '@/source/engine/SourceDebugHelper'
 import SourceAuthDialog from './SourceAuthDialog.vue'
@@ -293,8 +294,9 @@ interface LogItem {
 }
 
 const logs = ref<LogItem[]>([])
+let sessionWarnings = 0
 
-type StepStatus = 'idle' | 'running' | 'success' | 'failed' | 'skipped'
+type StepStatus = 'idle' | 'running' | 'success' | 'failed' | 'skipped' | 'stopped'
 
 interface DebugCacheItem {
   keyword: string
@@ -362,8 +364,10 @@ function restoreFromCache(targetUrl: string) {
 
 function errorMessage(error: unknown): string {
   if (error instanceof RuleExecutionError) {
-    return `[${error.code}] 阶段=${error.stage || 'unknown'} 字段=${error.field || 'unknown'} 模式=${error.compatibilityMode} 规则=${error.rule}: ${error.message}`
+    return `[解析异常][${error.code}] 阶段=${error.stage || 'unknown'} 字段=${error.field || 'unknown'} 模式=${error.compatibilityMode} 规则=${error.rule}: ${error.message}`
   }
+  if (error instanceof SecurityChallengeError) return `[安全质询] ${error.message}`
+  if (error instanceof Error && error.name === 'SourceHttpError') return `[HTTP 错误响应] ${error.message}`
   if (typeof error === 'object' && error !== null && 'code' in error && 'message' in error) {
     return `[${String(error.code)}] ${String(error.message)}`
   }
@@ -390,10 +394,12 @@ const stepResults = reactive<{
 }>({})
 
 const activeSessionId = ref(0)
+let finishDebug: ((reason?: string) => void) | undefined
 
 watch(
   () => props.source?.bookSourceUrl,
   (newUrl, oldUrl) => {
+    finishDebug?.('切换书源，调试已中止')
     activeSessionId.value++
     isDebugging.value = false
 
@@ -410,7 +416,8 @@ watch(
 function appendLog(tag: string, message: string, type: 'info' | 'success' | 'warn' | 'error' = 'info') {
   const now = new Date()
   const time = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0')
-  logs.value.push({ time, tag, message, type })
+  if (type === 'warn' && isDebugging.value) sessionWarnings++
+  logs.value.push({ time, tag, message: redactDebugText(message), type })
   nextTick(() => {
     if (consoleBoxRef.value) {
       consoleBoxRef.value.scrollTop = consoleBoxRef.value.scrollHeight
@@ -419,7 +426,7 @@ function appendLog(tag: string, message: string, type: 'info' | 'success' | 'war
 }
 
 function getStepClass(step: 'search' | 'bookInfo' | 'toc' | 'content') {
-  return `step-${stepStatus[step]}`
+  return `step-${stepStatus[step] === 'stopped' ? 'skipped' : stepStatus[step]}`
 }
 
 function getStepStatusText(step: 'search' | 'bookInfo' | 'toc' | 'content') {
@@ -432,6 +439,8 @@ function getStepStatusText(step: 'search' | 'bookInfo' | 'toc' | 'content') {
       return '✕ 失败'
     case 'skipped':
       return '已跳过'
+    case 'stopped':
+      return '已中止'
     default:
       return '未执行'
   }
@@ -446,13 +455,16 @@ const startDebug = async () => {
   }
 
   const parsed = parseDebugInput(rawInput)
+  finishDebug?.('启动新的调试，上一轮已中止')
   currentDebugMode.value = parsed.type
 
   const currentSession = ++activeSessionId.value
   const targetSource = props.source
+  const started = Date.now()
 
   isDebugging.value = true
   logs.value = []
+  sessionWarnings = 0
   stepStatus.search = 'idle'
   stepStatus.bookInfo = 'idle'
   stepStatus.toc = 'idle'
@@ -474,7 +486,33 @@ const startDebug = async () => {
   )
   compatibility.issues.forEach(issue => appendLog('COMPAT', `[${issue.code}] ${issue.path}: ${issue.message}`, 'warn'))
 
-  const engine = new SourceEngine()
+  let finished = false
+  const write = (tag: string, message: string, type: 'info' | 'success' | 'warn' | 'error' = 'info') => {
+    if (currentSession !== activeSessionId.value || finished) return
+    appendLog(tag, message, type)
+  }
+  const finalize = (reason?: string) => {
+    if (finished || currentSession !== activeSessionId.value) return
+    finished = true
+    if (reason) {
+      for (const step of Object.keys(stepStatus) as Array<keyof typeof stepStatus>) {
+        if (stepStatus[step] === 'running') stepStatus[step] = 'stopped'
+      }
+    }
+    const warningCount = sessionWarnings
+    const failed = Object.values(stepStatus).some(status => status === 'failed' || status === 'running' || status === 'stopped')
+    const complete = !failed && stepStatus.content === 'success'
+    appendLog('DONE', formatDebugSummary(stepStatus, parsed.type, warningCount, Date.now() - started,
+      reason || (complete ? '当前样本流程完成' : '当前样本调试未完成')), reason || !complete || warningCount ? 'warn' : 'success')
+    if (reason) saveToCache(targetSource.bookSourceUrl)
+    finishDebug = undefined
+  }
+  finishDebug = finalize
+  if (targetSource.mainJs?.trim()) write('INIT', '脚本书源：字段来自脚本返回；脚本内部网络请求不可观测。')
+  const engine = new SourceEngine({
+    onRequestTrace: trace => logRequestTrace(write, trace),
+    onStageDiagnostic: event => logStageDiagnostic(write, event),
+  })
 
   try {
     let targetBookUrl = ''
@@ -487,15 +525,9 @@ const startDebug = async () => {
     if (parsed.type === 'search') {
       const kw = parsed.payload.keyword || rawInput
       stepStatus.search = 'running'
-      const parsedReq = parseSearchUrl(targetSource.searchUrl || '', kw, targetSource)
-      appendLog('SEARCH', `发起 ${parsedReq.method} 搜索请求 => ${parsedReq.url}`)
-
+      appendLog('SEARCH', `开始搜索；请求地址以 HTTP 诊断记录为准`)
       const searchStart = Date.now()
-      const searchResults = await engine.search(targetSource, kw, (info) => {
-        if (currentSession !== activeSessionId.value) return
-        const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
-        appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
-      }).catch((err: unknown) => {
+      const searchResults = await engine.search(targetSource, kw).catch((err: unknown) => {
         if (currentSession !== activeSessionId.value) return []
         stepStatus.search = 'failed'
         handleErrorChallenge(err, targetSource)
@@ -511,7 +543,9 @@ const startDebug = async () => {
         appendLog('SEARCH', `搜索成功! 共解析出 ${searchResults.length} 本书籍 (${searchTime}ms)`, 'success')
         searchResults.slice(0, 3).forEach((b, i) => {
           appendLog('SEARCH', `[${i + 1}] 《${b.name}》 ${b.author ? '作者:' + b.author : ''} => ${b.bookUrl}`)
+          logBookFields(write, 'SEARCH', b, targetSource.ruleSearch, Boolean(targetSource.mainJs?.trim()))
         })
+        write('SEARCH', '后续使用第 1 本书调试；仅展示前 3 本字段样例')
         targetBookUrl = searchResults[0].bookUrl
         const possibleTocUrl = (searchResults[0] as unknown as { tocUrl?: string }).tocUrl
         if (possibleTocUrl) {
@@ -530,11 +564,7 @@ const startDebug = async () => {
       appendLog('EXPLORE', `开始访问发现页 [${exploreName}]: ${exploreUrl}`)
 
       const exploreStart = Date.now()
-      const exploreResults = await engine.explore(targetSource, exploreUrl, 1, (info) => {
-        if (currentSession !== activeSessionId.value) return
-        const channelTag = info.channel === 'webview' ? '[WebView]' : '[reqwest]'
-        appendLog('HTTP', `${channelTag} HTTP 响应状态: ${info.status}, 目标地址: ${info.finalUrl}, 大小: ${(info.bodyLength / 1024).toFixed(1)} KB`)
-      }).catch((err: unknown) => {
+      const exploreResults = await engine.explore(targetSource, exploreUrl, 1).catch((err: unknown) => {
         if (currentSession !== activeSessionId.value) return []
         stepStatus.search = 'failed'
         handleErrorChallenge(err, targetSource)
@@ -550,7 +580,9 @@ const startDebug = async () => {
         appendLog('EXPLORE', `发现页解析成功! 共解析出 ${exploreResults.length} 本书籍 (${exploreTime}ms)`, 'success')
         exploreResults.slice(0, 3).forEach((b, i) => {
           appendLog('EXPLORE', `[${i + 1}] 《${b.name}》 ${b.author ? '作者:' + b.author : ''} => ${b.bookUrl}`)
+          logBookFields(write, 'EXPLORE', b, targetSource.ruleExplore, Boolean(targetSource.mainJs?.trim()))
         })
+        write('EXPLORE', '后续使用第 1 本书调试；仅展示前 3 本字段样例')
         targetBookUrl = exploreResults[0].bookUrl
         const possibleTocUrl = (exploreResults[0] as unknown as { tocUrl?: string }).tocUrl
         if (possibleTocUrl) {
@@ -600,6 +632,7 @@ const startDebug = async () => {
             tocUrl: targetTocUrl,
             time: infoTime,
           }
+          logBookFields(write, 'BOOK_INFO', info, targetSource.ruleBookInfo, Boolean(targetSource.mainJs?.trim()), true)
           appendLog('BOOK_INFO', `详情解析成功: 《${info.name || '未知书名'}》 目录URL: ${targetTocUrl} (${infoTime}ms)`, 'success')
         } catch (err: unknown) {
           if (currentSession !== activeSessionId.value) return
@@ -643,7 +676,7 @@ const startDebug = async () => {
             }
             appendLog('TOC', `目录解析成功! 共 ${chapters.length} 章 (${tocTime}ms)`, 'success')
             appendLog('TOC', `首章: ${chapters[0].name} => ${chapters[0].url}`)
-            appendLog('TOC', `末章: ${chapters[chapters.length - 1].name}`)
+            appendLog('TOC', `末章: ${chapters[chapters.length - 1].name} => ${chapters[chapters.length - 1].url}`)
             targetChapterUrl = chapters[0].url
           } else {
             stepStatus.toc = 'failed'
@@ -678,7 +711,7 @@ const startDebug = async () => {
         const payload = await engine.getContent(targetSource, targetChapterUrl, (pageInfo) => {
           if (currentSession !== activeSessionId.value) return
           if (pageInfo.challengeSolved) {
-            appendLog('CHALLENGE', `[自动穿透] 检测到源站安全质询盾（${pageInfo.challengeTitle || '浏览器安全质询'}），后台隐藏 WebView 已自动完成穿透并同步 Cookie!`, 'success')
+            appendLog('CHALLENGE', `[自动穿透] 检测到源站安全质询盾（${pageInfo.challengeTitle || '浏览器安全质询'}），后台 WebView 已返回验证后的页面；Cookie 同步状态未单独验证。`, 'success')
           } else {
             appendLog('CONTENT', `正文分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url}`)
           }
@@ -688,7 +721,7 @@ const startDebug = async () => {
           ? payload.text
           : payload.images.map(image => image.url).join('\n')
         const contentTime = Date.now() - contentStart
-        const charCount = text.length
+        const charCount = payload.type === 'text' ? payload.text.length : 0
 
         if (payload.type === 'text' && charCount === 0 && (!payload.embeddedImages || payload.embeddedImages.length === 0)) {
           stepStatus.content = 'failed'
@@ -717,8 +750,8 @@ const startDebug = async () => {
           }
           appendLog('CONTENT', payload.type === 'images'
             ? `图片解析成功! 共 ${payload.images.length} 张 (${contentTime}ms)`
-            : `正文解析成功! 字数: ${charCount} (${contentTime}ms)`, 'success')
-          appendLog('CONTENT', `正文预览:\n${text.slice(0, 120)}...`)
+            : `正文解析成功! 字符数: ${charCount} (${contentTime}ms)`, 'success')
+          logContentPayload(write, payload)
         }
       } catch (err: unknown) {
         if (currentSession !== activeSessionId.value) return
@@ -760,11 +793,13 @@ const startDebug = async () => {
                   if (transport.closeAuthWindow) {
                     await transport.closeAuthWindow(targetSource.bookSourceUrl)
                   }
+                  if (currentSession !== activeSessionId.value) return
                   appendLog('AUTH', '【验证通过】已检测到网页验证完成，正在自动重试正文解析...', 'success')
                   const retryPayload = await engine.getContent(targetSource, targetChapterUrl)
+                  if (currentSession !== activeSessionId.value) return
                   const retryText = retryPayload.type === 'text' ? retryPayload.text : retryPayload.images.map(img => img.url).join('\n')
-                  const retryCharCount = retryText.length
-                  if (retryCharCount > 0 || (retryPayload.type === 'images' && retryPayload.images.length > 0)) {
+                  const retryCharCount = retryPayload.type === 'text' ? retryPayload.text.length : 0
+                  if (retryCharCount > 0 || (retryPayload.type === 'text' && (retryPayload.embeddedImages?.length || 0) > 0) || (retryPayload.type === 'images' && retryPayload.images.length > 0)) {
                     stepStatus.content = 'success'
                     stepResults.content = {
                       charCount: retryCharCount,
@@ -773,12 +808,13 @@ const startDebug = async () => {
                     }
                     appendLog('CONTENT', retryPayload.type === 'images'
                       ? `图片解析成功! 共 ${retryPayload.images.length} 张`
-                      : `正文解析成功! 字数: ${retryCharCount}`, 'success')
-                    appendLog('CONTENT', `正文预览:\n${retryText.slice(0, 120)}...`)
+                      : `正文解析成功! 字符数: ${retryCharCount}`, 'success')
+                    logContentPayload(write, retryPayload)
                   }
                 }
               }
             } catch (authErr) {
+              if (currentSession !== activeSessionId.value) return
               appendLog('AUTH', `唤起/轮询验证窗口失败: ${errorMessage(authErr)}`, 'error')
             }
           } else {
@@ -794,28 +830,15 @@ const startDebug = async () => {
     }
 
     if (currentSession !== activeSessionId.value) return
-    const failedSteps = Object.entries(stepStatus)
-      .filter(([_, status]) => status === 'failed')
-      .map(([step]) => step)
-    if (failedSteps.length > 0) {
-      const stepNames: Record<string, string> = {
-        search: currentDebugMode.value === 'explore' ? '发现' : '搜索',
-        bookInfo: '详情',
-        toc: '目录',
-        content: '正文',
-      }
-      const failedNames = failedSteps.map(s => stepNames[s] || s).join('、')
-      appendLog('DONE', `书源调试结束，部分流程未通过（${failedNames}），请参考上方日志进行调整。`, 'warn')
-      ElMessage.warning(`书源调试未全部通过（${failedNames}）`)
-    } else {
-      appendLog('DONE', '书源调试全流程执行完成!', 'success')
-      ElMessage.success('调试完成')
-    }
   } catch (err: unknown) {
     if (currentSession !== activeSessionId.value) return
+    for (const step of Object.keys(stepStatus) as Array<keyof typeof stepStatus>) {
+      if (stepStatus[step] === 'running') stepStatus[step] = 'failed'
+    }
     appendLog('FATAL', `调试中止: ${errorMessage(err)}`, 'error')
   } finally {
     if (currentSession === activeSessionId.value) {
+      finalize()
       isDebugging.value = false
       saveToCache(targetSource.bookSourceUrl)
     }
@@ -858,6 +881,7 @@ const copyLogs = async () => {
 
 const stopDebug = () => {
   if (!isDebugging.value) return
+  finishDebug?.('用户主动停止，调试已中止')
   activeSessionId.value++
   isDebugging.value = false
 
@@ -867,7 +891,7 @@ const stopDebug = () => {
     }
   }
 
-  appendLog('ABORT', '用户已主动中止调试', 'warn')
+  saveToCache()
   ElMessage.info('已停止调试')
 }
 
@@ -884,6 +908,11 @@ async function runDebugInput(input: string) {
   await nextTick()
   await startDebug()
 }
+
+onBeforeUnmount(() => {
+  finishDebug?.('离开页面，调试已中止')
+  activeSessionId.value++
+})
 
 defineExpose({ runDebugInput })
 </script>

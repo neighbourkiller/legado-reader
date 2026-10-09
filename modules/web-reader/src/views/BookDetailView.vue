@@ -21,16 +21,7 @@
       <!-- 头部书籍基本信息卡片 -->
       <div class="book-info-card">
         <div class="book-cover-wrap">
-          <img
-            v-if="book.coverUrl"
-            :src="book.coverUrl"
-            :alt="book.name"
-            class="book-cover"
-            @error="onCoverError"
-          />
-          <div v-else class="book-cover placeholder">
-            <span>{{ book.name.charAt(0) || '书' }}</span>
-          </div>
+          <SourceCover class="book-cover" :src="book.coverUrl" :source-url="book.sourceUrl" :referer="book.bookUrl" :alt="book.name" />
         </div>
 
         <div class="book-main-meta">
@@ -208,6 +199,7 @@
 </template>
 
 <script setup lang="ts">
+import SourceCover from '@/components/SourceCover.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -707,11 +699,6 @@ const handleGoBack = () => {
   } else {
     router.push(isOnlineBook.value && isDesktopBuild ? '/search' : '/bookshelf')
   }
-}
-
-const onCoverError = (e: Event) => {
-  const img = e.target as HTMLImageElement
-  img.style.display = 'none'
 }
 </script>
 

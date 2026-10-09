@@ -80,6 +80,7 @@ declare module 'vue' {
     SearchOptionsMenu: typeof import('./src/components/search/SearchOptionsMenu.vue')['default']
     SourceAuthDialog: typeof import('./src/components/SourceAuthDialog.vue')['default']
     SourceBatchAuditDialog: typeof import('./src/components/SourceBatchAuditDialog.vue')['default']
+    SourceCover: typeof import('./src/components/SourceCover.vue')['default']
     SourceDebugDialog: typeof import('./src/components/SourceDebugDialog.vue')['default']
     SourceDebugPanel: typeof import('./src/components/SourceDebugPanel.vue')['default']
     SourceEditDialog: typeof import('./src/components/SourceEditDialog.vue')['default']

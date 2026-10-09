@@ -64,6 +64,9 @@ function normalizeSettings(
   return {
     ...normalized,
     ...normalizeReaderLayoutSettings(normalized),
+    chineseConversion: normalized.chineseConversion === 'simplified' || normalized.chineseConversion === 'traditional'
+      ? normalized.chineseConversion
+      : DEFAULT_READ_SETTINGS.chineseConversion,
     pageAnimation: READER_PAGE_ANIMATIONS.has(normalized.pageAnimation)
       ? normalized.pageAnimation
       : DEFAULT_READ_SETTINGS.pageAnimation,

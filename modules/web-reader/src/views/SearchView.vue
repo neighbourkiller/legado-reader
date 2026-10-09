@@ -57,11 +57,8 @@
           class="result-card"
           @click="openBookDetail(result)"
         >
-          <div class="result-cover" v-if="result.coverUrl">
-            <img :src="result.coverUrl" :alt="result.name" @error="onImageError" />
-          </div>
-          <div class="result-cover placeholder" v-else>
-            <span>{{ result.name?.charAt(0) || '书' }}</span>
+          <div class="result-cover">
+            <SourceCover :src="result.coverUrl" :source-url="result.sourceUrl" :referer="result.bookUrl" :alt="result.name" />
           </div>
           <div class="result-info">
             <div class="result-header">
@@ -84,6 +81,7 @@
 </template>
 
 <script setup lang="ts">
+import SourceCover from '@/components/SourceCover.vue'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -254,11 +252,6 @@ const openBookDetail = (result: SearchResult) => {
       ...result,
     },
   })
-}
-
-const onImageError = (e: Event) => {
-  const img = e.target as HTMLImageElement
-  img.style.display = 'none'
 }
 </script>
 

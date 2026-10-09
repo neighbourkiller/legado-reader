@@ -1,3 +1,4 @@
+import { notifyDiagnostic, type SourceStageDiagnostic } from './SourceDiagnostics'
 import type { BookSource, OnlineChapterPayload, SearchResult, SearchRule } from '@/source/types/BookSource'
 import { getTransport } from '@/source/transport'
 import type { SourceRequest, SourceResponse, SourceTransport, CfDiagnostics } from '@/source/transport/SourceTransport'
@@ -48,6 +49,9 @@ export interface SourceEngineRequestTrace {
   response?: SourceResponse
   transformedResponse?: SourceResponse
   error?: unknown
+  durationMs?: number
+  attempts?: number
+  channel?: string
 }
 
 export interface SourceEngineOptions {
@@ -57,6 +61,7 @@ export interface SourceEngineOptions {
   onRequestTrace?: (trace: SourceEngineRequestTrace) => void
   /** 测试可注入传输实现；正常运行仍使用平台传输。 */
   transport?: SourceTransport
+  onStageDiagnostic?: (event: SourceStageDiagnostic) => void
 }
 
 /** 启发式检测页面是否为防爬验证/浏览器质询拦截页 */
@@ -554,6 +559,12 @@ export class SourceEngine {
     options: Partial<SourceRequest> = {},
     stage: RuleExecutionContext['stage'] = 'unknown',
   ): Promise<SourceResponse> {
+    const started = Date.now()
+    let attemptCount = 0
+    let actualChannel = 'reqwest'
+    const trace = (event: SourceEngineRequestTrace) => notifyDiagnostic(this.options.onRequestTrace, {
+      ...event, durationMs: Date.now() - started, attempts: attemptCount, channel: actualChannel,
+    })
     const transport = await this.getSourceTransport()
 
     // WebView 通道：书源标记需要 WebView 且 transport 支持
@@ -575,15 +586,17 @@ export class SourceEngine {
       bodyJs: options.bodyJs,
     }
     if (useWebView && transport.webviewFetch) {
+      actualChannel = 'webview'
+      attemptCount = 1
       let response: SourceResponse | undefined
       try {
         await waitForConcurrentRate(source)
         response = await transport.webviewFetch({ ...request })
         const transformedResponse = await this.applyRequestScripts(source, response, request)
-        this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
+        trace({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
         return transformedResponse
       } catch (error) {
-        this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, error })
+        trace({ sourceId: source.bookSourceUrl, stage, request, response, error })
         throw error
       }
     }
@@ -593,6 +606,7 @@ export class SourceEngine {
     let lastError: unknown
     const attempts = Math.max(1, (options.retry ?? 2) + 1)
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      attemptCount = attempt
       try {
         await waitForConcurrentRate(source)
         response = await transport.request(request)
@@ -600,39 +614,39 @@ export class SourceEngine {
       } catch (error) {
         lastError = error
         if (attempt === attempts) {
-          this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, error })
+          trace({ sourceId: source.bookSourceUrl, stage, request, error })
           throw error
         }
       }
     }
     if (!response) throw lastError instanceof Error ? lastError : new Error('书源请求失败')
 
-    // 自动检测安全验证 challenge，抛出带诊断信息的错误
-    if (!useWebView) {
-      const html = decodeResponse(response.body, response.charset || 'utf-8')
-      const challenge = detectSecurityChallenge(html, response)
-      if (challenge.isChallenge) {
-        if (challenge.type === 'cloudflare') {
-          throw new CloudflareChallengeError(
-            '检测到 Cloudflare 验证，请在书源设置中启用 WebView 通道或先完成网页验证。',
+    try {
+      // 自动检测安全验证 challenge，抛出带诊断信息的错误
+      if (!useWebView) {
+        const html = decodeResponse(response.body, response.charset || 'utf-8')
+        const challenge = detectSecurityChallenge(html, response)
+        if (challenge.isChallenge) {
+          if (challenge.type === 'cloudflare') {
+            throw new CloudflareChallengeError(
+              '检测到 Cloudflare 验证，请在书源设置中启用 WebView 通道或先完成网页验证。',
+              response,
+              { isChallenge: true, cfRay: challenge.cfRay, cfMitigated: challenge.cfMitigated },
+            )
+          }
+          throw new SecurityChallengeError(
+            `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}）。请在书源设置中启用 WebView 通道或先完成网页验证。`,
+            challenge,
             response,
-            { isChallenge: true, cfRay: challenge.cfRay, cfMitigated: challenge.cfMitigated },
           )
         }
-        throw new SecurityChallengeError(
-          `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}）。请在书源设置中启用 WebView 通道或先完成网页验证。`,
-          challenge,
-          response,
-        )
       }
-    }
 
-    try {
       const transformedResponse = await this.applyRequestScripts(source, response, request)
-      this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
+      trace({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
       return transformedResponse
     } catch (error) {
-      this.options.onRequestTrace?.({ sourceId: source.bookSourceUrl, stage, request, response, error })
+      trace({ sourceId: source.bookSourceUrl, stage, request, response, error })
       throw error
     }
   }
@@ -730,15 +744,21 @@ export class SourceEngine {
     return { checked: true, loggedIn, detail: typeof value === 'string' ? value : undefined }
   }
 
-  async fetchSourceAsset(source: BookSource, url: string, refererUrl: string): Promise<{ body: Uint8Array; mime: string }> {
+  async fetchSourceAsset(source: BookSource, url: string, refererUrl: string, options: { cover?: boolean; retry?: number; timeout?: number } = {}): Promise<{ body: Uint8Array; mime: string }> {
     const headers = getSourceHeaders(source, refererUrl)
     headers.Accept = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-    const response = await this.executeRequest(source, url, 'GET', headers, undefined, undefined, 25000, {}, 'image')
+    const response = await this.executeRequest(source, url, 'GET', headers, undefined, undefined, 25000,
+      { responseType: 'binary', retry: options.retry, timeout: options.timeout }, 'image')
     if (response.status >= 400) throw createHttpError(response, `请求图片失败 (HTTP ${response.status})`)
     const mime = Object.entries(response.headers)
       .find(([name]) => name.toLowerCase() === 'content-type')?.[1]?.split(';')[0] || 'application/octet-stream'
     let body = response.body
-    if (source.ruleContent?.imageDecode?.trim()) {
+    if (mime.toLowerCase().includes('html') || /^\s*<(?:!doctype|html)/i.test(decodeResponse(body.slice(0, 512)))) {
+      const challenge = detectSecurityChallenge(decodeResponse(body), response)
+      if (challenge.isChallenge) throw new SecurityChallengeError('图片请求返回安全验证页面，请完成网页验证后重试', challenge, response)
+      throw new Error('图片请求返回了 HTML，而不是图片')
+    }
+    if (!options.cover && source.ruleContent?.imageDecode?.trim()) {
       const context = this.createRuleContext(source, 'content', { baseUrl: refererUrl })
       try {
         const decoded = (await executeSourceJavaScript(
@@ -1000,93 +1020,111 @@ export class SourceEngine {
     onProgress?: (info: { page: number; url: string; count: number }) => void,
     options: TocExecutionOptions = {},
   ): Promise<TocItem[]> {
-    this.assertRunnableSource(source)
-    const tocUrl = typeof tocOrBook === 'string' ? tocOrBook : tocOrBook.tocUrl || tocOrBook.bookUrl
-    const bookEntity = typeof tocOrBook === 'string' ? { bookUrl: tocUrl, tocUrl } : tocOrBook as Record<string, unknown>
-    if (source.mainJs?.trim()) {
+    const diagnostic: SourceStageDiagnostic = { stage: 'toc', pages: 0, reason: 'error', parsed: 0, filtered: 0, deduplicated: 0, finalCount: 0 }
+    try {
+      this.assertRunnableSource(source)
+      const tocUrl = typeof tocOrBook === 'string' ? tocOrBook : tocOrBook.tocUrl || tocOrBook.bookUrl
+      const bookEntity = typeof tocOrBook === 'string' ? { bookUrl: tocUrl, tocUrl } : tocOrBook as Record<string, unknown>
+      if (source.mainJs?.trim()) {
+        const book = bookEntity
+        const context = this.createRuleContext(source, 'toc', { book, baseUrl: tocUrl })
+        const value = this.normalizeMainJsResult(await this.callMainJs(source, 'getChapters', context, ['book']))
+        if (!Array.isArray(value)) throw new Error('mainJs getChapters 返回值不是数组')
+        const chapters = value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          .map(item => ({
+            name: String(item.name || item.title || ''),
+            url: resolveAbsoluteUrl(String(item.url || item.chapterUrl || ''), tocUrl),
+            isVolume: Boolean(item.isVolume), isVip: Boolean(item.isVip), isPay: Boolean(item.isPay),
+            updateTime: item.updateTime === undefined ? undefined : String(item.updateTime),
+            variableMap: item.variableMap && typeof item.variableMap === 'object'
+              ? item.variableMap as Record<string, string> : undefined,
+          })).filter(item => item.name && item.url)
+        Object.assign(diagnostic, { reason: 'script', parsed: value.length, filtered: value.length - chapters.length, finalCount: chapters.length })
+        await this.commitRuleContext(source, context)
+        return chapters
+      }
+      if (!source.ruleToc) {
+        throw new Error('书源未配置 ruleToc')
+      }
+
+      let url = tocUrl
+      const visited = new Set<string>()
+      const chapters: TocItem[] = []
       const book = bookEntity
-      const context = this.createRuleContext(source, 'toc', { book, baseUrl: tocUrl })
-      const value = this.normalizeMainJsResult(await this.callMainJs(source, 'getChapters', context, ['book']))
-      if (!Array.isArray(value)) throw new Error('mainJs getChapters 返回值不是数组')
-      const chapters = value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-        .map(item => ({
-          name: String(item.name || item.title || ''),
-          url: resolveAbsoluteUrl(String(item.url || item.chapterUrl || ''), tocUrl),
-          isVolume: Boolean(item.isVolume), isVip: Boolean(item.isVip), isPay: Boolean(item.isPay),
-          updateTime: item.updateTime === undefined ? undefined : String(item.updateTime),
-          variableMap: item.variableMap && typeof item.variableMap === 'object'
-            ? item.variableMap as Record<string, string> : undefined,
-        })).filter(item => item.name && item.url)
-      await this.commitRuleContext(source, context)
-      return chapters
-    }
-    if (!source.ruleToc) {
-      throw new Error('书源未配置 ruleToc')
-    }
+      const context = this.createRuleContext(source, 'toc', { baseUrl: tocUrl, book })
 
-    let url = tocUrl
-    const visited = new Set<string>()
-    const chapters: TocItem[] = []
-    const book = bookEntity
-    const context = this.createRuleContext(source, 'toc', { baseUrl: tocUrl, book })
-
-    let initialBody: string | null = null
-    if (source.ruleToc.preUpdateJs?.trim()) {
-      const updated = (await executeSourceJavaScript(
-        source.bookSourceUrl, source.ruleToc.preUpdateJs, context, url,
-      )).result
-      if (updated) {
-        if (typeof updated === 'object') {
-          initialBody = JSON.stringify(updated)
-        } else if (typeof updated === 'string') {
-          const trimmed = updated.trim()
-          if (trimmed.startsWith('{') || trimmed.startsWith('[') || /^\s*<(?:!DOCTYPE|html|head|body|ul|ol|div|section|table)/i.test(trimmed)) {
-            initialBody = trimmed
-          } else if (trimmed) {
-            url = trimmed
+      let initialBody: string | null = null
+      if (source.ruleToc.preUpdateJs?.trim()) {
+        const updated = (await executeSourceJavaScript(
+          source.bookSourceUrl, source.ruleToc.preUpdateJs, context, url,
+        )).result
+        if (updated) {
+          if (typeof updated === 'object') {
+            initialBody = JSON.stringify(updated)
+          } else if (typeof updated === 'string') {
+            const trimmed = updated.trim()
+            if (trimmed.startsWith('{') || trimmed.startsWith('[') || /^\s*<(?:!DOCTYPE|html|head|body|ul|ol|div|section|table)/i.test(trimmed)) {
+              initialBody = trimmed
+            } else if (trimmed) {
+              url = trimmed
+            }
           }
         }
       }
-    }
 
-    const maxPages = Math.min(100, Math.max(1, Math.trunc(options.maxPages ?? 100)))
-    for (let page = 1; (url || initialBody) && page <= maxPages; page += 1) {
-      let html = ''
-      let effectiveBaseUrl = url || tocUrl
+      const maxPages = Math.min(100, Math.max(1, Math.trunc(options.maxPages ?? 100)))
+      diagnostic.reason = url || initialBody ? 'limit' : 'no-next'
+      for (let page = 1; (url || initialBody) && page <= maxPages; page += 1) {
+        let html = ''
+        let effectiveBaseUrl = url || tocUrl
 
-      if (page === 1 && initialBody) {
-        html = initialBody
-        effectiveBaseUrl = tocUrl
-        Object.assign(context, { page, baseUrl: effectiveBaseUrl })
-      } else {
-        if (!url) break
-        const request = await parseSearchUrlAsync(url, '', source, page, context)
-        const requestUrl = new URL(request.url)
-        requestUrl.hash = ''
-        const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
-        if (visited.has(requestKey)) break
-        visited.add(requestKey)
-        const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request, 'toc')
-        if (response.status >= 400) throw createHttpError(response, `请求目录页失败 (HTTP ${response.status})`)
-        html = decodeResponse(response.body, response.charset || 'utf-8')
-        effectiveBaseUrl = response.finalUrl || requestUrl.href
-        Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+        if (page === 1 && initialBody) {
+          html = initialBody
+          effectiveBaseUrl = tocUrl
+          Object.assign(context, { page, baseUrl: effectiveBaseUrl })
+        } else {
+          if (!url) break
+          const request = await parseSearchUrlAsync(url, '', source, page, context)
+          const requestUrl = new URL(request.url)
+          requestUrl.hash = ''
+          const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
+          if (visited.has(requestKey)) { diagnostic.reason = 'repeat'; break }
+          visited.add(requestKey)
+          const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request, 'toc')
+          if (response.status >= 400) throw createHttpError(response, `请求目录页失败 (HTTP ${response.status})`)
+          html = decodeResponse(response.body, response.charset || 'utf-8')
+          effectiveBaseUrl = response.finalUrl || requestUrl.href
+          Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+        }
+
+        const newChapters = await parseToc(html, source.ruleToc, effectiveBaseUrl, context, stats => {
+          diagnostic.parsed! += stats.parsed
+          diagnostic.filtered! += stats.filtered
+        })
+        diagnostic.pages = page
+        chapters.push(...newChapters)
+        onProgress?.({ page, url: effectiveBaseUrl, count: newChapters.length })
+        if (!source.ruleToc.nextTocUrl) { diagnostic.reason = 'no-rule'; break }
+        const doc = html.trim().startsWith('{') || html.trim().startsWith('[')
+          ? JSON.parse(html) : new DOMParser().parseFromString(html, 'text/html')
+        const next = await parseStringAsync(doc, source.ruleToc.nextTocUrl, {
+          ...context, field: 'ruleToc.nextTocUrl',
+        })
+        url = next ? resolveAbsoluteUrl(next, effectiveBaseUrl) : ''
+        if (!url) diagnostic.reason = 'no-next'
       }
-
-      const newChapters = await parseToc(html, source.ruleToc, effectiveBaseUrl, context)
-      chapters.push(...newChapters)
-      onProgress?.({ page, url: effectiveBaseUrl, count: newChapters.length })
-      if (!source.ruleToc.nextTocUrl) break
-      const doc = html.trim().startsWith('{') || html.trim().startsWith('[')
-        ? JSON.parse(html) : new DOMParser().parseFromString(html, 'text/html')
-      const next = await parseStringAsync(doc, source.ruleToc.nextTocUrl, {
-        ...context, field: 'ruleToc.nextTocUrl',
-      })
-      url = next ? resolveAbsoluteUrl(next, effectiveBaseUrl) : ''
+      await this.commitRuleContext(source, context)
+      const result = chapters.filter((chapter, index) =>
+        chapters.findIndex(other => other.url === chapter.url && other.name === chapter.name) === index)
+      diagnostic.finalCount = result.length
+      diagnostic.deduplicated = chapters.length - result.length
+      return result
+    } catch (error) {
+      diagnostic.reason = 'error'
+      throw error
+    } finally {
+      notifyDiagnostic(this.options.onStageDiagnostic, diagnostic)
     }
-    await this.commitRuleContext(source, context)
-    return chapters.filter((chapter, index) =>
-      chapters.findIndex(other => other.url === chapter.url && other.name === chapter.name) === index)
   }
 
   async getContent(
@@ -1095,100 +1133,127 @@ export class SourceEngine {
     onProgress?: (info: { page: number; url: string; currentLength: number; challengeSolved?: boolean; challengeTitle?: string }) => void,
     book?: Record<string, unknown>,
   ): Promise<OnlineChapterPayload> {
-    this.assertRunnableSource(source)
-    const contentUrl = typeof contentOrChapter === 'string'
-      ? contentOrChapter : contentOrChapter.chapterUrl || contentOrChapter.url || ''
-    const chapterEntity = typeof contentOrChapter === 'string'
-      ? { url: contentUrl, chapterUrl: contentUrl } : contentOrChapter as Record<string, unknown>
-    if (source.mainJs?.trim()) {
-      const chapter = chapterEntity
-      const bookEntity = book || { bookUrl: contentUrl }
-      const context = this.createRuleContext(source, 'content', { chapter, book: bookEntity, baseUrl: contentUrl, nextChapterUrl: '' })
-      const value = this.normalizeMainJsResult(await this.callMainJs(source, 'getContent', context, ['chapter', 'book', 'nextChapterUrl']))
-      await this.commitRuleContext(source, context)
-      if (source.bookSourceType === 2) {
-        const urls = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\r\n,]+/) : []
-        return {
-          type: 'images', sourceUrl: contentUrl,
-          images: urls.map(String).filter(Boolean).map((url, index) => ({ url: resolveAbsoluteUrl(url, contentUrl), index })),
+    const diagnostic: SourceStageDiagnostic = { stage: 'content', pages: 0, reason: 'error' }
+    try {
+      this.assertRunnableSource(source)
+      const contentUrl = typeof contentOrChapter === 'string'
+        ? contentOrChapter : contentOrChapter.chapterUrl || contentOrChapter.url || ''
+      const chapterEntity = typeof contentOrChapter === 'string'
+        ? { url: contentUrl, chapterUrl: contentUrl } : contentOrChapter as Record<string, unknown>
+      if (source.mainJs?.trim()) {
+        const chapter = chapterEntity
+        const bookEntity = book || { bookUrl: contentUrl }
+        const context = this.createRuleContext(source, 'content', { chapter, book: bookEntity, baseUrl: contentUrl, nextChapterUrl: '' })
+        const value = this.normalizeMainJsResult(await this.callMainJs(source, 'getContent', context, ['chapter', 'book', 'nextChapterUrl']))
+        await this.commitRuleContext(source, context)
+        diagnostic.reason = 'script'
+        if (source.bookSourceType === 2) {
+          const urls = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\r\n,]+/) : []
+          return {
+            type: 'images', sourceUrl: contentUrl,
+            images: urls.map(String).filter(Boolean).map((url, index) => ({ url: resolveAbsoluteUrl(url, contentUrl), index })),
+          }
         }
+        return { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? '') }
       }
-      return { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? '') }
-    }
-    if (!source.ruleContent) {
-      throw new Error('书源未配置 ruleContent')
-    }
-
-    const pendingUrls: string[] = [contentUrl]
-    const contentPages: string[] = []
-    const imagePages: OnlineChapterPayload[] = []
-    const visitedUrls = new Set<string>()
-    const context = this.createRuleContext(source, 'content', { baseUrl: contentUrl, chapter: chapterEntity, book })
-    let page = 0
-    let payloadTitle: string | undefined
-    const embeddedImages: NonNullable<Extract<OnlineChapterPayload, { type: 'text' }>['embeddedImages']> = []
-
-    while (pendingUrls.length > 0 && page < 100) {
-      const currentUrl = pendingUrls.shift()!
-      const request = await parseSearchUrlAsync(currentUrl, '', source, page + 1, context)
-      const requestUrl = new URL(request.url)
-      requestUrl.hash = ''
-      const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
-      if (visitedUrls.has(requestKey)) continue
-      visitedUrls.add(requestKey)
-      page += 1
-
-      const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request, 'content')
-
-      if (response.status >= 400) {
-        throw createHttpError(response, `请求正文页失败 (HTTP ${response.status})`)
+      if (!source.ruleContent) {
+        throw new Error('书源未配置 ruleContent')
       }
 
-      let html = decodeResponse(response.body, response.charset || 'utf-8')
-      const effectiveBaseUrl = response.finalUrl || requestUrl.href
-      Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+      const pendingUrls: string[] = [contentUrl]
+      const contentPages: string[] = []
+      const imagePages: OnlineChapterPayload[] = []
+      const visitedUrls = new Set<string>()
+      const context = this.createRuleContext(source, 'content', { baseUrl: contentUrl, chapter: chapterEntity, book })
+      let page = 0
+      let payloadTitle: string | undefined
+      const embeddedImages: NonNullable<Extract<OnlineChapterPayload, { type: 'text' }>['embeddedImages']> = []
 
-      // 检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
-      const challenge = detectSecurityChallenge(html, response)
-      if (challenge.isChallenge) {
-        const transport = await this.getSourceTransport()
-        if (source.useWebView && transport.solveChallenge) {
-          const solveResult = await transport.solveChallenge(source.bookSourceUrl, currentUrl, 5000)
-          if (solveResult.success && solveResult.html) {
-            html = solveResult.html
-            onProgress?.({
-              page,
-              url: currentUrl,
-              currentLength: 0,
-              challengeSolved: true,
-              challengeTitle: challenge.title || '浏览器安全质询',
-            })
+      let repeated = false
+      while (pendingUrls.length > 0 && page < 100) {
+        const currentUrl = pendingUrls.shift()!
+        const request = await parseSearchUrlAsync(currentUrl, '', source, page + 1, context)
+        const requestUrl = new URL(request.url)
+        requestUrl.hash = ''
+        const requestKey = `${request.method}:${requestUrl.href}:${request.body || ''}`
+        if (visitedUrls.has(requestKey)) { repeated = true; continue }
+        visitedUrls.add(requestKey)
+        page += 1
+        diagnostic.pages = page
+
+        const response = await this.executeRequest(source, request.url, request.method, request.headers, request.body, request.charset, undefined, request, 'content')
+
+        if (response.status >= 400) {
+          throw createHttpError(response, `请求正文页失败 (HTTP ${response.status})`)
+        }
+
+        let html = decodeResponse(response.body, response.charset || 'utf-8')
+        const effectiveBaseUrl = response.finalUrl || requestUrl.href
+        Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
+
+        // 检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
+        const challenge = detectSecurityChallenge(html, response)
+        if (challenge.isChallenge) {
+          const transport = await this.getSourceTransport()
+          if (source.useWebView && transport.solveChallenge) {
+            const solveResult = await transport.solveChallenge(source.bookSourceUrl, currentUrl, 5000)
+            if (solveResult.success && solveResult.html) {
+              html = solveResult.html
+              onProgress?.({
+                page,
+                url: currentUrl,
+                currentLength: 0,
+                challengeSolved: true,
+                challengeTitle: challenge.title || '浏览器安全质询',
+              })
+            } else {
+              throw new SecurityChallengeError(
+                `目标网站触发安全访问验证（${challenge.title || '浏览器安全质询'}），自动穿透未通过。请完成网页验证。`,
+                { ...challenge, requiresManualInteraction: true, challengeUrl: currentUrl },
+                response,
+              )
+            }
           } else {
             throw new SecurityChallengeError(
-              `目标网站触发安全访问验证（${challenge.title || '浏览器安全质询'}），自动穿透未通过。请完成网页验证。`,
-              { ...challenge, requiresManualInteraction: true, challengeUrl: currentUrl },
+              `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}），普通 HTTP 请求未能获取到有效正文。请开启 WebView 通道或先完成网页验证。`,
+              { ...challenge, requiresManualInteraction: false, challengeUrl: currentUrl },
               response,
             )
           }
-        } else {
-          throw new SecurityChallengeError(
-            `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}），普通 HTTP 请求未能获取到有效正文。请开启 WebView 通道或先完成网页验证。`,
-            { ...challenge, requiresManualInteraction: false, challengeUrl: currentUrl },
-            response,
-          )
         }
-      }
 
-      if (source.ruleContent.webJs?.trim()) {
-        const transformed = (await executeSourceWebJavaScript(
-          source.bookSourceUrl, source.ruleContent.webJs, context, html,
-        )).result
-        if (typeof transformed === 'string') html = transformed
-      }
-      if (source.bookSourceType === 2) {
-        const result = await parseImageContent(html, source.ruleContent, effectiveBaseUrl, context)
-        imagePages.push(result.payload)
-        onProgress?.({ page, url: currentUrl, currentLength: result.payload.images.length })
+        if (source.ruleContent.webJs?.trim()) {
+          const transformed = (await executeSourceWebJavaScript(
+            source.bookSourceUrl, source.ruleContent.webJs, context, html,
+          )).result
+          if (typeof transformed === 'string') html = transformed
+        }
+        if (source.bookSourceType === 2) {
+          const result = await parseImageContent(html, source.ruleContent, effectiveBaseUrl, context)
+          imagePages.push(result.payload)
+          onProgress?.({ page, url: currentUrl, currentLength: result.payload.images.length })
+          if (result.nextUrls && result.nextUrls.length > 1) {
+            for (const u of result.nextUrls) {
+              if (!visitedUrls.has(u) && !pendingUrls.includes(u)) pendingUrls.push(u)
+            }
+          } else if (result.nextUrl && !visitedUrls.has(result.nextUrl) && !pendingUrls.includes(result.nextUrl)) {
+            pendingUrls.push(result.nextUrl)
+          }
+          continue
+        }
+        const result: ContentResult = await parseContent(html, source.ruleContent, effectiveBaseUrl, context)
+        payloadTitle ||= result.title
+        for (const image of result.embeddedImages || []) {
+          if (!embeddedImages.some(existing => existing.url === image.url)) {
+            embeddedImages.push({ ...image, index: embeddedImages.length })
+          }
+        }
+
+        if (result.content) {
+          contentPages.push(result.content)
+        }
+        onProgress?.({ page, url: currentUrl, currentLength: contentPages.length })
+
         if (result.nextUrls && result.nextUrls.length > 1) {
           for (const u of result.nextUrls) {
             if (!visitedUrls.has(u) && !pendingUrls.includes(u)) pendingUrls.push(u)
@@ -1196,57 +1261,44 @@ export class SourceEngine {
         } else if (result.nextUrl && !visitedUrls.has(result.nextUrl) && !pendingUrls.includes(result.nextUrl)) {
           pendingUrls.push(result.nextUrl)
         }
-        continue
       }
-      const result: ContentResult = await parseContent(html, source.ruleContent, effectiveBaseUrl, context)
-      payloadTitle ||= result.title
-      for (const image of result.embeddedImages || []) {
-        if (!embeddedImages.some(existing => existing.url === image.url)) {
-          embeddedImages.push({ ...image, index: embeddedImages.length })
+
+      diagnostic.reason = pendingUrls.length > 0 ? 'limit' : repeated ? 'repeat' : !source.ruleContent.nextContentUrl ? 'no-rule' : 'no-next'
+      const fullContent = contentPages
+        .join('\n')
+        .split(/\r?\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join('\n')
+
+      if (source.bookSourceType === 2) {
+        const images = imagePages.flatMap(payload => payload.type === 'images' ? payload.images : [])
+          .map((image, index) => ({ ...image, index }))
+        await this.commitRuleContext(source, context)
+        return {
+          type: 'images', images,
+          title: imagePages.find(payload => payload.title)?.title,
+          style: source.ruleContent.imageStyle,
+          sourceUrl: contentUrl,
+          decodeRule: source.ruleContent.imageDecode,
         }
       }
-
-      if (result.content) {
-        contentPages.push(result.content)
+      const cleanedText = (await applyTextReplaceRuleAsync(fullContent, source.ruleContent.replaceRegex, context)).trim()
+      diagnostic.beforeReplace = fullContent.length
+      diagnostic.afterReplace = cleanedText.length
+      const payload: OnlineChapterPayload = {
+        type: 'text',
+        text: cleanedText,
+        title: payloadTitle,
+        embeddedImages: embeddedImages.length > 0 ? embeddedImages : undefined,
       }
-      onProgress?.({ page, url: currentUrl, currentLength: contentPages.length })
-
-      if (result.nextUrls && result.nextUrls.length > 1) {
-        for (const u of result.nextUrls) {
-          if (!visitedUrls.has(u) && !pendingUrls.includes(u)) pendingUrls.push(u)
-        }
-      } else if (result.nextUrl && !visitedUrls.has(result.nextUrl) && !pendingUrls.includes(result.nextUrl)) {
-        pendingUrls.push(result.nextUrl)
-      }
-    }
-
-    const fullContent = contentPages
-      .join('\n')
-      .split(/\r?\n+/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .join('\n')
-
-    if (source.bookSourceType === 2) {
-      const images = imagePages.flatMap(payload => payload.type === 'images' ? payload.images : [])
-        .map((image, index) => ({ ...image, index }))
       await this.commitRuleContext(source, context)
-      return {
-        type: 'images', images,
-        title: imagePages.find(payload => payload.title)?.title,
-        style: source.ruleContent.imageStyle,
-        sourceUrl: contentUrl,
-        decodeRule: source.ruleContent.imageDecode,
-      }
+      return payload
+    } catch (error) {
+      diagnostic.reason = 'error'
+      throw error
+    } finally {
+      notifyDiagnostic(this.options.onStageDiagnostic, diagnostic)
     }
-    const cleanedText = (await applyTextReplaceRuleAsync(fullContent, source.ruleContent.replaceRegex, context)).trim()
-    const payload: OnlineChapterPayload = {
-      type: 'text',
-      text: cleanedText,
-      title: payloadTitle,
-      embeddedImages: embeddedImages.length > 0 ? embeddedImages : undefined,
-    }
-    await this.commitRuleContext(source, context)
-    return payload
   }
 }

@@ -5,17 +5,7 @@
     @contextmenu.prevent="handleContextMenu"
   >
     <div class="cover-wrapper">
-      <img
-        class="cover-img"
-        :src="coverSrc"
-        :alt="book.name"
-        loading="lazy"
-        @error="onImageError"
-      />
-      <div v-if="!hasCoverImage" class="cover-title-overlay">
-        <span class="cover-name">{{ book.name }}</span>
-        <span class="cover-author">{{ book.author }}</span>
-      </div>
+      <SourceCover class="cover-img" :src="book.coverUrl" :source-url="book.sourceUrl" :referer="book.bookUrl" :alt="book.name" />
     </div>
 
     <div class="info-wrapper">
@@ -84,7 +74,7 @@ import { ref, computed } from 'vue'
 import { Edit, Delete, Document } from '@element-plus/icons-vue'
 import type { DropdownInstance } from 'element-plus'
 import type { BookMeta } from '@/parsers/types'
-import defaultCover from '@/assets/imgs/default_cover.jpg'
+import SourceCover from './SourceCover.vue'
 
 const props = defineProps<{
   book: BookMeta
@@ -98,25 +88,9 @@ const emit = defineEmits<{
 }>()
 
 const dropdownRef = ref<DropdownInstance | null>(null)
-const imageLoadFailed = ref(false)
 const supportsDetail = computed(() =>
   import.meta.env.VITE_APP_TARGET === 'desktop' || props.book.format !== 'online',
 )
-
-const hasCoverImage = computed(() => {
-  return Boolean(props.book.coverUrl) && !imageLoadFailed.value
-})
-
-const coverSrc = computed(() => {
-  if (props.book.coverUrl && !imageLoadFailed.value) {
-    return props.book.coverUrl
-  }
-  return defaultCover
-})
-
-const onImageError = () => {
-  imageLoadFailed.value = true
-}
 
 const timeFormatted = computed(() => {
   if (!props.book.lastReadTime) return props.book.format.toUpperCase()
