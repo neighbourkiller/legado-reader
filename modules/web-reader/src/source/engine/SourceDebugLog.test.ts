@@ -52,4 +52,13 @@ describe('书源调试日志', () => {
     expect(lines[0]).toContain('通道=webview')
     expect(lines[0]).not.toMatch(/secret|private/)
   })
+
+  it('输出 WebView 文档与回调诊断，同时脱敏文档网址', () => {
+    const { lines, write } = capture()
+    logRequestTrace(write, { sourceId: 'x', stage: 'search', request: { sourceId: 'x', method: 'GET', url: 'https://host/search' },
+      response: { status: 200, finalUrl: 'https://host/search', headers: {}, body: new Uint8Array(),
+        webviewDiagnostics: { requestId: 'r1', documentId: '1:https://host/search?token=secret', navigationGeneration: 2, polls: 3, callbackTimeouts: 1 } } })
+    expect(lines.join('\n')).toContain('导航代数=2；结果轮询=3；回调超时=1')
+    expect(lines.join('\n')).not.toContain('secret')
+  })
 })

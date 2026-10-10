@@ -1,5 +1,9 @@
 use crate::cookie_store::CookieManager;
 use crate::source_policy::{redirect_policy, validate_ip, validate_url, PublicDnsResolver};
+use crate::source_webview::{
+    fetch_ack_script, fetch_poll_script, NavigationState, CONTEXT_LOST, DOCUMENT_ID_JS,
+    RECORD_MISSING,
+};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -53,12 +57,25 @@ pub struct SourceResponse {
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub charset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webview_diagnostics: Option<WebviewDiagnostics>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebviewDiagnostics {
+    pub request_id: String,
+    pub document_id: String,
+    pub navigation_generation: u64,
+    pub polls: u32,
+    pub callback_timeouts: u32,
 }
 
 pub struct AppState {
     pub cookie_manager: Arc<Mutex<CookieManager>>,
     pub source_cache: Arc<StdMutex<HashMap<String, String>>>,
     pub source_cache_path: Arc<Option<PathBuf>>,
+    webview_navigation: StdMutex<HashMap<String, Arc<StdMutex<NavigationState>>>>,
 }
 
 impl AppState {
@@ -69,6 +86,7 @@ impl AppState {
             .and_then(|json| serde_json::from_str::<HashMap<String, String>>(&json).ok())
             .unwrap_or_default();
         Self {
+            webview_navigation: StdMutex::new(HashMap::new()),
             cookie_manager: Arc::new(Mutex::new(CookieManager::new(
                 source_cache_path
                     .as_ref()
@@ -310,6 +328,7 @@ pub async fn source_request(
         headers: resp_headers,
         body: bytes,
         charset,
+        webview_diagnostics: None,
     })
 }
 
@@ -369,6 +388,30 @@ fn make_window_label(source_id: &str) -> String {
     format!("auth_{digest:x}")
 }
 
+fn navigation_state(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<Arc<StdMutex<NavigationState>>, String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let mut navigation = state.webview_navigation.lock().map_err(|e| e.to_string())?;
+    Ok(navigation.entry(label.to_string()).or_default().clone())
+}
+
+fn record_page_load(state: &StdMutex<NavigationState>, event: tauri::webview::PageLoadEvent) {
+    if let Ok(mut state) = state.lock() {
+        match event {
+            tauri::webview::PageLoadEvent::Started => state.started(),
+            tauri::webview::PageLoadEvent::Finished => state.finished(),
+        }
+        log::debug!(
+            "Source WebView navigation: generation={}, loading={}",
+            state.generation,
+            state.loading
+        );
+    }
+}
+
 fn preserve_auth_webview_on_close(window: &tauri::WebviewWindow) {
     let window_to_hide = window.clone();
     window.on_window_event(move |event| {
@@ -406,7 +449,9 @@ pub async fn open_source_auth_window(
         )
     });
 
+    let navigation = navigation_state(&app, &window_label)?;
     let window = WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::External(parsed_url))
+        .on_page_load(move |_, payload| record_page_load(&navigation, payload.event()))
         .title(&win_title)
         .inner_size(960.0, 720.0)
         .center()
@@ -587,36 +632,74 @@ fn decode_webview_callback_value(raw: String) -> Option<String> {
     serde_json::from_str::<String>(&raw).ok().or(Some(raw))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentSnapshot {
+    document_id: String,
+    url: String,
+    ready_state: String,
+    #[serde(default)]
+    ready: bool,
+    html: Option<String>,
+}
+
+async fn read_document_snapshot(
+    webview: &tauri::WebviewWindow,
+    script: &str,
+) -> Result<Option<DocumentSnapshot>, String> {
+    use tauri::Manager;
+    let navigation = navigation_state(webview.app_handle(), webview.label())?;
+    let generation = navigation.lock().map_err(|e| e.to_string())?.generation;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx_mutex = Arc::new(StdMutex::new(Some(tx)));
+    if webview
+        .eval_with_callback(script, move |result| {
+            if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
+                let _ = tx.send(result);
+            }
+        })
+        .is_err()
+    {
+        return Ok(None);
+    }
+    let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), rx).await else {
+        return Ok(None);
+    };
+    let navigation = navigation.lock().map_err(|e| e.to_string())?;
+    if navigation.loading || navigation.generation != generation {
+        return Ok(None);
+    }
+    let Some(decoded) = decode_webview_callback_value(raw) else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str(&decoded).ok())
+}
+
 async fn wait_for_webview_document(
     webview: &tauri::WebviewWindow,
     timeout: Duration,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    use tauri::Manager;
+    let navigation = navigation_state(webview.app_handle(), webview.label())?;
+    let script = format!("JSON.stringify({{ documentId: {DOCUMENT_ID_JS}, url: location.href, readyState: document.readyState, html: null }})");
     let deadline = Instant::now() + timeout;
-
     loop {
         if Instant::now() >= deadline {
-            return Err("Timed out while initializing background WebView".to_string());
+            return Err("WEBVIEW_DOCUMENT_TIMEOUT: 等待 WebView 文档稳定超时".to_string());
         }
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
-        webview
-            .eval_with_callback("document.readyState", move |result| {
-                if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
-                    let _ = tx.send(result);
-                }
-            })
-            .map_err(|e| format!("Failed to inspect background WebView state: {e}"))?;
-
-        if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), rx).await {
-            if matches!(
-                decode_webview_callback_value(raw).as_deref(),
-                Some("interactive" | "complete")
+        if let Some(snapshot) = read_document_snapshot(webview, &script).await? {
+            let valid_url =
+                snapshot.url.starts_with("https://") || snapshot.url.starts_with("http://");
+            if navigation.lock().map_err(|e| e.to_string())?.observe(
+                &snapshot.document_id,
+                valid_url && snapshot.ready_state == "complete",
+                Instant::now(),
             ) {
-                return Ok(());
+                return Ok(snapshot.document_id);
             }
+        } else {
+            navigation.lock().map_err(|e| e.to_string())?.invalidate();
         }
-
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -630,6 +713,7 @@ async fn ensure_source_webview(
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
     let window_label = make_window_label(source_id);
+    let navigation = navigation_state(app, &window_label)?;
     let webview = if let Some(existing) = app.get_webview_window(&window_label) {
         existing
     } else {
@@ -639,6 +723,7 @@ async fn ensure_source_webview(
         base_url.set_fragment(None);
 
         match WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(base_url))
+            .on_page_load(move |_, payload| record_page_load(&navigation, payload.event()))
             .title("书源后台认证")
             .visible(false)
             .build()
@@ -765,6 +850,10 @@ pub async fn webview_fetch(
         manager.set_cookies(&source_id, &url, &cookie_header)?;
     }
 
+    let document_id = wait_for_webview_document(&webview, initialization_timeout).await?;
+    let document_id_json = serde_json::to_string(&document_id).map_err(|e| e.to_string())?;
+    let navigation = navigation_state(&app, webview.label())?;
+    let generation = navigation.lock().map_err(|e| e.to_string())?.generation;
     let request_id = format!(
         "{}-{}",
         std::process::id(),
@@ -804,6 +893,7 @@ pub async fn webview_fetch(
 
     let js_code = format!(
         r#"(() => {{
+  if (({DOCUMENT_ID_JS}) !== {document_id}) return '{CONTEXT_LOST}';
   const storeKey = {store};
   const requestId = {request_id};
   const pending = {pending};
@@ -878,7 +968,9 @@ pub async fn webview_fetch(
       clearTimeout(timeoutId);
     }}
   }})();
+  return {document_id};
 }})()"#,
+        document_id = document_id_json,
         store = store_json,
         request_id = request_id_json,
         pending = pending_json,
@@ -893,59 +985,85 @@ pub async fn webview_fetch(
         max_body_bytes = MAX_RESPONSE_BODY_BYTES,
     );
 
+    // 启动确认与结果读取分开；eval() 成功提交不代表页面实际执行了脚本。
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx_mutex = Arc::new(StdMutex::new(Some(tx)));
     webview
-        .eval(&js_code)
-        .map_err(|e| format!("Failed to start WebView fetch: {e}"))?;
-
-    let poll_js = format!(
-        r#"(() => {{
-  const store = window[{store}];
-  const value = store?.[{request_id}];
-  if (value === undefined || value === {pending}) return {pending};
-  delete store[{request_id}];
-  return value;
-}})()"#,
-        store = store_json,
-        request_id = request_id_json,
-        pending = pending_json,
+        .eval_with_callback(&js_code, move |result| {
+            if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
+                let _ = tx.send(result);
+            }
+        })
+        .map_err(|e| format!("WEBVIEW_EXECUTION_FAILED: request={request_id}: {e}"))?;
+    let started = tokio::time::timeout(Duration::from_secs(2), rx)
+        .await
+        .map_err(|_| {
+            format!(
+                "WEBVIEW_BRIDGE_TIMEOUT: 启动确认超时 request={request_id}, document={document_id}"
+            )
+        })?
+        .map_err(|e| format!("WEBVIEW_EXECUTION_FAILED: {e}"))?;
+    let started = decode_webview_callback_value(started);
+    if started.as_deref() == Some(CONTEXT_LOST) {
+        return Err(format!(
+            "WEBVIEW_CONTEXT_LOST: 启动时文档已变化 request={request_id}, document={document_id}"
+        ));
+    }
+    if started.as_deref() != Some(document_id.as_str()) {
+        return Err(format!("WEBVIEW_EXECUTION_FAILED: 启动脚本未确认执行 request={request_id}, document={document_id}"));
+    }
+    let poll_js = fetch_poll_script(
+        &store_json,
+        &request_id_json,
+        &pending_json,
+        &document_id_json,
     );
-    let cleanup_js = format!(
-        "delete window[{store}]?.[{request_id}]",
-        store = store_json,
-        request_id = request_id_json,
-    );
-
+    let cleanup_js = fetch_ack_script(&store_json, &request_id_json, &document_id_json);
     let deadline = Instant::now() + Duration::from_millis(timeout + 5000);
+    let mut polls = 0_u32;
+    let mut callback_timeouts = 0_u32;
     let js_str_unquoted = loop {
         if Instant::now() >= deadline {
             let _ = webview.eval(&cleanup_js);
-            return Err("Timeout waiting for WebView fetch result".to_string());
+            return Err(format!("WEBVIEW_BRIDGE_TIMEOUT: 等待 fetch 结果超时 request={request_id}, document={document_id}, generation={generation}, polls={polls}, callbackTimeouts={callback_timeouts}"));
         }
-
+        {
+            let state = navigation.lock().map_err(|e| e.to_string())?;
+            if state.loading || state.generation != generation {
+                return Err(format!("WEBVIEW_CONTEXT_LOST: 页面导航替换执行上下文 request={request_id}, document={document_id}, generation={generation}->{}, loading={}", state.generation, state.loading));
+            }
+        }
+        polls += 1;
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
+        let tx_mutex = Arc::new(StdMutex::new(Some(tx)));
         webview
             .eval_with_callback(&poll_js, move |result| {
                 if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
                     let _ = tx.send(result);
                 }
             })
-            .map_err(|e| format!("Failed to poll WebView fetch result: {e}"))?;
-
-        if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_secs(2), rx).await {
-            if let Some(value) = decode_webview_callback_value(raw) {
-                if value != WEBVIEW_FETCH_PENDING {
-                    break value;
+            .map_err(|e| format!("WEBVIEW_EXECUTION_FAILED: request={request_id}: {e}"))?;
+        match tokio::time::timeout(Duration::from_secs(2), rx).await {
+            Ok(Ok(raw)) => {
+                if let Some(value) = decode_webview_callback_value(raw) {
+                    if value == CONTEXT_LOST || value == RECORD_MISSING {
+                        return Err(format!("WEBVIEW_CONTEXT_LOST: 记录不可用 state={value}, request={request_id}, document={document_id}, generation={generation}, polls={polls}"));
+                    }
+                    if value != WEBVIEW_FETCH_PENDING {
+                        break value;
+                    }
                 }
             }
+            _ => callback_timeouts += 1,
         }
-
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
 
     let fetch_result: WebviewFetchResult = serde_json::from_str(&js_str_unquoted)
         .map_err(|e| format!("Failed to parse WebView fetch result: {e}"))?;
 
+    // 只有 Rust 已收到并解析结果，才确认清理。迟到回调不会提前删掉数据。
+    let _ = webview.eval(&cleanup_js);
     if !fetch_result.ok {
         return Err(fetch_result
             .error
@@ -987,6 +1105,13 @@ pub async fn webview_fetch(
         headers: fetch_result.headers.unwrap_or_default(),
         body: response_body,
         charset: None,
+        webview_diagnostics: Some(WebviewDiagnostics {
+            request_id,
+            document_id,
+            navigation_generation: generation,
+            polls,
+            callback_timeouts,
+        }),
     })
 }
 
@@ -997,6 +1122,105 @@ pub struct SolveChallengeResult {
     pub html: Option<String>,
     pub cookies: Vec<String>,
     pub requires_manual_interaction: bool,
+}
+
+fn challenge_inspection_script(parsed_url: &url::Url) -> Result<String, String> {
+    let origin = serde_json::to_string(&parsed_url.origin().ascii_serialization())
+        .map_err(|e| e.to_string())?;
+    let path = serde_json::to_string(parsed_url.path()).map_err(|e| e.to_string())?;
+    Ok(format!(
+        r#"(() => {{
+        const title = (document.title || '').toLowerCase();
+        const text = (document.body?.innerText || '').slice(0, 4000).toLowerCase();
+        const matched = window.location.origin === {origin} && window.location.pathname === {path};
+        const keywords = [
+            '正在验证浏览器', '正在進行安全驗證', '正在进行安全验证', '安全验证', '请稍等',
+            'checking your browser', 'just a moment', 'attention required', 'ddos protection',
+            'sorry, you have been blocked', '滑动验证', '人机安全验证', '点击完成验证',
+            'geetest', '极验', '请输入验证码'
+        ];
+        const challenge = keywords.some(word => title.includes(word) || text.includes(word))
+            || !!document.querySelector('#challenge-form, #challenge-running, #cf-challenge-running');
+        const ready = matched && document.readyState === 'complete' && !challenge;
+        return JSON.stringify({{ documentId: {DOCUMENT_ID_JS}, url: location.href, readyState: document.readyState, ready, html: ready ? document.documentElement.outerHTML : null }});
+    }})()"#
+    ))
+}
+
+async fn read_challenge_html(
+    webview: &tauri::WebviewWindow,
+    parsed_url: &url::Url,
+) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let script = challenge_inspection_script(parsed_url)?;
+    let navigation = navigation_state(webview.app_handle(), webview.label())?;
+    let Some(snapshot) = read_document_snapshot(webview, &script).await? else {
+        navigation.lock().map_err(|e| e.to_string())?.invalidate();
+        return Ok(None);
+    };
+    if !navigation.lock().map_err(|e| e.to_string())?.observe(
+        &snapshot.document_id,
+        snapshot.ready && snapshot.ready_state == "complete",
+        Instant::now(),
+    ) {
+        return Ok(None);
+    }
+    Ok(snapshot.html.filter(|html| !html.is_empty()))
+}
+
+async fn challenge_result(
+    webview: &tauri::WebviewWindow,
+    state: &AppState,
+    source_id: &str,
+    parsed_url: url::Url,
+    html: Option<String>,
+) -> Result<SolveChallengeResult, String> {
+    let cookies = webview
+        .cookies_for_url(parsed_url.clone())
+        .map_err(|e| format!("Failed to read verification cookies: {e}"))?
+        .iter()
+        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+        .collect::<Vec<_>>();
+    if !cookies.is_empty() {
+        state.cookie_manager.lock().await.set_cookies(
+            source_id,
+            parsed_url.as_str(),
+            &cookies.join("; "),
+        )?;
+    }
+    let success = html.is_some();
+    Ok(SolveChallengeResult {
+        success,
+        html,
+        cookies,
+        requires_manual_interaction: !success,
+    })
+}
+
+/// 只读探测现有认证窗口，人工交互期间不能重新导航。
+#[tauri::command]
+pub async fn inspect_webview_challenge(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    source_id: String,
+    url: String,
+) -> Result<SolveChallengeResult, String> {
+    use tauri::Manager;
+    validate_url(&url)?;
+    let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let webview = app
+        .get_webview_window(&make_window_label(&source_id))
+        .ok_or_else(|| "Verification window is no longer available".to_string())?;
+    let html = read_challenge_html(&webview, &parsed_url).await?;
+    if html.is_none() {
+        return Ok(SolveChallengeResult {
+            success: false,
+            html: None,
+            cookies: Vec::new(),
+            requires_manual_interaction: true,
+        });
+    }
+    challenge_result(&webview, &state, &source_id, parsed_url, html).await
 }
 
 #[tauri::command]
@@ -1010,130 +1234,27 @@ pub async fn solve_webview_challenge(
     validate_url(&url)?;
     let parsed_url = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(5000).clamp(1000, 15000));
-
     let webview =
         ensure_source_webview(&app, &source_id, &parsed_url, Duration::from_secs(10)).await?;
-
-    // 让后台隐藏 WebView 导航到具体的章节/目标页面 URL
-    let target_url_json = serde_json::to_string(&url).map_err(|e| e.to_string())?;
-    let target_path_json = serde_json::to_string(parsed_url.path()).map_err(|e| e.to_string())?;
-    let navigate_js = format!("window.location.href = {};", target_url_json);
-    let _ = webview.eval(&navigate_js);
-
-    let check_js = format!(
-        r#"(() => {{
-        const state = document.readyState;
-        const title = (document.title || '').toLowerCase();
-        const text = (document.body ? document.body.innerText : '').slice(0, 500).toLowerCase();
-        const currentUrl = window.location.href;
-        const currentPath = window.location.pathname;
-        const targetUrl = {target_url_json};
-        const targetPath = {target_path_json};
-
-        // 确保已真正导航至目标页面（或路径包含目标章节路径）
-        const urlMatched = targetPath === '/' || currentPath === targetPath || currentUrl.includes(targetPath);
-
-        const isChallenge = [
-            '正在验证浏览器',
-            '正在進行安全驗證',
-            '正在进行安全验证',
-            '安全验证',
-            '请稍等',
-            'checking your browser',
-            'just a moment',
-            'attention required',
-            'ddos protection'
-        ].some(kw => title.includes(kw) || text.includes(kw));
-
-        const isCaptcha = [
-            '滑动验证',
-            '人机安全验证',
-            '点击完成验证',
-            'geetest',
-            '极验',
-            '请输入验证码'
-        ].some(kw => text.includes(kw));
-
-        // 已经脱离 challenge，目标 URL 已匹配，且 DOM 就绪 (interactive 或 complete)
-        const isReady = urlMatched && (state === 'interactive' || state === 'complete') && !isChallenge;
-        const html = isReady ? document.documentElement.outerHTML : null;
-
-        return JSON.stringify({{
-            ready: isReady,
-            isChallenge: isChallenge,
-            isCaptcha: isCaptcha,
-            url: currentUrl,
-            html: html
-        }});
-    }})()"#
-    );
-
+    webview
+        .navigate(parsed_url.clone())
+        .map_err(|e| format!("Failed to navigate verification page: {e}"))?;
     let deadline = Instant::now() + timeout;
-    let mut last_html: Option<String> = None;
-
-    while Instant::now() < deadline {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let tx_mutex = Arc::new(std::sync::Mutex::new(Some(tx)));
-        if webview
-            .eval_with_callback(&check_js, move |result| {
-                if let Some(tx) = tx_mutex.lock().ok().and_then(|mut guard| guard.take()) {
-                    let _ = tx.send(result);
-                }
-            })
-            .is_ok()
+    let html = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break None;
+        }
+        if let Ok(result) =
+            tokio::time::timeout(remaining, read_challenge_html(&webview, &parsed_url)).await
         {
-            if let Ok(Ok(raw)) = tokio::time::timeout(Duration::from_millis(500), rx).await {
-                if let Some(val_str) = decode_webview_callback_value(raw) {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&val_str) {
-                        let ready = val.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
-                        if ready {
-                            if let Some(html) = val.get("html").and_then(|v| v.as_str()) {
-                                if !html.is_empty() {
-                                    last_html = Some(html.to_string());
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Some(html) = result? {
+                break Some(html);
             }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    let updated_cookies = webview
-        .cookies_for_url(parsed_url)
-        .map_err(|e| format!("Failed to read WebView response cookies: {e}"))?;
-    let mut cookie_list = Vec::new();
-    if !updated_cookies.is_empty() {
-        let cookie_header = updated_cookies
-            .iter()
-            .map(|cookie| {
-                let item = format!("{}={}", cookie.name(), cookie.value());
-                cookie_list.push(item.clone());
-                item
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        let mut manager = state.cookie_manager.lock().await;
-        manager.set_cookies(&source_id, &url, &cookie_header)?;
-    }
-
-    if let Some(html) = last_html {
-        Ok(SolveChallengeResult {
-            success: true,
-            html: Some(html),
-            cookies: cookie_list,
-            requires_manual_interaction: false,
-        })
-    } else {
-        Ok(SolveChallengeResult {
-            success: false,
-            html: None,
-            cookies: cookie_list,
-            requires_manual_interaction: true,
-        })
-    }
+    };
+    challenge_result(&webview, &state, &source_id, parsed_url, html).await
 }
 
 #[tauri::command]
@@ -1156,6 +1277,86 @@ pub async fn exit_fullscreen(window: tauri::WebviewWindow) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
+    fn inspect_mock_page(origin: &str, path: &str, text: &str, title: &str) -> bool {
+        inspect_mock_page_state(origin, path, text, title, "complete")
+    }
+
+    fn inspect_mock_page_state(
+        origin: &str,
+        path: &str,
+        text: &str,
+        title: &str,
+        ready_state: &str,
+    ) -> bool {
+        let runtime = rquickjs::Runtime::new().unwrap();
+        let context = rquickjs::Context::full(&runtime).unwrap();
+        let target = url::Url::parse("https://twkan.com/search/book/1.html").unwrap();
+        let script = super::challenge_inspection_script(&target).unwrap();
+        context.with(|ctx| {
+            let bindings = serde_json::json!({
+                "origin": origin, "path": path, "text": text, "title": title, "state": ready_state,
+            });
+            ctx.eval::<(), _>(format!(
+                "const sample = {bindings}; globalThis.performance = {{ timeOrigin: 1 }}; globalThis.location = {{ href: sample.origin + sample.path }}; globalThis.window = {{ location: {{ origin: sample.origin, pathname: sample.path, href: location.href }} }};
+                 globalThis.document = {{ title: sample.title, body: {{ innerText: sample.text }}, readyState: sample.state,
+                   querySelector: () => null, documentElement: {{ outerHTML: '<p>正文</p>' }} }};"
+            )).unwrap();
+            let value: String = ctx.eval(script).unwrap();
+            serde_json::from_str::<serde_json::Value>(&value).unwrap()["ready"] == true
+        })
+    }
+
+    #[test]
+    fn verification_inspection_accepts_ready_target_document() {
+        assert!(inspect_mock_page(
+            "https://twkan.com",
+            "/search/book/1.html",
+            "搜索结果",
+            "书名"
+        ));
+    }
+
+    #[test]
+    fn verification_inspection_rejects_interactive_document_even_without_challenge() {
+        assert!(!inspect_mock_page_state(
+            "https://twkan.com",
+            "/search/book/1.html",
+            "搜索结果",
+            "书名",
+            "interactive"
+        ));
+    }
+
+    #[test]
+    fn verification_inspection_rejects_same_path_on_another_origin() {
+        assert!(!inspect_mock_page(
+            "https://other.example",
+            "/search/book/1.html",
+            "搜索结果",
+            "书名"
+        ));
+    }
+
+    #[test]
+    fn verification_inspection_rejects_captcha_without_challenge_title() {
+        assert!(!inspect_mock_page(
+            "https://twkan.com",
+            "/search/book/1.html",
+            "请输入验证码",
+            "网站"
+        ));
+    }
+
+    #[test]
+    fn verification_inspection_rejects_cloudflare_title() {
+        assert!(!inspect_mock_page(
+            "https://twkan.com",
+            "/search/book/1.html",
+            "",
+            "Just a moment..."
+        ));
+    }
+
     use super::{
         decode_webview_callback_value, exceeds_response_body_limit, is_browser_managed_header,
         make_window_label, WebviewFetchRequest, MAX_RESPONSE_BODY_BYTES,

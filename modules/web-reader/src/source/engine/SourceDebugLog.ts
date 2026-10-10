@@ -59,6 +59,8 @@ export function logRequestTrace(write: DebugWriter, trace: SourceEngineRequestTr
   const challenge = trace.error instanceof Error && /^(?:Security|Cloudflare)ChallengeError$/.test(trace.error.name)
   const category = challenge ? '安全质询' : trace.error ? (response ? '响应处理异常' : '传输异常') : response && response.status >= 400 ? 'HTTP 错误响应' : '响应'
   write('HTTP', `[${trace.stage || 'unknown'}] ${trace.request.method} ${trace.request.url}；${category}；通道=${response?.channel || trace.channel || '未知'}；状态=${response?.status ?? '未收到响应'}；最终地址=${response?.finalUrl || '无'}；大小=${response?.body.byteLength ?? 0} 字节；耗时=${trace.durationMs ?? 0}ms（含限流等待/重试）；尝试=${trace.attempts ?? 1}`, trace.error || (response && response.status >= 400) ? 'error' : 'info')
+  const diagnostics = response?.webviewDiagnostics
+  if (diagnostics) write('WEBVIEW', `请求=${diagnostics.requestId}；文档=${redactDebugText(diagnostics.documentId)}；导航代数=${diagnostics.navigationGeneration}；结果轮询=${diagnostics.polls}；回调超时=${diagnostics.callbackTimeouts}`)
 }
 
 export function logStageDiagnostic(write: DebugWriter, event: SourceStageDiagnostic): void {

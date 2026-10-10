@@ -10,6 +10,7 @@ import { applyTextReplaceRule, applyTextReplaceRuleAsync, parseString, parseStri
 import { RuleExecutionError, type RuleExecutionContext } from './RuleTypes'
 import { executeSourceJavaScript, executeSourceWebJavaScript } from '@/platform/sourceScripts'
 import { saveBookSource } from '@/storage/db'
+import { recoverSourceChallenge, throwIfSourceAborted, type ChallengeRecoveryEvent } from './SourceChallengeRecovery'
 
 export function decodeResponse(body: Uint8Array, charset: string = 'utf-8'): string {
   try {
@@ -62,6 +63,8 @@ export interface SourceEngineOptions {
   /** 测试可注入传输实现；正常运行仍使用平台传输。 */
   transport?: SourceTransport
   onStageDiagnostic?: (event: SourceStageDiagnostic) => void
+  signal?: AbortSignal
+  onChallengeRecovery?: (event: ChallengeRecoveryEvent) => void
 }
 
 /** 启发式检测页面是否为防爬验证/浏览器质询拦截页 */
@@ -80,7 +83,7 @@ export function detectSecurityChallenge(html: string, response?: SourceResponse)
     const server = getHeader('server')
     cfRay = getHeader('cf-ray')
     cfMitigated = getHeader('cf-mitigated')
-    isCloudflare = server?.toLowerCase().includes('cloudflare') ?? Boolean(cfRay || cfMitigated)
+    isCloudflare = Boolean(server?.toLowerCase().includes('cloudflare') || cfRay || cfMitigated)
   }
 
   const cfMarkers = [
@@ -91,9 +94,24 @@ export function detectSecurityChallenge(html: string, response?: SourceResponse)
     '/cdn-cgi/challenge-platform/',
     '__cf_chl_',
   ]
-  const hasCfMarker = cfMarkers.some(marker => lowerHtml.includes(marker))
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  const pageTitle = titleMatch ? titleMatch[1].trim() : ''
+  const lowerTitle = pageTitle.toLowerCase()
 
-  if ((response && (response.status === 403 || response.status === 503) && isCloudflare && hasCfMarker) || (isCloudflare && hasCfMarker)) {
+  const hasCfMarker = cfMarkers.some(marker => lowerHtml.includes(marker))
+  const isCfMitigated = cfMitigated?.toLowerCase() === 'challenge'
+  const isCfErrorStatus = Boolean(response && (response.status === 403 || response.status === 503))
+  const isCfChallengeTitle = lowerTitle.includes('just a moment') || lowerTitle.includes('attention required')
+  const hasCfBlockMessage = lowerHtml.includes('sorry, you have been blocked')
+  const isShortChallengePage = html.length < 15000
+
+  // 避免将包含 /cdn-cgi/challenge-platform/ 注入脚本的正常 200 页面误判为质询拦截
+  const isCloudflareChallenge = isCfMitigated ||
+    (isCloudflare && isCfErrorStatus && hasCfMarker) ||
+    (isCloudflare && (isCfChallengeTitle || hasCfBlockMessage) && isShortChallengePage) ||
+    (!response && isCfChallengeTitle && isShortChallengePage)
+
+  if (isCloudflareChallenge) {
     return {
       isChallenge: true,
       type: 'cloudflare',
@@ -105,8 +123,6 @@ export function detectSecurityChallenge(html: string, response?: SourceResponse)
   }
 
   // 2. 前端 JavaScript 浏览器质询 (例如 ixdzs8、5秒盾、自建 WAF 挑战)
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
-  const pageTitle = titleMatch ? titleMatch[1].trim() : ''
 
   const challengeTitleKeywords = [
     '正在验证浏览器',
@@ -195,8 +211,9 @@ export class SecurityChallengeError extends Error {
 
 /** Cloudflare 验证挑战错误，继承自 SecurityChallengeError 保持向后兼容 */
 export class CloudflareChallengeError extends SecurityChallengeError {
-  constructor(message: string, response: SourceResponse, diagnostics: CfDiagnostics) {
+  constructor(message: string, response: SourceResponse, diagnostics: CfDiagnostics & Partial<SecurityDiagnostics>) {
     super(message, {
+      ...diagnostics,
       isChallenge: diagnostics.isChallenge,
       type: 'cloudflare',
       title: 'Cloudflare 访问验证',
@@ -214,7 +231,7 @@ function createHttpError(response: SourceResponse, fallbackMessage: string): Err
   if (challenge.isChallenge) {
     if (challenge.type === 'cloudflare') {
       return new CloudflareChallengeError(
-        '目标网站触发 Cloudflare 浏览器访问验证（HTTP 403）。请启用 WebView 通道或先完成网页验证。',
+        `目标网站触发 Cloudflare 浏览器访问验证（HTTP ${response.status}）。请完成网页验证后重试。`,
         response,
         { isChallenge: true, cfRay: challenge.cfRay, cfMitigated: challenge.cfMitigated },
       )
@@ -546,7 +563,7 @@ export class SourceEngine {
    * 统一请求方法：根据书源配置自动选择 reqwest 或 WebView 通道
    * - useWebView=true 的书源优先使用 WebView fetch（共享浏览器会话/指纹）
    * - 其余书源使用 reqwest 快速通道
-   * - reqwest 通道遇到 Cloudflare challenge 时抛出 CloudflareChallengeError 提示用户
+   * - 两条通道统一识别挑战，认证后最多重发一次原请求
    */
   private async executeRequest(
     source: BookSource,
@@ -585,69 +602,93 @@ export class SourceEngine {
       webJs: options.webJs,
       bodyJs: options.bodyJs,
     }
-    if (useWebView && transport.webviewFetch) {
-      actualChannel = 'webview'
-      attemptCount = 1
-      let response: SourceResponse | undefined
-      try {
-        await waitForConcurrentRate(source)
-        response = await transport.webviewFetch({ ...request })
-        const transformedResponse = await this.applyRequestScripts(source, response, request)
-        trace({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
-        return transformedResponse
-      } catch (error) {
-        trace({ sourceId: source.bookSourceUrl, stage, request, response, error })
-        throw error
-      }
-    }
-
-    // 默认 reqwest 快速通道
+    actualChannel = useWebView && transport.webviewFetch ? 'webview' : 'reqwest'
     let response: SourceResponse | undefined
-    let lastError: unknown
-    const attempts = Math.max(1, (options.retry ?? 2) + 1)
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      attemptCount = attempt
-      try {
+    let releaseAuthWindow: (() => Promise<void>) | undefined
+    let recoveredDocument = false
+    const inspect = (value: SourceResponse) => detectSecurityChallenge(
+      decodeResponse(value.body, value.charset || request.charset || 'utf-8'), value,
+    )
+    const challengeError = (challenge: SecurityDiagnostics, message: string): SecurityChallengeError =>
+      challenge.type === 'cloudflare'
+        ? new CloudflareChallengeError(message, response!, { ...challenge, isChallenge: true })
+        : new SecurityChallengeError(message, challenge, response)
+    const send = async (singleAttempt = false): Promise<SourceResponse> => {
+      const attempts = singleAttempt || actualChannel === 'webview' ? 1 : Math.max(1, (options.retry ?? 2) + 1)
+      for (let attempt = 1; ; attempt++) {
+        throwIfSourceAborted(this.options.signal)
         await waitForConcurrentRate(source)
-        response = await transport.request(request)
-        if (response.status < 500 || attempt === attempts) break
-      } catch (error) {
-        lastError = error
-        if (attempt === attempts) {
-          trace({ sourceId: source.bookSourceUrl, stage, request, error })
-          throw error
+        throwIfSourceAborted(this.options.signal)
+        attemptCount++
+        let received: SourceResponse
+        try {
+          received = actualChannel === 'webview'
+            ? await transport.webviewFetch!({ ...request, headers: { ...request.headers } })
+            : await transport.request({ ...request, headers: { ...request.headers } })
+        } catch (error) {
+          throwIfSourceAborted(this.options.signal)
+          const contextLost = typeof error === 'object' && error !== null && 'code' in error && error.code === 'WEBVIEW_CONTEXT_LOST'
+          if (actualChannel === 'webview' && contextLost && request.method !== 'POST' && !recoveredDocument) {
+            recoveredDocument = true
+            trace({ sourceId: source.bookSourceUrl, stage, request, error })
+            notifyDiagnostic(this.options.onChallengeRecovery, {
+              sourceId: source.bookSourceUrl, url: request.url, phase: 'retrying', message: 'WebView 文档发生变化，等待稳定后补试一次原请求',
+            })
+            attempt--
+            continue
+          }
+          if (attempt === attempts) throw error
+          continue
         }
+        throwIfSourceAborted(this.options.signal)
+        // 503 挑战应立即进入认证，不能被普通服务端错误重试消耗掉。
+        if (received.status < 500 || attempt === attempts || inspect(received).isChallenge) return received
       }
     }
-    if (!response) throw lastError instanceof Error ? lastError : new Error('书源请求失败')
 
     try {
-      // 自动检测安全验证 challenge，抛出带诊断信息的错误
-      if (!useWebView) {
-        const html = decodeResponse(response.body, response.charset || 'utf-8')
-        const challenge = detectSecurityChallenge(html, response)
+      response = await send()
+      let challenge = inspect(response)
+      if (challenge.isChallenge) {
+        challenge = { ...challenge, challengeUrl: response.finalUrl || request.url }
+        if (!transport.solveChallenge) {
+          throw challengeError(challenge, '目标网站返回安全验证页面，当前请求通道不支持自动认证。请完成网页验证后重试。')
+        }
+        trace({ sourceId: source.bookSourceUrl, stage, request, response,
+          error: challengeError(challenge, '检测到安全挑战，开始认证恢复') })
+        try {
+          releaseAuthWindow = await recoverSourceChallenge(transport, source.bookSourceUrl, challenge.challengeUrl!,
+            html => !detectSecurityChallenge(html).isChallenge, this.options.signal,
+            event => notifyDiagnostic(this.options.onChallengeRecovery, event))
+        } catch (error) {
+          throwIfSourceAborted(this.options.signal)
+          if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError') throw error
+          throw challengeError({ ...challenge, requiresManualInteraction: true },
+            error instanceof Error ? error.message : String(error))
+        }
+        throwIfSourceAborted(this.options.signal)
+        notifyDiagnostic(this.options.onChallengeRecovery, {
+          sourceId: source.bookSourceUrl, url: request.url, phase: 'retrying', message: '验证页面已稳定，正在重试原请求；验证窗口将在请求结束后隐藏',
+        })
+        // 每个请求最多恢复一次；保留原通道、方法、请求体和 Cookie 策略。
+        response = undefined
+        response = await send(true)
+        challenge = inspect(response)
         if (challenge.isChallenge) {
-          if (challenge.type === 'cloudflare') {
-            throw new CloudflareChallengeError(
-              '检测到 Cloudflare 验证，请在书源设置中启用 WebView 通道或先完成网页验证。',
-              response,
-              { isChallenge: true, cfRay: challenge.cfRay, cfMitigated: challenge.cfMitigated },
-            )
-          }
-          throw new SecurityChallengeError(
-            `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}）。请在书源设置中启用 WebView 通道或先完成网页验证。`,
-            challenge,
-            response,
-          )
+          const cookieHint = request.useCookieJar === false ? '当前未启用保存 Cookie，请检查该设置。' : ''
+          throw challengeError({ ...challenge, challengeUrl: response.finalUrl || request.url },
+            '认证恢复后原请求仍返回安全挑战，已停止重试。' + cookieHint)
         }
       }
-
       const transformedResponse = await this.applyRequestScripts(source, response, request)
+      throwIfSourceAborted(this.options.signal)
       trace({ sourceId: source.bookSourceUrl, stage, request, response, transformedResponse })
       return transformedResponse
     } catch (error) {
       trace({ sourceId: source.bookSourceUrl, stage, request, response, error })
       throw error
+    } finally {
+      await releaseAuthWindow?.()
     }
   }
 
@@ -1190,37 +1231,6 @@ export class SourceEngine {
         let html = decodeResponse(response.body, response.charset || 'utf-8')
         const effectiveBaseUrl = response.finalUrl || requestUrl.href
         Object.assign(context, { page, baseUrl: effectiveBaseUrl, redirectUrl: response.finalUrl })
-
-        // 检测响应是否命中了前端防爬安全质询拦截（如 5 秒盾、浏览器安全检查）
-        const challenge = detectSecurityChallenge(html, response)
-        if (challenge.isChallenge) {
-          const transport = await this.getSourceTransport()
-          if (source.useWebView && transport.solveChallenge) {
-            const solveResult = await transport.solveChallenge(source.bookSourceUrl, currentUrl, 5000)
-            if (solveResult.success && solveResult.html) {
-              html = solveResult.html
-              onProgress?.({
-                page,
-                url: currentUrl,
-                currentLength: 0,
-                challengeSolved: true,
-                challengeTitle: challenge.title || '浏览器安全质询',
-              })
-            } else {
-              throw new SecurityChallengeError(
-                `目标网站触发安全访问验证（${challenge.title || '浏览器安全质询'}），自动穿透未通过。请完成网页验证。`,
-                { ...challenge, requiresManualInteraction: true, challengeUrl: currentUrl },
-                response,
-              )
-            }
-          } else {
-            throw new SecurityChallengeError(
-              `目标网站返回了安全验证页面（${challenge.title || '浏览器安全质询'}），普通 HTTP 请求未能获取到有效正文。请开启 WebView 通道或先完成网页验证。`,
-              { ...challenge, requiresManualInteraction: false, challengeUrl: currentUrl },
-              response,
-            )
-          }
-        }
 
         if (source.ruleContent.webJs?.trim()) {
           const transformed = (await executeSourceWebJavaScript(

@@ -8,6 +8,19 @@ import { TauriTransport } from './TauriTransport'
 describe('TauriTransport', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it.each(['WEBVIEW_CONTEXT_LOST', 'WEBVIEW_BRIDGE_TIMEOUT', 'WEBVIEW_EXECUTION_FAILED'])('保留 %s 原因，不统一归为请求超时', async code => {
+    vi.mocked(invoke).mockRejectedValue(`${code}: request=sample, document=1:example, callbackTimeouts=2`)
+    await expect(new TauriTransport().webviewFetch({ sourceId: 'sample', url: 'https://example.com', method: 'GET' }))
+      .rejects.toMatchObject({ code })
+  })
+
+  it('人工验证探测使用只读命令，不重新导航', async () => {
+    const result = { success: false, cookies: [], requiresManualInteraction: true }
+    vi.mocked(invoke).mockResolvedValue(result)
+    await expect(new TauriTransport().inspectChallenge('source-1', 'https://example.com/search')).resolves.toEqual(result)
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_webview_challenge', { sourceId: 'source-1', url: 'https://example.com/search' })
+  })
+
   it('优先按 kind=dns 分类，不被 timeout=false 误判为超时', async () => {
     vi.mocked(invoke).mockRejectedValue(
       'Request failed [stage=send, kind=dns, connect=true, timeout=false]: dns error -> Disallowed IP address: 198.18.0.112',

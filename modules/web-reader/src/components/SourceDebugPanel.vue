@@ -253,9 +253,8 @@ import { ElMessage } from 'element-plus'
 import { VideoPlay, VideoPause, Key, Search, QuestionFilled, Compass, ArrowDown } from '@element-plus/icons-vue'
 import type { BookSource, SearchResult } from '@/source/types/BookSource'
 import type { TocItem } from '@/source/engine/TocParser'
-import { SourceEngine, CloudflareChallengeError, SecurityChallengeError } from '@/source/engine/SourceEngine'
+import { SourceEngine, SecurityChallengeError } from '@/source/engine/SourceEngine'
 import { redactDebugText, logBookFields, logRequestTrace, logStageDiagnostic, logContentPayload, formatDebugSummary } from '@/source/engine/SourceDebugLog'
-import { getTransport } from '@/source/transport'
 import { parseDebugInput, parseExploreUrlOptions, type DebugInputType } from '@/source/engine/SourceDebugHelper'
 import SourceAuthDialog from './SourceAuthDialog.vue'
 import { inspectSourceCompatibility } from '@/source/engine/Compatibility'
@@ -458,6 +457,7 @@ const startDebug = async () => {
   finishDebug?.('启动新的调试，上一轮已中止')
   currentDebugMode.value = parsed.type
 
+  const controller = new AbortController()
   const currentSession = ++activeSessionId.value
   const targetSource = props.source
   const started = Date.now()
@@ -495,6 +495,7 @@ const startDebug = async () => {
     if (finished || currentSession !== activeSessionId.value) return
     finished = true
     if (reason) {
+      controller.abort()
       for (const step of Object.keys(stepStatus) as Array<keyof typeof stepStatus>) {
         if (stepStatus[step] === 'running') stepStatus[step] = 'stopped'
       }
@@ -510,6 +511,8 @@ const startDebug = async () => {
   finishDebug = finalize
   if (targetSource.mainJs?.trim()) write('INIT', '脚本书源：字段来自脚本返回；脚本内部网络请求不可观测。')
   const engine = new SourceEngine({
+    signal: controller.signal,
+    onChallengeRecovery: event => write('AUTH', event.message, event.phase === 'manual' ? 'warn' : 'info'),
     onRequestTrace: trace => logRequestTrace(write, trace),
     onStageDiagnostic: event => logStageDiagnostic(write, event),
   })
@@ -710,11 +713,7 @@ const startDebug = async () => {
       try {
         const payload = await engine.getContent(targetSource, targetChapterUrl, (pageInfo) => {
           if (currentSession !== activeSessionId.value) return
-          if (pageInfo.challengeSolved) {
-            appendLog('CHALLENGE', `[自动穿透] 检测到源站安全质询盾（${pageInfo.challengeTitle || '浏览器安全质询'}），后台 WebView 已返回验证后的页面；Cookie 同步状态未单独验证。`, 'success')
-          } else {
-            appendLog('CONTENT', `正文分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url}`)
-          }
+          appendLog('CONTENT', `正文分页拉取成功: 第 ${pageInfo.page} 页 => ${pageInfo.url}`)
         })
         if (currentSession !== activeSessionId.value) return
         const text = payload.type === 'text'
@@ -762,64 +761,7 @@ const startDebug = async () => {
           if (err.diagnostics.snippet) {
             appendLog('RAW_PAGE', `拦截页面片段摘要:\n${err.diagnostics.snippet}`, 'info')
           }
-          if (err.diagnostics.requiresManualInteraction) {
-            appendLog('AUTH', '【需要验证】已自动呼出网页验证窗口，请在弹窗中完成人机验证码/滑块。完成后窗口将自动关闭并继续...', 'warn')
-            try {
-              const transport = await getTransport()
-              const authUrl = err.diagnostics.challengeUrl || targetChapterUrl || targetSource.bookSourceUrl
-              if (transport.openAuthWindow) {
-                await transport.openAuthWindow(targetSource.bookSourceUrl, authUrl, '书源安全验证')
-
-                // 开启 500ms 轮询检测，最多持续 60 秒
-                const pollStart = Date.now()
-                let solved = false
-                while (Date.now() - pollStart < 60000 && !solved && currentSession === activeSessionId.value) {
-                  await new Promise(r => setTimeout(r, 500))
-                  if (currentSession !== activeSessionId.value) break
-                  try {
-                    if (transport.solveChallenge) {
-                      const probe = await transport.solveChallenge(targetSource.bookSourceUrl, authUrl, 1000)
-                      if (probe.success && probe.html) {
-                        solved = true
-                        break
-                      }
-                    }
-                  } catch {
-                    // 仍在验证中，继续轮询
-                  }
-                }
-
-                if (solved && currentSession === activeSessionId.value) {
-                  if (transport.closeAuthWindow) {
-                    await transport.closeAuthWindow(targetSource.bookSourceUrl)
-                  }
-                  if (currentSession !== activeSessionId.value) return
-                  appendLog('AUTH', '【验证通过】已检测到网页验证完成，正在自动重试正文解析...', 'success')
-                  const retryPayload = await engine.getContent(targetSource, targetChapterUrl)
-                  if (currentSession !== activeSessionId.value) return
-                  const retryText = retryPayload.type === 'text' ? retryPayload.text : retryPayload.images.map(img => img.url).join('\n')
-                  const retryCharCount = retryPayload.type === 'text' ? retryPayload.text.length : 0
-                  if (retryCharCount > 0 || (retryPayload.type === 'text' && (retryPayload.embeddedImages?.length || 0) > 0) || (retryPayload.type === 'images' && retryPayload.images.length > 0)) {
-                    stepStatus.content = 'success'
-                    stepResults.content = {
-                      charCount: retryCharCount,
-                      preview: retryText.slice(0, 200) + (retryText.length > 200 ? '...' : ''),
-                      time: Date.now() - pollStart,
-                    }
-                    appendLog('CONTENT', retryPayload.type === 'images'
-                      ? `图片解析成功! 共 ${retryPayload.images.length} 张`
-                      : `正文解析成功! 字符数: ${retryCharCount}`, 'success')
-                    logContentPayload(write, retryPayload)
-                  }
-                }
-              }
-            } catch (authErr) {
-              if (currentSession !== activeSessionId.value) return
-              appendLog('AUTH', `唤起/轮询验证窗口失败: ${errorMessage(authErr)}`, 'error')
-            }
-          } else {
-            appendLog('SUGGEST', '建议：请在「书源编辑」中启用「WebView 通道」，或在「网页验证」中完成浏览器安全验证。', 'warn')
-          }
+          appendLog('SUGGEST', '统一认证恢复未完成，请检查保存 Cookie 设置，或完成网页验证后重试。', 'warn')
         } else {
           appendLog('CONTENT', `正文解析失败: ${errorMessage(err)}`, 'error')
         }

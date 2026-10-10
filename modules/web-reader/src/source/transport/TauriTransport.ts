@@ -3,12 +3,13 @@ import { SourceTransportError, type SourceRequest, type SourceResponse, type Sou
 function transportError(cause: unknown): SourceTransportError {
   const message = String(cause)
   const kind = message.match(/kind=([a-z_]+)/i)?.[1]?.toUpperCase()
-  const code = kind === 'TIMEOUT' ? 'REQUEST_TIMEOUT'
+  const webviewCode = message.match(/\b(WEBVIEW_[A-Z_]+):/)?.[1]
+  const code = webviewCode || (kind === 'TIMEOUT' ? 'REQUEST_TIMEOUT'
     : kind === 'DNS' ? 'DNS_RESOLUTION_FAILED'
       : kind === 'TLS' ? 'TLS_FAILED'
         : kind === 'CONNECT' ? 'CONNECTION_FAILED'
           : /\btimed out\b|\btimeout\b(?!\s*=\s*false\b)|\babort(?:ed)?\b/i.test(message) ? 'REQUEST_TIMEOUT'
-            : /dns|lookup|name resolution/i.test(message) ? 'DNS_RESOLUTION_FAILED' : 'REQUEST_FAILED'
+            : /dns|lookup|name resolution/i.test(message) ? 'DNS_RESOLUTION_FAILED' : 'REQUEST_FAILED')
   return new SourceTransportError(code, message)
 }
 
@@ -24,6 +25,7 @@ export class TauriTransport implements SourceTransport {
         headers: Record<string, string>
         body: number[]
         charset?: string
+        webviewDiagnostics?: SourceResponse['webviewDiagnostics']
       }>('source_request', { request: req })
     } catch (cause) {
       throw transportError(cause)
@@ -47,6 +49,7 @@ export class TauriTransport implements SourceTransport {
         headers: Record<string, string>
         body: number[]
         charset?: string
+        webviewDiagnostics?: SourceResponse['webviewDiagnostics']
       }>('webview_fetch', {
         request: {
           sourceId: req.sourceId,
@@ -98,6 +101,11 @@ export class TauriTransport implements SourceTransport {
       cookieNames: string[]
       hasCfClearance: boolean
     }>('sync_webview_cookies', { sourceId, url })
+  }
+
+  async inspectChallenge(sourceId: string, url: string) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return invoke<import('./SourceTransport').SolveChallengeResponse>('inspect_webview_challenge', { sourceId, url })
   }
 
   async checkCfClearance(sourceId: string, url: string): Promise<boolean> {

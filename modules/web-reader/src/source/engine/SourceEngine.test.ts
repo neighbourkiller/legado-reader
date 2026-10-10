@@ -336,6 +336,34 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
     expect(diag.title).toBe('正在验证浏览器')
     expect(diag.snippet).toContain('正在验证浏览器')
 
+    // 正常 200 页面包含 Cloudflare 注入脚本时不应误判为安全质询
+    const normalCloudflareHtml = `
+      <!DOCTYPE html>
+      <html lang="zh-TW">
+      <head><title>系统 - 搜索结果 - 台湾小说网</title></head>
+      <body>
+      <div><h1>书名</h1><p>正文内容测试</p></div>
+      <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+      </body>
+      </html>
+    `
+    const normalResponse: SourceResponse = {
+      status: 200,
+      headers: { server: 'cloudflare', 'cf-ray': 'test-ray-id' },
+      body: new TextEncoder().encode(normalCloudflareHtml),
+      finalUrl: 'https://twkan.com/search/1.html',
+    }
+    expect(detectSecurityChallenge(normalCloudflareHtml, normalResponse).isChallenge).toBe(false)
+
+    // 403 错误页面包含 Cloudflare 脚本标记时应正确识别为 Cloudflare 质询
+    const cf403Response: SourceResponse = {
+      status: 403,
+      headers: { server: 'cloudflare', 'cf-ray': 'test-ray-id' },
+      body: new TextEncoder().encode(normalCloudflareHtml),
+      finalUrl: 'https://twkan.com/search/1.html',
+    }
+    expect(detectSecurityChallenge(normalCloudflareHtml, cf403Response).isChallenge).toBe(true)
+
     const challengeSource: BookSource = {
       ...source,
       useWebView: false,
@@ -443,11 +471,11 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
       webviewFetch: vi.fn(async (options: SourceRequest): Promise<SourceResponse> => ({
         status: 200,
         headers: {},
-        body: encoder.encode(challengeHtml),
+        body: encoder.encode(solvedHtml),
         finalUrl: options.url,
         charset: 'utf-8',
         channel: 'webview',
-      })),
+      })).mockResolvedValueOnce({ status: 200, headers: {}, body: encoder.encode(challengeHtml), finalUrl: 'https://example.com/read/1/p1.html' }),
       solveChallenge: vi.fn(async () => ({
         success: true,
         html: solvedHtml,
@@ -513,7 +541,7 @@ describe('端到端模拟链路测试: 搜索 → 详情 → 多页目录 → �
       if (err instanceof SecurityChallengeError) {
         expect(err.diagnostics.requiresManualInteraction).toBe(true)
         expect(err.diagnostics.challengeUrl).toBe('https://example.com/read/1/p1.html')
-        expect(err.message).toContain('自动穿透未通过')
+        expect(err.message).toContain('自动验证未通过')
       }
     }
   })

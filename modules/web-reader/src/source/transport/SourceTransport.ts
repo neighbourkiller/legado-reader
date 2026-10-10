@@ -26,6 +26,13 @@ export interface SourceResponse {
   charset?: string
   /** 请求通道标识 */
   channel?: 'reqwest' | 'webview'
+  webviewDiagnostics?: {
+    requestId: string
+    documentId: string
+    navigationGeneration: number
+    polls: number
+    callbackTimeouts: number
+  }
 }
 
 export class SourceTransportError extends Error {
@@ -57,6 +64,9 @@ export interface SourceTransport {
 
   /** 后台隐藏 WebView 自动导航目标 URL 解决 JS 挑战盾 */
   solveChallenge?(sourceId: string, url: string, timeoutMs?: number): Promise<SolveChallengeResponse>
+
+  /** 只读取当前验证页面状态，不导航；用于等待用户完成人机交互。 */
+  inspectChallenge?(sourceId: string, url: string): Promise<SolveChallengeResponse>
 
   /** 自动从 WebView 验证窗口同步 Cookie 到 reqwest CookieJar */
   syncWebviewCookies?(sourceId: string, url: string): Promise<{

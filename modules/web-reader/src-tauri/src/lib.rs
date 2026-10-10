@@ -5,6 +5,7 @@ mod source_audit;
 mod source_http;
 mod source_policy;
 mod source_script;
+mod source_webview;
 pub mod storage;
 mod webdav;
 
@@ -18,8 +19,9 @@ use source_audit::{
 };
 use source_http::{
     check_cf_clearance, close_source_auth_window, execute_webview_script, exit_fullscreen,
-    get_source_cookies, open_source_auth_window, set_source_cookies, solve_webview_challenge,
-    source_request, sync_webview_cookies, toggle_fullscreen, webview_fetch, AppState,
+    get_source_cookies, inspect_webview_challenge, open_source_auth_window, set_source_cookies,
+    solve_webview_challenge, source_request, sync_webview_cookies, toggle_fullscreen,
+    webview_fetch, AppState,
 };
 use source_script::execute_source_script;
 use storage::backup_session::*;
@@ -103,6 +105,7 @@ pub fn run() {
             check_cf_clearance,
             webview_fetch,
             solve_webview_challenge,
+            inspect_webview_challenge,
             toggle_fullscreen,
             exit_fullscreen,
             open_app_data_dir,
